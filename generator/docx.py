@@ -152,7 +152,7 @@ def _append_equation(paragraph, math_str: str):
     try:
         from lxml import etree
 
-        el = etree.fromstring(_equation_omml(math_str).encode("utf-8"))
+        el = etree.fromstring(_equation_omml(_normalize_text(math_str)).encode("utf-8"))
         paragraph._p.append(el)
     except Exception:  # noqa: BLE001
         paragraph.add_run(math_str)

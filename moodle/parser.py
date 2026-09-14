@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
@@ -43,7 +44,7 @@ class QuestionParser:
             "[role=main] .generalbox"
         )
         if desc_el:
-            text, atts = self._extract(desc_el)
+            text, atts = self._extract(desc_el, activity.url)
             q.question += text
             q.attachment_urls.extend(atts)
 
@@ -60,7 +61,7 @@ class QuestionParser:
             post = main.select_one(
                 ".forumpost, .serforumpost, [data-post], article"
             ) or main
-            text, atts = self._extract(post)
+            text, atts = self._extract(post, disc_link)
             q.question += text
             q.attachment_urls.extend(atts)
         elif disc_link:
@@ -78,7 +79,7 @@ class QuestionParser:
         container = soup.select_one(
             "#intro, .no-overflow, .activity-information, [role=main]"
         ) or soup
-        text, atts = self._extract(container)
+        text, atts = self._extract(container, activity.url)
         q.question = self._clean(text)
         q.attachment_urls.extend(atts)
 
@@ -92,26 +93,33 @@ class QuestionParser:
         resp = self.session.get(activity.url)
         soup = BeautifulSoup(resp.text, "html.parser")
         main = soup.select_one("[role=main]") or soup
-        text, atts = self._extract(main)
+        text, atts = self._extract(main, activity.url)
         q.question = self._clean(text)
         q.attachment_urls.extend(atts)
         return q
 
     # ---- Util --------------------------------------------------------------
-    def _extract(self, el) -> tuple[str, list[str]]:
+    def _extract(self, el, base_url: str = "") -> tuple[str, list[str]]:
         text = el.get_text("\n", strip=True) if el else ""
         atts: list[str] = []
-        html = ""
         if el is not None:
-            html = str(el)
-            atts = list(
-                dict.fromkeys(
-                    u
-                    for u in re.findall(
-                        r'https?://[^\s"\']*pluginfile\.php[^\s"\']*', html
-                    )
-                )
-            )
+            candidates: list[str] = []
+            for tag in el.select("a[href], img[src], source[src], [data-src], [data-original]"):
+                for attr in ("href", "src", "data-src", "data-original"):
+                    raw = (tag.get(attr) or "").strip()
+                    if raw:
+                        candidates.append(raw)
+            for raw in candidates:
+                if raw.startswith(("data:", "javascript:", "#")):
+                    continue
+                absolute = urljoin(base_url, raw)
+                path = absolute.lower().split("?", 1)[0]
+                if "pluginfile.php" in path or re.search(
+                    r"\.(png|jpe?g|gif|bmp|webp|tiff?|pdf|docx?|xlsx?|xlsm|pptx?|txt|csv)(?:$|/)",
+                    path,
+                ):
+                    atts.append(absolute)
+            atts = list(dict.fromkeys(atts))
         return text, atts
 
     @staticmethod
