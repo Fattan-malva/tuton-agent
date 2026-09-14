@@ -1,0 +1,9 @@
+requests
+beautifulsoup4
+python-docx
+python-dotenv
+pymupdf
+openpyxl
+pillow
+pywin32
+easyocr
