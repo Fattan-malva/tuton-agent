@@ -10,6 +10,20 @@ from docx.shared import Pt
 
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
+_LATEX_REPLACEMENTS = {
+    r"\rightarrow": "→",
+    r"\to": "→",
+    r"\leftarrow": "←",
+    r"\leftrightarrow": "↔",
+    r"\times": "×",
+    r"\cdot": "·",
+    r"\leq": "≤",
+    r"\geq": "≥",
+    r"\neq": "≠",
+    r"\pm": "±",
+    r"\infty": "∞",
+    r"\ldots": "...",
+}
 
 # OMML (Word math) namespace
 _MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
@@ -146,6 +160,7 @@ def _append_equation(paragraph, math_str: str):
 
 def _add_runs(paragraph, text: str):
     """Terapkan **bold** dan *italic* sederhana ke satu paragraf."""
+    text = _normalize_text(text)
     pos = 0
     for m in _BOLD_RE.finditer(text):
         if m.start() > pos:
@@ -157,6 +172,7 @@ def _add_runs(paragraph, text: str):
 
 
 def _add_italic_runs(paragraph, text: str):
+    text = _normalize_text(text)
     pos = 0
     for m in _ITALIC_RE.finditer(text):
         if m.start() > pos:
@@ -166,6 +182,17 @@ def _add_italic_runs(paragraph, text: str):
         pos = m.end()
     if pos < len(text):
         paragraph.add_run(text[pos:])
+
+
+def _normalize_text(text: str) -> str:
+    """Hilangkan artefak LaTeX/Markdown yang tidak boleh tampil mentah di Word."""
+    for source, replacement in _LATEX_REPLACEMENTS.items():
+        text = text.replace(source, replacement)
+    text = re.sub(r"\\(?:left|right)\b", "", text)
+    text = re.sub(r"\\text\{([^{}]*)\}", r"\1", text)
+    text = re.sub(r"(?<![A-Za-z])rightarrow(?![A-Za-z])", "→", text)
+    text = re.sub(r"(?<![A-Za-z])leftarrow(?![A-Za-z])", "←", text)
+    return text
 
 
 def _is_table_row(line: str) -> bool:
@@ -180,6 +207,20 @@ def _render_markdown(doc: Document, md: str):
     ordered_idx = 0
     while i < len(lines):
         line = lines[i].rstrip()
+
+        # Inline math: convert one-line $...$ expressions to Word equations.
+        if line.count("$") >= 2 and "$$" not in line:
+            p = doc.add_paragraph()
+            parts = re.split(r"\$([^$]+)\$", line)
+            for idx, part in enumerate(parts):
+                if not part:
+                    continue
+                if idx % 2:
+                    _append_equation(p, _normalize_text(part))
+                else:
+                    _add_runs(p, part)
+            i += 1
+            continue
 
         # Tabel markdown
         if _is_table_row(line) and i + 1 < len(lines) and re.match(

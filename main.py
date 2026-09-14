@@ -203,6 +203,7 @@ def _process_item(
 
     # 3) Generate .docx (equation OMML asli)
     jawaban_md = jawaban_path.read_text(encoding="utf-8")
+    soal_for_docx = soal_path.read_text(encoding="utf-8")
     meta = {
         "nama": Config.NAMA,
         "nim": Config.NIM,
@@ -214,7 +215,7 @@ def _process_item(
     }
     _, doc_path = save_doc(
         jawaban_md=jawaban_md,
-        soal_text=parsed.question,
+        soal_text=soal_for_docx,
         meta=meta,
         out_dir=out_dir,
     )

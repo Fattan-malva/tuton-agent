@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tuton Agent - Desktop Controller</title>
+    
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Custom Stylesheet -->
+    <link rel="stylesheet" href="/css/style.css?v=20260915">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#0f172a',
+                        secondary: '#64748b',
+                        accent: '#4f46e5',
+                        darkbg: '#1e293b'
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="text-gray-800 antialiased selection:bg-indigo-100 selection:text-indigo-900">
+
+    <!-- ================== LOGIN VIEW ================== -->
+    <div id="loginView" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50 transition-opacity duration-300">
+        <div class="w-full max-w-md bg-white p-10 rounded-3xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] border border-gray-100">
+            <div class="mb-10 text-center">
+                <div class="inline-flex items-center justify-center w-16 h-16 bg-indigo-50 rounded-2xl mb-5 border border-indigo-100 shadow-soft">
+                    <i data-lucide="bot" class="w-8 h-8 text-accent"></i>
+                </div>
+                <h1 class="text-2xl font-bold tracking-tight text-gray-900">Tuton Agent</h1>
+                <p class="text-sm text-gray-500 mt-2 font-medium">Auto-Grader & Submission Controller</p>
+            </div>
+
+            <form id="loginForm" class="space-y-5">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2 ml-1">Username Moodle / Admin</label>
+                    <div class="relative w-full">
+                        <input type="text" id="username" value="fattan" required
+                            class="w-full pl-11 pr-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent focus:ring-4 focus:ring-accent/10 outline-none transition-all text-sm font-medium">
+                        <i data-lucide="user" class="w-4 h-4 text-gray-400 absolute left-4 top-3.5"></i>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2 ml-1">Kata Sandi</label>
+                    <div class="relative w-full">
+                        <input type="password" id="password" value="fattan14" required
+                            class="w-full pl-11 pr-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent focus:ring-4 focus:ring-accent/10 outline-none transition-all text-sm font-medium">
+                        <i data-lucide="lock" class="w-4 h-4 text-gray-400 absolute left-4 top-3.5"></i>
+                    </div>
+                </div>
+                
+                <button type="submit" id="loginBtn"
+                    class="w-full bg-primary text-white text-sm font-semibold py-3.5 rounded-xl hover:bg-slate-800 active:scale-[0.98] transition-all mt-8 shadow-md flex items-center justify-center gap-2">
+                    <span>Akses Sistem</span>
+                    <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ================== MAIN APP VIEW (DESKTOP) ================== -->
+    <div id="appView" class="hidden h-screen w-full flex bg-[#f8fafc]">
+        
+        <!-- SIDEBAR -->
+        <aside class="w-64 bg-primary text-white flex flex-col shadow-2xl relative z-20 flex-shrink-0">
+            <!-- Brand -->
+            <div class="h-20 flex items-center px-6 border-b border-white/10 shrink-0">
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 bg-accent rounded-xl flex items-center justify-center shadow-lg">
+                        <i data-lucide="bot" class="w-5 h-5 text-white"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-sm font-bold leading-tight">Tuton Agent</h2>
+                        <p class="text-[10px] text-indigo-200 font-medium uppercase tracking-wider">CLI Web UI</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation -->
+            <nav class="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
+                <p class="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3 mt-2">Main Menu</p>
+                
+                <button onclick="Navigation.switchTo('status', store)" id="nav-status" class="nav-btn w-full flex items-center gap-3 px-3 py-3 rounded-xl bg-white/10 text-white font-medium text-sm transition-colors">
+                    <i data-lucide="activity" class="w-5 h-5"></i>
+                    Status Pekerjaan
+                </button>
+
+                <button onclick="Navigation.switchTo('result', store)" id="nav-result" class="nav-btn w-full flex items-center gap-3 px-3 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-colors">
+                    <i data-lucide="folder-check" class="w-5 h-5"></i>
+                    Result
+                </button>
+
+                <button onclick="Navigation.switchTo('run', store)" id="nav-run" class="nav-btn w-full flex items-center gap-3 px-3 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-colors">
+                    <i data-lucide="terminal" class="w-5 h-5"></i>
+                    Run Agent
+                </button>
+
+                <p class="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3 mt-8">Configuration</p>
+                
+                <button onclick="Navigation.switchTo('settings', store)" id="nav-settings" class="nav-btn w-full flex items-center gap-3 px-3 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-colors">
+                    <i data-lucide="sliders-horizontal" class="w-5 h-5"></i>
+                    Settings
+                </button>
+            </nav>
+
+            <!-- User Footer -->
+            <div class="p-4 border-t border-white/10 shrink-0">
+                <div class="bg-slate-800/50 rounded-xl p-3 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">AD</div>
+                        <div class="overflow-hidden">
+                            <p class="text-xs font-medium text-white truncate">Admin Moodle</p>
+                            <p class="text-[10px] text-green-400 flex items-center gap-1"><span class="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></span> Online</p>
+                        </div>
+                    </div>
+                    <button onclick="handleLogout()" class="text-slate-400 hover:text-red-400 transition-colors p-1" title="Logout">
+                        <i data-lucide="power" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT AREA -->
+        <main class="flex-1 flex flex-col h-full overflow-hidden relative">
+            
+            <!-- TAB: STATUS -->
+            <div id="tab-status" class="tab-content h-full flex flex-col p-8 animate-fade-in block overflow-y-auto">
+                <div class="flex justify-between items-end mb-8">
+                    <div>
+                        <h1 class="text-2xl font-bold text-gray-900">Status Pekerjaan</h1>
+                        <p class="text-sm text-gray-500 mt-1">Laporan dari <code>state.json</code> (cmd: status)</p>
+                    </div>
+                    <button class="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-gray-50 shadow-sm flex items-center gap-2">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i> Refresh Data
+                    </button>
+                </div>
+
+                <!-- Stats Cards -->
+                <div id="statsCards" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                    <!-- Cards will be rendered by JS -->
+                </div>
+
+                <!-- State Table -->
+                <div class="bg-white border border-gray-100 rounded-2xl shadow-soft overflow-hidden flex-1 flex flex-col">
+                    <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+                        <h3 class="font-semibold text-gray-800">Detail Status per Item</h3>
+                    </div>
+                    <div class="overflow-x-auto flex-1">
+                        <table class="w-full text-sm text-left">
+                            <thead class="text-xs text-gray-500 uppercase bg-gray-50 border-b border-gray-100">
+                                <tr>
+                                    <th class="px-6 py-4 font-semibold">Status</th>
+                                    <th class="px-6 py-4 font-semibold">Mata Kuliah</th>
+                                    <th class="px-6 py-4 font-semibold">Sesi</th>
+                                    <th class="px-6 py-4 font-semibold">Deskripsi Aktivitas</th>
+                                </tr>
+                            </thead>
+                            <tbody id="statusTableBody" class="divide-y divide-gray-100">
+                                <!-- Rows will be rendered by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: RESULT -->
+            <div id="tab-result" class="tab-content h-full hidden flex-col p-8 animate-fade-in overflow-y-auto">
+                <div class="flex justify-between items-end mb-8">
+                    <div>
+                        <h1 class="text-2xl font-bold text-gray-900">Hasil Pekerjaan (Result)</h1>
+                        <p class="text-sm text-gray-500 mt-1">Unduh file jawaban (.docx) yang telah diselesaikan oleh Agent.</p>
+                    </div>
+                    <button class="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-gray-50 shadow-sm flex items-center gap-2">
+                        <i data-lucide="download-cloud" class="w-4 h-4"></i> Download Semua (ZIP)
+                    </button>
+                </div>
+
+                <!-- Course Cards Grid -->
+                <div id="resultsGrid" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                    <!-- Cards will be rendered by JS -->
+                </div>
+            </div>
+
+            <!-- TAB: RUN (AGENT RUNNER) -->
+            <div id="tab-run" class="tab-content h-full hidden flex-col p-8 animate-fade-in overflow-y-auto">
+                <div class="mb-6">
+                    <h1 class="text-2xl font-bold text-gray-900">Agent Runner</h1>
+                    <p class="text-sm text-gray-500 mt-1">Eksekusi alur otomatis: Scrape → Kerjakan (OpenCode) → Buat .docx</p>
+                </div>
+
+                <div class="flex gap-6 h-full min-h-[500px]">
+                    <!-- Left: Control Panel -->
+                    <div class="w-1/3 bg-white p-6 rounded-2xl border border-gray-100 shadow-soft flex flex-col overflow-y-auto">
+                        <h3 class="font-bold text-gray-900 mb-6 flex items-center gap-2 shrink-0">
+                            <i data-lucide="sliders" class="w-5 h-5 text-accent"></i> Parameter Eksekusi
+                        </h3>
+                        
+                        <form onsubmit="handleRun(event)" class="space-y-5">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2 ml-1">Mata Kuliah dari Scrape</label>
+                                <select id="runCourseId"
+                                    class="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all text-sm">
+                                    <option value="">Semua mata kuliah</option>
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2 ml-1">Filter Sesi</label>
+                                <input type="number" id="runSesi" placeholder="Contoh: 3"
+                                    class="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all text-sm">
+                            </div>
+
+                            <label class="flex items-center gap-3 p-4 border border-gray-200 rounded-xl cursor-pointer hover:bg-gray-50 transition-colors">
+                                <input type="checkbox" id="runForce" class="w-4 h-4 text-accent rounded border-gray-300 focus:ring-accent">
+                                <div class="flex flex-col">
+                                    <span class="text-sm font-semibold text-gray-900">Force Run (--force)</span>
+                                    <span class="text-[10px] text-gray-500">Ulangi item yang sudah selesai (DONE)</span>
+                                </div>
+                            </label>
+
+                            <div class="pt-2">
+                                <button type="submit" id="btnRun" class="w-full bg-accent text-white py-3.5 rounded-xl font-bold hover:bg-indigo-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-md">
+                                    <i data-lucide="play" class="w-5 h-5"></i> Jalankan Sekarang
+                                </button>
+                            </div>
+                        </form>
+
+                        <!-- Divider -->
+                        <div class="relative my-8 shrink-0">
+                            <div class="absolute inset-0 flex items-center" aria-hidden="true">
+                                <div class="w-full border-t border-gray-200"></div>
+                            </div>
+                            <div class="relative flex justify-center">
+                                <span class="px-3 bg-white text-[10px] font-bold text-gray-400 uppercase tracking-wider">Atur Jadwal Otomatis</span>
+                            </div>
+                        </div>
+
+                        <!-- Cronjob Form -->
+                        <form onsubmit="handleSaveSchedule(event)" class="space-y-4 shrink-0 pb-2">
+                            <div class="flex items-center justify-between mb-4 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                <label class="text-sm font-semibold text-gray-900 flex items-center gap-2 cursor-pointer" for="cronToggle">
+                                    <i data-lucide="calendar-clock" class="w-4 h-4 text-gray-500"></i> Aktifkan Cronjob
+                                </label>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                  <input type="checkbox" id="cronToggle" class="sr-only peer">
+                                  <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
+                                </label>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5 ml-1">Hari Pelaksanaan</label>
+                                    <select id="cronDay" class="w-full px-3 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all text-sm font-medium appearance-none cursor-pointer">
+                                        <option value="*">Setiap Hari</option>
+                                        <option value="1">Senin</option>
+                                        <option value="2">Selasa</option>
+                                        <option value="3">Rabu</option>
+                                        <option value="4">Kamis</option>
+                                        <option value="5">Jumat</option>
+                                        <option value="6">Sabtu</option>
+                                        <option value="0">Minggu</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5 ml-1">Jam (WIB)</label>
+                                    <input type="time" id="cronTime" value="02:00" class="w-full px-3 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all text-sm font-medium">
+                                </div>
+                            </div>
+
+                            <div class="pt-2">
+                                <button id="btnSaveSchedule" type="submit" class="w-full bg-white border border-gray-200 text-gray-700 py-3 rounded-xl text-sm font-bold hover:bg-gray-50 hover:text-accent hover:border-accent/30 transition-all flex items-center justify-center gap-2 shadow-sm">
+                                    <i data-lucide="save" class="w-4 h-4"></i> Simpan Jadwal
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Right: Terminal Output -->
+                    <div class="w-2/3 bg-darkbg rounded-2xl shadow-xl flex flex-col overflow-hidden border border-slate-700 relative">
+                        <div class="bg-slate-900 px-4 py-3 flex items-center justify-between border-b border-slate-700/50">
+                            <div class="flex items-center gap-2">
+                                <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                                <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                                <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                                <span class="ml-2 text-xs font-mono text-slate-400">bash - tuton-agent</span>
+                            </div>
+                            <button id="clearTerminal" onclick="clearTerminal()" class="text-xs text-slate-400 hover:text-white flex items-center gap-1 font-mono">
+                                <i data-lucide="trash-2" class="w-3 h-3"></i> clear
+                            </button>
+                        </div>
+                        <div id="terminal-output" class="p-5 overflow-y-auto flex-1 font-mono text-sm leading-relaxed text-slate-300 space-y-1">
+                            <div class="text-green-400">user@tuton:~$ Sistem siap menerima perintah.</div>
+                            <!-- Logs will appear here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: SETTINGS (.ENV) -->
+            <div id="tab-settings" class="tab-content h-full hidden flex-col p-8 animate-fade-in overflow-y-auto">
+                <div class="mb-8">
+                    <h1 class="text-2xl font-bold text-gray-900">Settings</h1>
+                    <p class="text-sm text-gray-500 mt-1">Atur kredensial Moodle, identitas mahasiswa, dan API Key OpenCode.</p>
+                </div>
+
+                <div class="bg-white p-8 rounded-2xl border border-gray-100 shadow-soft max-w-4xl">
+                    <form id="envForm" class="space-y-6">
+                        
+                        <div class="border-b border-gray-100 pb-4 mb-4">
+                            <h3 class="text-sm font-bold text-gray-900 uppercase tracking-wider mb-1"><i data-lucide="user-square" class="inline w-4 h-4 mr-1 -mt-0.5 text-accent"></i> Data Mahasiswa</h3>
+                            <p class="text-xs text-gray-500 mb-4">Digunakan untuk metadata dokumen jawaban (.docx).</p>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-2">NAMA LENGKAP</label>
+                                    <input type="text" name="nama" value="" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-2">NIM</label>
+                                    <input type="text" name="nim" value="" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium">
+                                </div>
+                                <div class="md:col-span-2">
+                                    <label class="block text-xs font-semibold text-gray-600 mb-2">PROGRAM STUDI (PRODI)</label>
+                                    <input type="text" name="prodi" value="" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="border-b border-gray-100 pb-4 mb-4">
+                            <h3 class="text-sm font-bold text-gray-900 uppercase tracking-wider mb-1"><i data-lucide="globe" class="inline w-4 h-4 mr-1 -mt-0.5 text-accent"></i> Kredensial Moodle</h3>
+                            <div class="grid grid-cols-1 gap-4 mt-4">
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-2">MOODLE_COOKIE (MoodleSession)</label>
+                                    <input type="text" name="moodle_session" placeholder="Paste cookie session Anda di sini (misal: MoodleSession=...)" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium font-mono">
+                                    <p class="text-[10px] text-gray-400 mt-1.5">Gunakan cookie session Moodle yang valid untuk bypass login.</p>
+                                </div>
+                                <div class="hidden"> <!-- Menyembunyikan field yang lama tetapi tetap ada di DOM jika dibutuhkan struktur formnya -->
+                                    <label class="block text-xs font-semibold text-gray-600 mb-2">MOODLE_PASSWORD</label>
+                                    <input type="password" value="secret123" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium font-mono">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-2">MOODLE_URL</label>
+                                    <input type="url" name="moodle_url" value="" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium font-mono text-gray-500">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h3 class="text-sm font-bold text-gray-900 uppercase tracking-wider mb-1"><i data-lucide="cpu" class="inline w-4 h-4 mr-1 -mt-0.5 text-accent"></i> Model Configuration</h3>
+                            <div class="mt-4">
+                                <label class="block text-xs font-semibold text-gray-600 mb-2">OPENCODE_MODEL</label>
+                                <input type="text" name="opencode_model" placeholder="opencode/big-pickle" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium font-mono">
+                            </div>
+                            <div class="mt-4">
+                                <label class="block text-xs font-semibold text-gray-600 mb-2">OUTPUT_DIR</label>
+                                <input type="text" name="output_dir" value="./output" readonly class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium font-mono text-gray-500">
+                            </div>
+                        </div>
+
+                        <div class="pt-4 flex justify-end">
+                            <button type="submit" id="btnSaveEnv" class="bg-primary text-white px-8 py-3.5 rounded-xl font-bold hover:bg-slate-800 transition-all flex items-center gap-2 shadow-md">
+                                <i data-lucide="save" class="w-5 h-5"></i> Simpan Settings
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+        </main>
+        
+        <!-- Notification Toast -->
+        <div id="toast" class="fixed top-8 right-8 bg-gray-900 text-white px-6 py-4 rounded-xl text-sm font-medium shadow-2xl z-[60] transition-all duration-300 transform translate-x-[120%] flex items-center gap-3">
+            <i data-lucide="check-circle" class="w-5 h-5 text-green-400 shrink-0"></i>
+            <span id="toast-message">Berhasil!</span>
+        </div>
+
+    </div>
+
+    <script src="/js/state.js?v=20260915"></script>
+    <script src="/js/api.js?v=20260915"></script>
+    <script src="/js/components.js?v=20260915"></script>
+    <script src="/js/app.js?v=20260918"></script>
+    <script>
+        if (window.lucide) {
+            lucide.createIcons();
+        }
+    </script>
+</body>
+</html>

@@ -4,7 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=True)
 
 PROJECT_ROOT = BASE_DIR
 OUTPUT_DIR = BASE_DIR / "output"
@@ -13,6 +13,9 @@ HUMANIZER_DIR = BASE_DIR / "vendor" / "humanizer"
 
 
 class Config:
+    APP_USERNAME = os.getenv("APP_USERNAME", "").strip()
+    APP_PASSWORD = os.getenv("APP_PASSWORD", "").strip()
+
     NAMA = os.getenv("NAMA", "")
     NIM = os.getenv("NIM", "")
     PRODI = os.getenv("PRODI", "")
