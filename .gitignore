@@ -5,3 +5,5 @@ output/
 node_modules/
 .venv/
 venv/
+Dockerfile
+docker-compose.yml
