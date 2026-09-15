@@ -456,14 +456,34 @@ function updateRunProgress(line) {
         runProgress.step = "scraping";
     }
 
+    if (/^\s*· TOTAL:\s*(\d+)\s*item/.test(line)) {
+        runProgress.itemsTotal = parseInt(line.match(/^\s*· TOTAL:\s*(\d+)\s*item/)[1], 10);
+    }
+
     if (/^\s*· (DISKUSI|TUGAS)\s*:/.test(line)) {
         runProgress.itemsTotal += 1;
     }
 
-    const mItem = line.match(/^\s*· \[(diskusi|tugas)\]\s+(.+?)\s+→/);
+    // Marker progres dari main.py: "· [3/5] [diskusi] Judul → output/..."
+    const mItem = line.match(/^\s*· \[(\d+)\/(\d+)\]\s+\[(diskusi|tugas)\]\s+(.+?)\s+→/);
     if (mItem) {
-        runProgress.kind = mItem[1];
-        runProgress.itemLabel = mItem[2];
+        runProgress.itemsTotal = parseInt(mItem[2], 10);
+        runProgress.itemsDone = parseInt(mItem[1], 10) - 1;
+        runProgress.kind = mItem[3];
+        runProgress.itemLabel = mItem[4];
+        runProgress.step = "mengerjakan";
+    } else {
+        const mItemOld = line.match(/^\s*· \[(diskusi|tugas)\]\s+(.+?)\s+→/);
+        if (mItemOld) {
+            runProgress.kind = mItemOld[1];
+            runProgress.itemLabel = mItemOld[2];
+            runProgress.step = "mengerjakan";
+        }
+    }
+
+    // Item yang dilewati (sudah dikerjakan) juga dihitung sebagai selesai.
+    if (/→ sudah dikerjakan, dilewati/.test(line)) {
+        runProgress.itemsDone += 1;
         runProgress.step = "mengerjakan";
     }
 
@@ -521,6 +541,12 @@ function renderRunStatus() {
     elements.runStatusLabel.textContent = runProgress.matkul || "Menyiapkan…";
     elements.runStatusMeta.textContent = `${done}/${total || "?"} item`;
     elements.runStep.textContent = stepLabel();
+
+    // Strip beranimasi selama masih ada proses berjalan (bar mengikuti item
+    // yang selesai, background bergerak sebagai indikator "sedang kerja").
+    const active = ["scraping", "mengerjakan", "transkripsi", "opencode", "membuat docx"]
+        .includes(runProgress.step);
+    elements.runProgressBar.classList.toggle("progress-active", active);
 }
 
 function showRunStatus(show) {

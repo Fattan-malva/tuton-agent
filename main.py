@@ -106,31 +106,35 @@ def _process_course(
 
     print(f"\n=== {course.name} ===")
     sections = scraper.get_available_sections(course_id)
-    worked = 0
+    all_work: list[tuple[Activity, str, int]] = []
     for sec in sections:
         if sesi_filter is not None and sec.number != sesi_filter:
             continue
         diskusi, tugas, _ = scraper.split_assignable(sec.activities)
-        work = [
-            *[(d, "diskusi") for d in diskusi],
-            *[(t, "tugas") for t in tugas],
-        ]
-        for item, kind in work:
-            try:
-                worked += _process_item(
-                    session, scraper, downloader, parser,
-                    course, sec.number, item, kind, force=force,
-                )
-            except SoalNotFound as exc:
-                print(f"\n  ⛔ BERHENTI: {exc}")
-                print("  Sisa item tidak dikerjakan sampai soal ditemukan/diperbaiki.")
-                return
+        all_work.extend((d, "diskusi", sec.number) for d in diskusi)
+        all_work.extend((t, "tugas", sec.number) for t in tugas)
+
+    total = len(all_work)
+    print(f"  · TOTAL: {total} item")
+    worked = 0
+    for pos, (item, kind, section_num) in enumerate(all_work, 1):
+        try:
+            worked += _process_item(
+                session, scraper, downloader, parser,
+                course, section_num, item, kind,
+                pos=pos, total=total, force=force,
+            )
+        except SoalNotFound as exc:
+            print(f"\n  ⛔ BERHENTI: {exc}")
+            print("  Sisa item tidak dikerjakan sampai soal ditemukan/diperbaiki.")
+            return
     print(f"\nSelesai. {worked} item diproses untuk {course.name}.")
 
 
 def _process_item(
     session, scraper, downloader, parser,
     course, section_num, item, kind, *, force: bool,
+    pos: int = 0, total: int = 0,
 ) -> int:
     k = state.key(course.id, item.mod_type, item.id)
     if not force and state.is_done(k):
@@ -142,7 +146,8 @@ def _process_item(
     lamp_dir = out_dir / "lampiran"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"  · [{kind}] {item.title} → {out_dir.relative_to(OUTPUT_DIR)}")
+    progress_flag = f"[{pos}/{total}] " if total else ""
+    print(f"  · {progress_flag}[{kind}] {item.title} → {out_dir.relative_to(OUTPUT_DIR)}")
 
     # 1) Soal + lampiran
     parsed = parser.parse(item)

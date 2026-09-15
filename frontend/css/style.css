@@ -482,3 +482,14 @@ body {
 }
 
 /* Lucide icons will be loaded from CDN */
+
+/* Run progress bar — strip beranimasi saat proses sedang berjalan */
+#runProgressBar.progress-active {
+    background-size: 200% 100% !important;
+    animation: run-progress-slide 1.4s linear infinite;
+}
+
+@keyframes run-progress-slide {
+    from { background-position: 0% 0; }
+    to { background-position: -200% 0; }
+}
