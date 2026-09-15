@@ -37,5 +37,5 @@ class MoodleSession:
         if resp.status_code == 200 and "login/index.php" in resp.url:
             raise RuntimeError(
                 "Sesi Moodle tidak valid / login gagal. "
-                "Perbarui MOODLE_SESSION di .env"
+                "Perbarui MOODLE_COOKIE (MoodleSession) di Settings"
             )

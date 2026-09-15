@@ -10,6 +10,7 @@ from docx.shared import Pt
 
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
+_MATRIX_INLINE_RE = re.compile(r"\[\[.*?\]\]")
 _LATEX_REPLACEMENTS = {
     r"\rightarrow": "→",
     r"\to": "→",
@@ -41,6 +42,10 @@ def _omml_sup(base: str, exp: str) -> str:
     return f"<m:sSup><m:e>{base}</m:e><m:sup>{exp}</m:sup></m:sSup>"
 
 
+def _omml_sub(base: str, sub: str) -> str:
+    return f"<m:sSub><m:e>{base}</m:e><m:sub>{sub}</m:sub></m:sSub>"
+
+
 def _omml_sqrt(inner: str) -> str:
     return (
         '<m:rad><m:radPr><m:degHide m:val="1"/></m:radPr>'
@@ -60,91 +65,226 @@ def _omml_matrix(cell_rows: list[list[str]]) -> str:
     )
 
 
-def _math_nodes(s: str) -> list[str]:
-    """Parse mini-notasi matematika jadi daftar element OMML (xml string).
+def _parse_latex_math(s: str) -> list[str]:
+    """Parse LaTeX math string into OMML XML element list.
 
-    Didukung: matriks [[a, b], [c, d]], pangkat x^2, akar sqrt(...),
-    angka desimal, variabel huruf, dan operator + - = × · ( ) .
-    Jika ada yang tak dikenali dipakai sebagai teks biasa.
+    Handles: \\begin{bmatrix}...\\end{bmatrix}, \\sqrt{}, x^{n},
+    \\alpha, \\times, \\cdot, \\neq, \\leq, \\geq, \\text{}, and
+    inline * as ×.  Unknown commands are rendered as plain text.
     """
+    _ALPHA_MAP = {
+        "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ",
+        "epsilon": "ε", "theta": "θ", "lambda": "λ", "mu": "μ",
+        "pi": "π", "sigma": "σ", "phi": "φ", "omega": "ω",
+        "rho": "ρ", "tau": "τ", "psi": "ψ", "chi": "χ",
+        "eta": "η", "kappa": "κ", "xi": "ξ", "zeta": "ζ",
+        "Delta": "Δ", "Sigma": "Σ", "Omega": "Ω", "Pi": "Π",
+        "Phi": "Φ", "Psi": "Ψ", "Theta": "Θ", "Lambda": "Λ",
+    }
+    _CMD_MAP = {
+        "times": "×", "cdot": "·", "pm": "±", "mp": "∓",
+        "leq": "≤", "geq": "≥", "neq": "≠", "approx": "≈",
+        "equiv": "≡", "sim": "∼", "propto": "∝",
+        "rightarrow": "→", "leftarrow": "←", "leftrightarrow": "↔",
+        "Rightarrow": "⇒", "Leftarrow": "⇐", "Leftrightarrow": "⇔",
+        "infty": "∞", "partial": "∂", "nabla": "∇",
+        "forall": "∀", "exists": "∃", "in": "∈", "notin": "∉",
+        "subset": "⊂", "supset": "⊃", "cup": "∪", "cap": "∩",
+        "emptyset": "∅", "ldots": "…", "cdots": "⋯", "vdots": "⋮",
+        "hline": "", "quad": " ", "qquad": "  ",
+    }
+
     nodes: list[str] = []
     i, n = 0, len(s)
+
+    def _read_braced(pos: int) -> tuple[str, int]:
+        while pos < n and s[pos] == " ":
+            pos += 1
+        if pos < n and s[pos] == "{":
+            depth, start = 1, pos + 1
+            pos += 1
+            while pos < n and depth:
+                if s[pos] == "{":
+                    depth += 1
+                elif s[pos] == "}":
+                    depth -= 1
+                pos += 1
+            return s[start : pos - 1], pos
+        if pos < n:
+            return s[pos], pos + 1
+        return "", pos
+
     while i < n:
         c = s[i]
-        if c.isspace() or c == ",":
+
+        if c == " " or c == "," or c == "\n":
             i += 1
             continue
-        if s.startswith("[[", i):
-            j = s.find("]]", i)
-            if j == -1:
-                nodes.append(_omml_run(s[i:]))
+
+        # LaTeX command
+        if c == "\\":
+            i += 1
+            if i >= n:
+                nodes.append(_omml_run("\\"))
                 break
-            inner = s[i + 2 : j]
-            rows: list[list[str]] = []
-            for part in re.split(r"\]\s*,\s*\[", inner):
-                cells = [c.strip() for c in part.split(",") if c.strip()]
-                rows.append(
-                    ["".join(_math_nodes(cell)) if cell else _omml_run("") for cell in cells]
-                )
-            nodes.append(_omml_matrix(rows))
-            i = j + 2
+            nxt = s[i]
+            # Escaped special: \{ \} \_ \^ \* \% \$
+            if nxt in ("{", "}", "_", "^", "*", "%", "$", " ", "|"):
+                nodes.append(_omml_run(nxt))
+                i += 1
+                continue
+            # Command name
+            if nxt.isalpha():
+                j = i
+                while j < n and s[j].isalpha():
+                    j += 1
+                cmd = s[i:j]
+                i = j
+                if cmd in _ALPHA_MAP:
+                    nodes.append(_omml_run(_ALPHA_MAP[cmd]))
+                elif cmd == "sqrt":
+                    inner, i = _read_braced(i)
+                    nodes.append(_omml_sqrt("".join(_parse_latex_math(inner))))
+                elif cmd == "text":
+                    inner, i = _read_braced(i)
+                    nodes.append(_omml_run(inner))
+                elif cmd == "begin":
+                    env, i = _read_braced(i)
+                    content, i = _read_until_end(s, i, env)
+                    if env.endswith("matrix"):
+                        nodes.append(_parse_latex_matrix(content, env))
+                    else:
+                        nodes.append(_omml_run(content))
+                elif cmd in _CMD_MAP:
+                    rep = _CMD_MAP[cmd]
+                    if rep:
+                        nodes.append(_omml_run(rep))
+                else:
+                    nodes.append(_omml_run(cmd))
+                continue
+            # \ followed by non-alpha: treat as text
+            nodes.append(_omml_run(nxt))
+            i += 1
             continue
-        if s.startswith("sqrt(", i):
-            depth, k = 1, i + 5
-            while k < n and depth:
-                if s[k] == "(":
-                    depth += 1
-                elif s[k] == ")":
-                    depth -= 1
-                k += 1
-            inner = s[i + 5 : k - 1] if depth == 0 else s[i + 5 :]
-            nodes.append(_omml_sqrt("".join(_math_nodes(inner))))
-            i = k
-            continue
+
+        # Superscript
         if c == "^":
             base = nodes.pop() if nodes else _omml_run("")
-            j = i + 1
-            while j < n and (s[j].isspace() or s[j] == ","):
+            i += 1
+            exp, i = _read_braced(i)
+            nodes.append(_omml_sup(base, "".join(_parse_latex_math(exp)) if exp else _omml_run("")))
+            continue
+
+        # Subscript
+        if c == "_":
+            base = nodes.pop() if nodes else _omml_run("")
+            i += 1
+            sub, i = _read_braced(i)
+            sub_nodes = "".join(_parse_latex_math(sub)) if sub else _omml_run("")
+            nodes.append(_omml_sub(base, sub_nodes))
+            continue
+
+        # Brace group
+        if c == "{":
+            depth, start = 1, i + 1
+            i += 1
+            while i < n and depth:
+                if s[i] == "{":
+                    depth += 1
+                elif s[i] == "}":
+                    depth -= 1
+                i += 1
+            inner = s[start : i - 1]
+            nodes.extend(_parse_latex_math(inner))
+            continue
+
+        # Parenthesized group → single run (so (AB)_{11} becomes a proper base)
+        if c == "(":
+            depth, j = 1, i + 1
+            while j < n and depth:
+                if s[j] == "(":
+                    depth += 1
+                elif s[j] == ")":
+                    depth -= 1
                 j += 1
-            if j < n and s[j] == "(":
-                depth, k = 1, j + 1
-                while k < n and depth:
-                    if s[k] == "(":
-                        depth += 1
-                    elif s[k] == ")":
-                        depth -= 1
-                    k += 1
-                exp = "".join(_math_nodes(s[j + 1 : k - 1])) if depth == 0 else _omml_run(s[j:k])
-                nodes.append(_omml_sup(base, exp))
-                i = k
+            if depth == 0:
+                nodes.append(_omml_run(s[i:j]))
+                i = j
+            else:
+                nodes.append(_omml_run(s[i:]))
+                i = n
+            continue
+
+        # ASCII matrix: [[a, b], [c, d]]
+        if s.startswith("[[", i):
+            j = s.find("]]", i)
+            if j != -1:
+                inner = s[i + 2 : j]
+                rows: list[list[str]] = []
+                for part in re.split(r"\]\s*,\s*\[", inner):
+                    cells = [c.strip() for c in part.split(",") if c.strip()]
+                    rows.append(
+                        ["".join(_parse_latex_math(c)) if c else _omml_run("") for c in cells]
+                    )
+                nodes.append(_omml_matrix(rows))
+                i = j + 2
                 continue
-            if j < n:
-                exp_part = s[j:]
-                m = re.match(r"\d+(?:\.\d+)?|[A-Za-z]+", exp_part)
-                if m:
-                    exp = "".join(_math_nodes(m.group()))
-                    nodes.append(_omml_sup(base, exp))
-                    i = j + len(m.group())
-                    continue
-            nodes.append(_omml_run("^"))
+            nodes.append(_omml_run(s[i]))
             i += 1
             continue
+
+        # Numeric literal
         m = re.match(r"\d+(?:\.\d+)?", s[i:])
         if m:
             nodes.append(_omml_run(m.group()))
             i += m.end()
             continue
+
+        # Alphabetic variable (multi-letter run)
         if c.isalpha():
-            nodes.append(_omml_run(c))
+            j = i
+            while j < n and s[j].isalpha():
+                j += 1
+            nodes.append(_omml_run(s[i:j]))
+            i = j
+            continue
+
+        # * outside \-command → ×
+        if c == "*":
+            nodes.append(_omml_run("×"))
             i += 1
             continue
+
+        # Everything else: parentheses, operators, brackets, etc.
         nodes.append(_omml_run(c))
         i += 1
+
     return nodes
 
 
+def _read_until_end(s: str, i: int, env: str) -> tuple[str, int]:
+    """Read content until \\end{env}, returning (content, new_index)."""
+    tag = f"\\end{{{env}}}"
+    j = s.find(tag, i)
+    if j == -1:
+        return s[i:], len(s)
+    return s[i:j], j + len(tag)
+
+
+def _parse_latex_matrix(content: str, env: str) -> str:
+    """Convert LaTeX matrix content to OMML with bracket delimiters."""
+    rows = re.split(r"\\\\|(?<!\\)\\(?!\\)", content)
+    cell_rows: list[list[str]] = []
+    for row in rows:
+        cells = [c.strip() for c in row.split("&")]
+        cell_rows.append(
+            ["".join(_parse_latex_math(c)) if c else _omml_run("") for c in cells]
+        )
+    return _omml_matrix(cell_rows)
+
+
 def _equation_omml(math_str: str) -> str:
-    content = "".join(_math_nodes(math_str)) or _omml_run("")
+    content = "".join(_parse_latex_math(math_str)) or _omml_run("")
     return f'<m:oMath xmlns:m="{_MATH_NS}">{content}</m:oMath>'
 
 
@@ -152,7 +292,7 @@ def _append_equation(paragraph, math_str: str):
     try:
         from lxml import etree
 
-        el = etree.fromstring(_equation_omml(_normalize_text(math_str)).encode("utf-8"))
+        el = etree.fromstring(_equation_omml(math_str).encode("utf-8"))
         paragraph._p.append(el)
     except Exception:  # noqa: BLE001
         paragraph.add_run(math_str)
@@ -172,7 +312,18 @@ def _add_runs(paragraph, text: str):
 
 
 def _add_italic_runs(paragraph, text: str):
+    """Terapkan *italic* dan konversi matriks inline [[...]] jadi equation."""
     text = _normalize_text(text)
+    pos = 0
+    for m in _MATRIX_INLINE_RE.finditer(text):
+        if m.start() > pos:
+            _add_italic_text(paragraph, text[pos:m.start()])
+        _append_equation(paragraph, m.group(0))
+        pos = m.end()
+    _add_italic_text(paragraph, text[pos:])
+
+
+def _add_italic_text(paragraph, text: str):
     pos = 0
     for m in _ITALIC_RE.finditer(text):
         if m.start() > pos:
@@ -216,7 +367,7 @@ def _render_markdown(doc: Document, md: str):
                 if not part:
                     continue
                 if idx % 2:
-                    _append_equation(p, _normalize_text(part))
+                    _append_equation(p, part)
                 else:
                     _add_runs(p, part)
             i += 1
@@ -292,11 +443,11 @@ def _render_markdown(doc: Document, md: str):
         # Ordered list
         mo = re.match(r"^(\d+)[.)]\s+(.*)$", line)
         if mo:
-            if ordered_idx == 0:
-                ordered_idx = 1
-            p = doc.add_paragraph(style="List Number")
+            num = mo.group(1).lstrip("0") or "0"
+            p = doc.add_paragraph()
+            p.add_run(f"{num}. ")
             _add_runs(p, mo.group(2))
-            ordered_idx += 1
+            ordered_idx = 1
             i += 1
             continue
 
@@ -305,9 +456,36 @@ def _render_markdown(doc: Document, md: str):
         if not line.strip():
             i += 1
             continue
+        # Horizontal rule --- / *** → spacer paragraph
+        if re.match(r"^[-*=_]{3,}\s*$", line.strip()):
+            doc.add_paragraph()
+            i += 1
+            continue
         p = doc.add_paragraph()
         _add_runs(p, line.strip())
         i += 1
+
+
+def _clean_soal(md: str) -> str:
+    """Buang metadata lampiran/transkripsi dari soal, pertahankan isi transkripsi."""
+    lines = md.splitlines()
+    out: list[str] = []
+    skip_attachments = False
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r"^##\s+Lampiran\s*:?", stripped):
+            skip_attachments = True
+            continue
+        if re.match(r"^##\s+Isi\s+lampiran\b", stripped, re.IGNORECASE):
+            continue
+        if stripped == "# Transkrip Soal":
+            continue
+        if skip_attachments:
+            if re.match(r"^[-*]\s+", stripped) or not stripped:
+                continue
+            skip_attachments = False
+        out.append(line)
+    return "\n".join(out)
 
 
 def build_docx(
@@ -352,9 +530,7 @@ def build_docx(
         sr = sp.add_run("Soal")
         sr.bold = True
         sr.font.size = Pt(14)
-        for line in soal_text.splitlines():
-            if line.strip():
-                doc.add_paragraph().add_run(line)
+        _render_markdown(doc, _clean_soal(soal_text))
 
     # Jawab (dari markdown opencode)
     try:

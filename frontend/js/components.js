@@ -203,6 +203,11 @@ const CardRenderer = {
                             <h3 class="text-lg font-bold text-gray-600">${course.name}</h3>
                             <p class="text-xs text-gray-400 mt-1">Belum ada file selesai</p>
                         </div>
+                        ${course.folder ? `
+                        <button class="text-gray-400 hover:text-red-600 transition-colors p-2" 
+                                onclick="Results.deleteCourse('${course.folder.replace(/\\/g, "\\\\")}')" title="Hapus matkul">
+                            <i data-lucide="trash-2" class="w-5 h-5"></i>
+                        </button>` : ""}
                     </div>
                 </div>
             `;
@@ -238,8 +243,15 @@ const CardRenderer = {
                         <h3 class="text-lg font-bold text-gray-900">${course.name}</h3>
                         <p class="text-xs text-gray-500 mt-1">${fileCount} file berhasil dibuat</p>
                     </div>
-                    <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-accent">
-                        <i data-lucide="book-open" class="w-5 h-5"></i>
+                    <div class="flex items-center gap-1">
+                        ${course.folder ? `
+                        <button class="text-gray-400 hover:text-red-600 transition-colors p-2" 
+                                onclick="Results.deleteCourse('${course.folder.replace(/\\/g, "\\\\")}')" title="Hapus matkul">
+                            <i data-lucide="trash-2" class="w-5 h-5"></i>
+                        </button>` : ""}
+                        <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-accent">
+                            <i data-lucide="book-open" class="w-5 h-5"></i>
+                        </div>
                     </div>
                 </div>
                 <div class="p-4 flex-1">

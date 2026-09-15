@@ -12,11 +12,10 @@ _STATE: dict | None = None
 
 def _load() -> dict:
     global _STATE
-    if _STATE is None:
-        if STATE_FILE.exists():
-            _STATE = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        else:
-            _STATE = {"items": {}}
+    if STATE_FILE.exists():
+        _STATE = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    elif _STATE is None:
+        _STATE = {"items": {}}
     return _STATE
 
 

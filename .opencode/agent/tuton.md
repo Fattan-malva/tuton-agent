@@ -30,6 +30,10 @@ Kamu dipanggil oleh `tuton-agent` untuk mengerjakan satu soal tuton.
   menjalankan bash/script apa pun (tidak punya izin bash), termasuk OCR, crop,
   resize, atau render ASCII.
 - Kerjakan SEMUA butir soal, jangan ada yang terlewat.
+- Jika di file `soal.md` TIDAK ada pertanyaan sama sekali (hanya placeholder
+  'soal kosong / perlu dibaca dari lampiran' tanpa transkripsi yang terbaca),
+  JANGAN mengarang soal maupun jawaban. Cukup tulis "## Jawab" lalu kalimat
+  bahwa soal tidak ditemukan sehingga tidak dapat dikerjakan, lalu akhiri.
 - Daftar pustaka wajib berisi referensi NYATA yang bisa diverifikasi. Verifikasi
   setiap referensi lewat websearch/webfetch (Google Scholar, penerbit, DOI Crossref).
   Buang referensi yang tidak dapat dipastikan. JANGAN halusinasi.

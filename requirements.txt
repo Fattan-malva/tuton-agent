@@ -5,7 +5,6 @@ python-dotenv
 pymupdf
 openpyxl
 pillow
-pywin32
 easyocr
 Flask
 flask-cors

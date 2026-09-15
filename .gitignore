@@ -1,9 +1,61 @@
+# Environment / Secrets
 .env
+.env.*
+!.env.example
+
+# Credentials / sensitive files
+moodle_credentials.json
+*.credentials.json
+*credentials*.json
+secrets/
+*.pem
+*.key
+
+# Python
 __pycache__/
-*.pyc
-output/
-node_modules/
+*.py[cod]
+*.pyo
+*.pyd
 .venv/
 venv/
+env/
+ENV/
+
+# OCR / ML cache
+.easyocr/
+.cache/
+.huggingface/
+.model_cache/
+
+# Generated output
+output/
+outputs/
+*.log
+logs/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary
+*.tmp
+*.temp
+*.bak
+
+# Docker
 Dockerfile
 docker-compose.yml
+
+restart.sh

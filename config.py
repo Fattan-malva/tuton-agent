@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -10,6 +11,19 @@ PROJECT_ROOT = BASE_DIR
 OUTPUT_DIR = BASE_DIR / "output"
 TEMPLATE_DIR = BASE_DIR / "template"
 HUMANIZER_DIR = BASE_DIR / "vendor" / "humanizer"
+
+# Kredensial Moodle (MOODLE_COOKIE/MoodleSession) disimpan di file JSON
+# terpisah (bukan .env) supaya bisa di-update terus dari menu Settings.
+MOODLE_CRED_FILE = BASE_DIR / "moodle_credentials.json"
+
+
+def _load_moodle_session() -> str:
+    try:
+        data = json.loads(MOODLE_CRED_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    value = data.get("MoodleSession") or data.get("moodle_session") or ""
+    return str(value).strip()
 
 
 class Config:
@@ -34,8 +48,24 @@ class Config:
     TUTON_TIMEOUT_TRANSCRIBE = int(os.getenv("TUTON_TIMEOUT_TRANSCRIBE", "300"))
 
     MOODLE_BASE_URL = os.getenv("MOODLE_BASE_URL", "https://elearning.ut.ac.id")
-    MOODLE_SESSION = os.getenv("MOODLE_SESSION", "").strip()
     _EXTRA_COOKIES = None
+
+    @classmethod
+    def moodle_session(cls) -> str:
+        """Prioritaskan kredensial dari JSON; fallback ke MOODLE_SESSION di .env."""
+        stored = _load_moodle_session()
+        return stored or os.getenv("MOODLE_SESSION", "").strip()
+
+    @classmethod
+    def save_moodle_session(cls, value: str) -> None:
+        value = str(value or "").strip()
+        if value.lower().startswith("moodlesession="):
+            value = value.split("=", 1)[1].strip()
+        MOODLE_CRED_FILE.write_text(
+            json.dumps({"MoodleSession": value}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        cls._EXTRA_COOKIES = None
 
     @classmethod
     def cookies(cls) -> dict:
@@ -45,7 +75,7 @@ class Config:
                 for k, v in os.environ.items()
                 if k.startswith("COOKIE_") and v.strip()
             }
-        cookies = {"MoodleSession": cls.MOODLE_SESSION}
+        cookies = {"MoodleSession": cls.moodle_session()}
         for raw in cls._EXTRA_COOKIES.values():
             parts = raw.split("=", 1)
             if len(parts) == 2:
@@ -60,7 +90,7 @@ class Config:
             "prodi": cls.PRODI,
             "model": cls.OPENCODE_MODEL or "(default)",
             "base_url": cls.MOODLE_BASE_URL,
-            "has_session": bool(cls.MOODLE_SESSION),
+            "has_session": bool(cls.moodle_session()),
         }
 
     @classmethod
@@ -74,5 +104,8 @@ class Config:
             raise RuntimeError(
                 "Identitas belum lengkap di .env: " + ", ".join(missing)
             )
-        if not cls.MOODLE_SESSION:
-            raise RuntimeError("MOODLE_SESSION belum diisi di .env")
+        if not cls.moodle_session():
+            raise RuntimeError(
+                "MOODLE_COOKIE (MoodleSession) belum diisi. "
+                "Atur di menu Settings."
+            )

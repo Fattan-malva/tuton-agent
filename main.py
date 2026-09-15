@@ -27,6 +27,10 @@ from moodle.scraper import Activity, CourseScraper
 SEC_TUGAS_INDEX = {3: 1, 5: 2, 7: 3}
 
 
+class SoalNotFound(RuntimeError):
+    """Soal tidak ditemukan di mana pun (tab seksi di course maupun forum)."""
+
+
 def _print_courses(scraper: CourseScraper):
     courses = scraper.get_courses()
     print("Daftar mata kuliah:")
@@ -112,10 +116,15 @@ def _process_course(
             *[(t, "tugas") for t in tugas],
         ]
         for item, kind in work:
-            worked += _process_item(
-                session, scraper, downloader, parser,
-                course, sec.number, item, kind, force=force,
-            )
+            try:
+                worked += _process_item(
+                    session, scraper, downloader, parser,
+                    course, sec.number, item, kind, force=force,
+                )
+            except SoalNotFound as exc:
+                print(f"\n  ⛔ BERHENTI: {exc}")
+                print("  Sisa item tidak dikerjakan sampai soal ditemukan/diperbaiki.")
+                return
     print(f"\nSelesai. {worked} item diproses untuk {course.name}.")
 
 
@@ -153,17 +162,44 @@ def _process_item(
     # cukup dari satu file teks.
     from moodle.transcribe import process_attachment
 
+    transcribed = []
     for p in saved:
         print(f"  · Transkripsi {p.name} ...")
         text = process_attachment(p, lamp_dir)
         if text:
             print(f"    -> {len(text)} karakter")
+        transcribed.append(text or "")
         soal_md_lines.append("")
         soal_md_lines.append(f"## Isi lampiran: {p.name} (transkripsi)")
         soal_md_lines.append(
             text or "(tidak bisa dibaca otomatis - perlu dicek manual)"
         )
     soal_path = out_dir / "soal.md"
+
+    # 1b) Verifikasi soal benar-benar ada. Jika kosong di semua sumber
+    #     (tab seksi course/view.php#tabs-tree-start, deskripsi forum, post
+    #     pembuka), BERHENTI — jangan mengarang jawaban.
+    _has_soal = bool(
+        (parsed.question or "").strip()
+        or any(t.strip() for t in transcribed)
+    )
+    if not _has_soal:
+        soal_path.write_text(
+            "\n".join(soal_md_lines) + "\n\nTIDAK ADA SOAL DITEMUKAN. "
+            "Proses dihentikan, tidak ada jawaban yang dibuat.\n",
+            encoding="utf-8",
+        )
+        state.set_item(k, {
+            "status": "failed",
+            "matkul": course.name,
+            "sesi": section_num,
+            "desc": item.title,
+            "reason": "soal_tidak_ditemukan",
+        })
+        raise SoalNotFound(
+            f"Soal untuk '{item.title}' tidak ditemukan di halaman course "
+            f"(#tabs-tree-start) maupun forum. Proses dihentikan."
+        )
     soal_path.write_text("\n".join(soal_md_lines), encoding="utf-8")
 
     # 2) Panggil opencode
@@ -203,7 +239,9 @@ def _process_item(
 
     # 3) Generate .docx (equation OMML asli)
     jawaban_md = jawaban_path.read_text(encoding="utf-8")
-    soal_for_docx = soal_path.read_text(encoding="utf-8")
+    # Jangan baca ulang soal.md dari disk: agent opencode bisa menghapus/memindahnya
+    # saat bekerja. Pakai konten yang sudah kita susun di memori.
+    soal_for_docx = "\n".join(soal_md_lines)
     meta = {
         "nama": Config.NAMA,
         "nim": Config.NIM,

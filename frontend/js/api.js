@@ -77,6 +77,12 @@ const CoursesAPI = {
     async getActivities(courseId) {
         return apiRequest(`/api/courses/${courseId}/activities`);
     },
+
+    async deleteCourse(folder) {
+        return apiRequest(`/api/courses/${encodeURI(folder)}`, {
+            method: "DELETE",
+        });
+    },
 };
 
 // === Status ===
@@ -93,12 +99,12 @@ const ResultsAPI = {
     },
 
     async download(filepath) {
-        const url = `/api/download/${encodeURIComponent(filepath)}`;
+        const url = `/api/download/${encodeURI(filepath)}`;
         window.open(url, "_blank");
     },
 
     async delete(filepath) {
-        return apiRequest(`/api/results/${encodeURIComponent(filepath)}`, {
+        return apiRequest(`/api/results/${encodeURI(filepath)}`, {
             method: "DELETE",
         });
     },

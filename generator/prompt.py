@@ -65,7 +65,11 @@ def build_prompt(
             "2. JANGAN menjalankan perintah shell/bash apa pun. JANGAN membaca, memproses, atau meng-OCR file "
             "lampiran (gambar/PDF/Excel). JANGAN crop, resize, atau render ASCII. Semua isi lampiran sudah "
             "tersedia sebagai teks di dalam file soal.",
-            "3. Jika teks soal kurang jelas / berisi '[tidak terbaca]', kerjakan dengan asumsi yang wajar dan "
+            "3. Jika teks soal benar-benar TIDAK ADA (file hanya berisi 'soal kosong / perlu dibaca dari "
+            "lampiran' tanpa bagian 'Isi lampiran ... (transkripsi)' yang terbaca), maka JANGAN mengarang "
+            "pertanyaan atau jawaban. Tulis di file jawaban: '## Jawab' lalu baris menjelaskan bahwa soal "
+            "tidak ditemukan / tidak tersedia untuk dikerjakan, dan akhiri. Jangan menulis jawaban fiktif.",
+            "   Jika teks soal ada tetapi sebagian '[tidak terbaca]', kerjakan dengan asumsi yang wajar dan "
             "cantumkan asumsinya di akhir jawaban.",
             "4. Jangan menulis ulang isi soal di jawaban. Cukup jawabannya.",
             "5. Sertakan 'Daftar Pustaka' di akhir jawaban yang BERISI HANYA referensi NYATA dan dapat diverifikasi:",

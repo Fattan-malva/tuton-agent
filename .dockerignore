@@ -1,0 +1,12 @@
+.git
+.gitignore
+output
+.venv
+venv
+node_modules
+.vscode
+.idea
+*.pyc
+__pycache__
+*.log
+.easyocr

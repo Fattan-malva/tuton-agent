@@ -505,6 +505,16 @@ window.Results = {
             appToast.show("Gagal menghapus file: " + error.message, "error");
         }
     },
+    async deleteCourse(folder) {
+        if (!window.confirm(`Hapus seluruh folder matkul "${folder}" beserta semua filenya?\nFolder ini akan dihapus permanen dari output/.`)) return;
+        try {
+            await appCoursesAPI.deleteCourse(folder);
+            appToast.show("Matkul berhasil dihapus", "success");
+            await loadResults();
+        } catch (error) {
+            appToast.show("Gagal menghapus matkul: " + error.message, "error");
+        }
+    },
 };
 window.handleLogin = handleLogin;
 window.handleLogout = handleLogout;

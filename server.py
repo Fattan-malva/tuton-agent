@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -111,30 +112,34 @@ def get_config():
         "prodi": Config.PRODI,
         "model": Config.OPENCODE_MODEL or "(default)",
         "base_url": Config.MOODLE_BASE_URL,
-        "has_session": bool(Config.MOODLE_SESSION),
+        "has_session": bool(Config.moodle_session()),
         "output_dir": str(OUTPUT_DIR),
     })
 
 
 @app.route("/api/config", methods=["POST"])
 def save_config():
-    """Save configuration to .env file."""
+    """Save configuration. Session Moodle ke file JSON, sisanya ke .env."""
     data = request.get_json() or {}
-    
+
+    # Moodle session disimpan ke JSON agar bisa di-update kapan saja
+    # tanpa menyentuh .env (dan tidak terekpos sebagai variabel env).
+    if data.get("moodle_session"):
+        Config.save_moodle_session(str(data["moodle_session"]))
+
     env_path = Path(__file__).parent / ".env"
     env_lines = []
-    
+
     # Read existing .env
     if env_path.exists():
         env_lines = env_path.read_text(encoding="utf-8").splitlines()
-    
-    # Update or add keys
+
+    # Update or add keys (MOODLE_SESSION sengaja tidak dimasukkan ke .env)
     updates = {
         "NAMA": data.get("nama", ""),
         "NIM": data.get("nim", ""),
         "PRODI": data.get("prodi", ""),
         "MOODLE_BASE_URL": data.get("moodle_url", ""),
-        "MOODLE_SESSION": data.get("moodle_session") or Config.MOODLE_SESSION,
         "OPENCODE_MODEL": data.get("opencode_model") or Config.OPENCODE_MODEL,
     }
     
@@ -144,6 +149,8 @@ def save_config():
     for line in env_lines:
         if "=" in line and not line.strip().startswith("#"):
             key = line.split("=")[0].strip()
+            if key == "MOODLE_SESSION":
+                continue  # dipindah ke moodle_credentials.json
             if key in updates:
                 new_lines.append(f"{key}={updates[key]}")
                 seen_keys.add(key)
@@ -189,7 +196,7 @@ def get_courses():
     except requests.TooManyRedirects:
         return jsonify({
             "success": False,
-            "error": "Session Moodle tidak valid atau sudah kedaluwarsa. Perbarui MOODLE_SESSION di Settings.",
+            "error": "Session Moodle tidak valid atau sudah kedaluwarsa. Perbarui MOODLE_COOKIE (MoodleSession) di Settings.",
         }), 401
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -306,13 +313,24 @@ def get_results():
             
             for output_path in v.get("outputs", []):
                 p = Path(output_path)
+                if p.exists():
+                    try:
+                        rel = p.resolve().relative_to(OUTPUT_DIR.resolve())
+                    except ValueError:
+                        rel = None
+                    if rel and rel.parts and not courses_map[course_name].get("folder"):
+                        courses_map[course_name]["folder"] = rel.parts[0]
                 if p.suffix.lower() != ".docx":
                     continue
                 if p.exists():
                     stat = p.stat()
+                    try:
+                        rel_path = "/".join(p.resolve().relative_to(OUTPUT_DIR.resolve()).parts)
+                    except ValueError:
+                        rel_path = p.name
                     courses_map[course_name]["files"].append({
                         "name": p.name,
-                        "path": str(p),
+                        "path": rel_path,
                         "size": stat.st_size,
                         "modified": stat.st_mtime,
                         "kind": v.get("kind"),
@@ -371,6 +389,43 @@ def delete_result(filepath: str):
 
         full_path.unlink()
         return jsonify({"success": True, "message": f"{full_path.name} dihapus"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/courses/<path:folder>", methods=["DELETE"])
+def delete_course(folder: str):
+    """Hapus seluruh folder matkul di bawah output/ beserta riwayatnya di state."""
+    try:
+        if not folder or ".." in Path(folder).parts:
+            return jsonify({"success": False, "error": "Access denied"}), 403
+        course_dir = (OUTPUT_DIR / folder).resolve()
+        output_root = OUTPUT_DIR.resolve()
+        try:
+            course_dir.relative_to(output_root)
+        except ValueError:
+            return jsonify({"success": False, "error": "Access denied"}), 403
+        if not course_dir.is_dir():
+            return jsonify({"success": False, "error": f"Folder matkul '{folder}' tidak ditemukan"}), 404
+
+        shutil.rmtree(course_dir)
+
+        prefix = str(course_dir)
+        st = state._load()
+        items = st.get("items", {})
+        removed = 0
+        for k in list(items.keys()):
+            outs = items[k].get("outputs") or []
+            if any(str(o).startswith(prefix + os.sep) or str(o) == prefix for o in outs):
+                del items[k]
+                removed += 1
+        state.save()
+
+        return jsonify({
+            "success": True,
+            "message": f"{folder} dihapus",
+            "removed": removed,
+        })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 

@@ -44,6 +44,7 @@ class Activity:
     id: int
     title: str
     section: int = 0
+    course_id: int = 0
 
     @property
     def url(self) -> str:
@@ -157,7 +158,13 @@ class CourseScraper:
             if self._is_global(text):
                 continue
             activities.append(
-                Activity(mod_type=mod_type, id=mod_id, title=text, section=num)
+                Activity(
+                    mod_type=mod_type,
+                    id=mod_id,
+                    title=text,
+                    section=num,
+                    course_id=course_id,
+                )
             )
 
         return SectionInfo(number=num, title=title, activities=activities)

@@ -65,6 +65,11 @@ body {
     font-family: 'JetBrains Mono', monospace;
 }
 
+/* Terminal: keep box-drawing lines intact, scroll horizontally instead of wrapping */
+.terminal-line {
+    white-space: pre;
+}
+
 .text-xs {
     font-size: 0.75rem;
 }
