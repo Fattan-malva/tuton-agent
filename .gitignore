@@ -60,3 +60,5 @@ Dockerfile
 docker-compose.yml
 
 restart.sh
+
+.ruff_cache/
