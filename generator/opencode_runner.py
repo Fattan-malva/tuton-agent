@@ -168,9 +168,22 @@ def run_opencode(
 
     assert proc.stdout is not None
     buf = ""
+    # Windows: `pipe.read(n)` memblokir sampai EOF → output opencode tidak
+    # stream trus-menerus dan watchdog timeout tidak pernah jalan. Jadi
+    # set pipe non-blocking supaya tiap chunk yang sudah tersedia langsung
+    # dibaca, dan loop bisa dicek per iterasi.
+    if os.name == "nt":
+        try:
+            os.set_blocking(proc.stdout.fileno(), False)
+        except OSError:
+            pass
+
     try:
         while True:
-            chunk = proc.stdout.read(4096)
+            try:
+                chunk = proc.stdout.read(4096)
+            except (BlockingIOError, ValueError):
+                chunk = ""
             if chunk:
                 buf += chunk
                 while True:

@@ -21,7 +21,7 @@ from generator.opencode_runner import run_opencode
 from generator.prompt import build_prompt
 from moodle.auth import MoodleSession
 from moodle.downloader import AttachmentDownloader
-from moodle.parser import QuestionParser
+from moodle.parser import QuestionParser, question_body
 from moodle.scraper import Activity, CourseScraper
 
 SEC_TUGAS_INDEX = {3: 1, 5: 2, 7: 3}
@@ -179,9 +179,13 @@ def _process_item(
     # 1b) Verifikasi soal benar-benar ada. Jika kosong di semua sumber
     #     (tab seksi course/view.php#tabs-tree-start, deskripsi forum, post
     #     pembuka), BERHENTI — jangan mengarang jawaban.
+    _useful_transcripts = [
+        t for t in transcribed
+        if t.strip() and "tidak bisa dibaca otomatis" not in t[:80]
+    ]
     _has_soal = bool(
-        (parsed.question or "").strip()
-        or any(t.strip() for t in transcribed)
+        question_body(parsed.question)
+        or _useful_transcripts
     )
     if not _has_soal:
         soal_path.write_text(

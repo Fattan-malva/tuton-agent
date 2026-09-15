@@ -66,33 +66,48 @@ def _kill_proc_tree(proc: subprocess.Popen) -> None:
 
 
 def _read_process_output(proc: subprocess.Popen):
-    """Read stdout chunks and split by \\n/\\r so spinner/progress (bare \\r)
-    doesn't block the log on Windows."""
+    """Stream stdout proses anak secara real-time.
+
+    Di Windows, `pipe.read(n)` memblokir sampai EOF → semua baris baru muncul
+    di akhir run. Jadi di Windows pakai readline() (streaming per baris) lalu
+    pecah ulang per \\r supaya spinner/progress (bare \\r) tetap terlihat.
+    Di Linux, chunk read baku sudah streaming per potongan."""
     global process_output
-    buf = ""
     try:
-        while True:
-            chunk = proc.stdout.read(4096)
-            if not chunk:
-                break
-            buf += chunk
+        if os.name == "nt":
             while True:
-                sep = -1
-                if "\n" in buf:
-                    sep = buf.index("\n")
-                if "\r" in buf and (sep == -1 or buf.index("\r") < sep):
-                    sep = buf.index("\r")
-                if sep == -1:
+                line = proc.stdout.readline()
+                if not line:
                     break
-                line = _strip_ansi(buf[:sep]).rstrip("\r")
-                if line:
-                    with process_lock:
-                        process_output.append(line)
-                buf = buf[sep + 1:]
-        line = _strip_ansi(buf).rstrip("\r")
-        if line:
-            with process_lock:
-                process_output.append(line)
+                for piece in line.split("\r"):
+                    piece = _strip_ansi(piece).strip()
+                    if piece:
+                        with process_lock:
+                            process_output.append(piece)
+        else:
+            buf = ""
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                buf += chunk
+                while True:
+                    sep = -1
+                    if "\n" in buf:
+                        sep = buf.index("\n")
+                    if "\r" in buf and (sep == -1 or buf.index("\r") < sep):
+                        sep = buf.index("\r")
+                    if sep == -1:
+                        break
+                    line = _strip_ansi(buf[:sep]).rstrip("\r")
+                    if line:
+                        with process_lock:
+                            process_output.append(line)
+                    buf = buf[sep + 1:]
+            line = _strip_ansi(buf).rstrip("\r")
+            if line:
+                with process_lock:
+                    process_output.append(line)
     except Exception as e:
         with process_lock:
             process_output.append(f"ERROR: {e}")

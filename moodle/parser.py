@@ -11,6 +11,55 @@ from moodle.scraper import Activity
 
 _PLUGINFILE_RE = re.compile(r"https?://[^\s'\"]*pluginfile\.php[^\s'\"]*")
 
+# Baris "metadata" yang bukan isi soal: Due/extenggat, tanggal, jam, skor.
+_NOISE_RE = re.compile(
+    r"^(?:due|tenggat|deadline|batas\s*waktu|closing|closes?|open|opens?|"
+    r"duration|class\s*(?:starts?|ends?)|graded|worth|points?|maksimum\s*skor|"
+    r"max\s*(?:skor|points)|tanggal|jam|waktu)\b",
+    re.I,
+)
+_DAY_RE = re.compile(
+    r"\b(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday|"
+    r"minggu|senin|selasa|rabu|kamis|jumat|sabtu)\b",
+    re.I,
+)
+_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+_MONTH_RE = re.compile(
+    r"\b(?:jan(?:uary)?\.?|feb(?:ruary)?\.?|mar(?:ch)?\.?|apr(?:il)?\.?|may|"
+    r"juni?|juli?|aug(?:ust)?\.?|sept?(?:ember)?\.?|okt(?:ober)?\.?|"
+    r"nov(?:ember)?\.?|des(?:ember)?\.?|mei|agu(?:stus)?\.?)\b",
+    re.I,
+)
+_TIME_RE = re.compile(r"\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}\s*(?:am|pm)\b", re.I)
+
+
+def _is_noise_line(line: str) -> bool:
+    """True kalau baris hanyalah metadata (Due:, tanggal, jam) atau kosong."""
+    ln = line.strip()
+    if not ln:
+        return True
+    low = ln.lower()
+    if _NOISE_RE.search(low):
+        return True
+    words = [w for w in ln.split() if w]
+    if _DAY_RE.search(ln) and (
+        _YEAR_RE.search(ln) or _MONTH_RE.search(ln) or _TIME_RE.search(ln)
+    ):
+        return True
+    if _YEAR_RE.search(ln) and len(words) <= 8 and not ln.rstrip().endswith("?"):
+        return True
+    if _TIME_RE.search(ln) and len(words) <= 6:
+        return True
+    return False
+
+
+def question_body(question: str) -> str:
+    """Teks soal yang benar-benar isi, tanpa baris metadata/Due/tanggal."""
+    if not question:
+        return ""
+    kept = [ln for ln in question.splitlines() if not _is_noise_line(ln)]
+    return "\n".join(kept).strip()
+
 
 @dataclass
 class ParsedQuestion:
@@ -36,49 +85,57 @@ class QuestionParser:
     def _parse_forum(self, activity: Activity) -> ParsedQuestion:
         q = ParsedQuestion(activity=activity, title=activity.title)
 
-        # 1) PRIORITAS: deskripsi aktivitas di halaman SECTION
-        #    (course/view.php?id=..&section=..#tabs-tree-start).
-        #    Banyak tutor menaruh soal resmi di sana — kadang hanya berupa
-        #    gambar inline base64 (data:image/...) yang tidak terlihat di
-        #    body forum. Kalau dapat, jangan mencampur konten forum.
+        # Kondisi 1 — LUAR forum: deskripsi aktivitas di halaman section.
+        #    Banyak tutor menaruh soal resmi di sana, kadang hanya berupa
+        #    gambar inline base64 (data:image/...) yang tidak muncul di body
+        #    forum. Kalau dapat soal asli, jangan mencampur konten forum.
         self._parse_section_activity(q, activity)
-        if q.question.strip() or q.attachment_urls:
+        if self._real_soal(q):
             q.question = self._clean(q.question)
             return q
 
+        # Kondisi 2 — DALAM forum: deskripsi forum + post pembuka diskusi.
+        #    Post pembuka SELALU dicek karena deskripsi forum kadang hanya
+        #    berisi "Due: <tanggal>" sementara soal asli (teks/gambar/
+        #    lampiran) ada di thread diskusi.
         resp = self.session.get(activity.url)
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # 2) Deskripsi/intro forum (tempat soal resmi biasanya berada).
-        #    Hanya elemen intro formal — jangan tampung .no-overflow umum
-        #    agar "Permalink/Reply" atau lampiran balasan mahasiswa tak terambil.
         desc_el = soup.select_one(
             ".forumdescription, .forumheaderlist, #forum_intro, "
             "[role=main] .generalbox"
         )
         if desc_el:
             text, atts = self._extract(desc_el, activity.url)
-            q.question += text
+            if text.strip():
+                q.question = f"{q.question.strip()}\n\n{text}".strip()
             q.attachment_urls.extend(atts)
 
         # 3) Thread diskusi pertama: soal resmi ada di post PEMBUKA (starter),
         #    bukan di balasan mahasiswa. Ambil hanya starter-nya.
-        disc_link = None
         for a in soup.select("a[href*='discuss.php']"):
-            disc_link = a["href"]
+            q.source_url = a["href"].split("#")[0]
+            self._extract_starter_post(q, q.source_url)
             break
-        if disc_link:
-            q.source_url = disc_link.split("#")[0]
-            if not q.question.strip():
-                self._extract_starter_post(q, disc_link)
 
         # 4) Masih kosong -> ringkasan seksi di halaman course
         #    (soal resmi kadang ditaruh di course/view.php?id=..&section=..)
-        if not q.question.strip() and not q.attachment_urls:
+        if not self._real_soal(q):
             self._parse_section_context(q, activity)
 
-        q.question = self._clean(q.question)
+        q.question = self._clean(question_body(q.question))
         return q
+
+    def _real_soal(self, q: ParsedQuestion) -> bool:
+        """True kalau soal benar-benar ada: ada lampiran, atau teks yang
+        bukan baris metadata (Due:/tanggal/UI forum)."""
+        if q.attachment_urls:
+            return True
+        body = re.sub(r"\s+", " ", question_body(q.question)).strip()
+        if not body:
+            return False
+        words = [w for w in re.split(r"\W+", body) if len(w) > 1]
+        return "?" in body or len(words) >= 3
 
     def _parse_section_activity(self, q: ParsedQuestion, activity: Activity) -> None:
         """Ambil deskripsi aktivitas dari halaman section (area #tabs-tree-start).
@@ -125,14 +182,18 @@ class QuestionParser:
 
         # mb2iq/standard Moodle: setiap post punya id="post-content-<pid>";
         # post pertama dalam DOM = starter diskusi.
-        starter = main.select_one("[id^='post-content-']")
-        if starter is None:
-            starter = main.select_one(".forumpost, article")
+        starter = (
+            main.select_one("[id^='post-content-']")
+            or main.select_one("header.firstpost")
+            or main.select_one("article.forum-post, article")
+            or main.select_one(".forumpost")
+        )
         if starter is None:
             return
 
         text, atts = self._extract(starter, disc_link)
-        q.question += text
+        if text.strip():
+            q.question = f"{q.question.strip()}\n\n{text}".strip()
         q.attachment_urls.extend(atts)
 
     # ---- Tugas (assignment) ----------------------------------------------
@@ -253,6 +314,16 @@ class QuestionParser:
                 continue
             kept.append(line)
         text = "\n".join(kept)
+        # buang duplikat baris berurutan (konten forum/section yang sama)
+        dedup: list[str] = []
+        prev = None
+        for line in text.splitlines():
+            s = line.strip()
+            if s and s == prev:
+                continue
+            prev = s
+            dedup.append(line)
+        text = "\n".join(dedup)
         text = re.sub(r"\n{3,}", "\n\n", text)
         text = re.sub(r"[ \t]+", " ", text)
         return text.strip()
