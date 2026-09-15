@@ -29,6 +29,12 @@ _LATEX_REPLACEMENTS = {
 # OMML (Word math) namespace
 _MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 
+# \mathbb{R} dan kawan-kawan → karakter matematika double-struck
+_MATHBB_MAP = {
+    "R": "ℝ", "Z": "ℤ", "N": "ℕ", "Q": "ℚ", "C": "ℂ", "H": "ℍ",
+    "P": "ℙ", "E": "𝔼", "F": "𝔽", "A": "𝔸", "B": "𝔹", "D": "𝔻",
+}
+
 
 def _esc(t: str) -> str:
     return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -65,6 +71,55 @@ def _omml_matrix(cell_rows: list[list[str]]) -> str:
     )
 
 
+def _omml_fraction(num: str, den: str, *, bar: bool = True) -> str:
+    num_xml = "".join(_parse_latex_math(num)) or _omml_run("")
+    den_xml = "".join(_parse_latex_math(den)) or _omml_run("")
+    kind = "bar" if bar else "noBar"
+    return (
+        f"<m:f><m:fPr><m:type m:val=\"{kind}\"/></m:fPr>"
+        f"<m:num>{num_xml}</m:num><m:den>{den_xml}</m:den></m:f>"
+    )
+
+
+def _omml_sqrt_n(inner: str, deg: str = "") -> str:
+    if deg:
+        return (
+            '<m:rad><m:radPr><m:degHide m:val="0"/></m:radPr>'
+            f'<m:deg>{deg}</m:deg><m:e>{inner}</m:e></m:rad>'
+        )
+    return _omml_sqrt(inner)
+
+
+def _omml_math_accent(cmd: str, inner: str) -> str:
+    _ACCENT_CHR = {
+        "hat": "̂", "widehat": "̂", "bar": "̄", "overline": "̄",
+        "underline": "̲", "vec": "⃗", "dot": "̇", "ddot": "̈",
+        "tilde": "̃", "widetilde": "̃", "check": "̌",
+        "acute": "́", "grave": "̀", "breve": "̆",
+    }
+    inner_xml = "".join(_parse_latex_math(inner)) or _omml_run("")
+    chr_ = _ACCENT_CHR.get(cmd, "")
+    return (
+        f'<m:acc><m:accPr><m:chr m:val="{chr_}"/></m:accPr>'
+        f"<m:e>{inner_xml}</m:e></m:acc>"
+    )
+
+
+def _omml_nary(chr_: str, sub: str, sup: str, inner: str) -> str:
+    sub_xml = "".join(_parse_latex_math(sub)) or _omml_run("")
+    sup_xml = "".join(_parse_latex_math(sup)) or _omml_run("")
+    inner_xml = "".join(_parse_latex_math(inner)) or _omml_run("")
+    return (
+        "<m:nary><m:naryPr>"
+        f'<m:chr m:val="{chr_}"/><m:limLoc m:val="undOvr"/>'
+        f'<m:subHide m:val="{"0" if sub else "1"}"/>'
+        f'<m:supHide m:val="{"0" if sup else "1"}"/>'
+        "</m:naryPr>"
+        f"<m:sub>{sub_xml}</m:sub><m:sup>{sup_xml}</m:sup>"
+        f"<m:e>{inner_xml}</m:e></m:nary>"
+    )
+
+
 def _parse_latex_math(s: str) -> list[str]:
     """Parse LaTeX math string into OMML XML element list.
 
@@ -84,14 +139,26 @@ def _parse_latex_math(s: str) -> list[str]:
     _CMD_MAP = {
         "times": "×", "cdot": "·", "pm": "±", "mp": "∓",
         "leq": "≤", "geq": "≥", "neq": "≠", "approx": "≈",
-        "equiv": "≡", "sim": "∼", "propto": "∝",
+        "equiv": "≡", "sim": "∼", "propto": "∝", "mid": "|",
+        "le": "≤", "ge": "≥", "ne": "≠", "lt": "<", "gt": ">",
         "rightarrow": "→", "leftarrow": "←", "leftrightarrow": "↔",
         "Rightarrow": "⇒", "Leftarrow": "⇐", "Leftrightarrow": "⇔",
+        "to": "→", "mapsto": "↦", "longrightarrow": "⟶",
+        "longleftarrow": "⟵", "iff": "⟺", "%": "%",
         "infty": "∞", "partial": "∂", "nabla": "∇",
         "forall": "∀", "exists": "∃", "in": "∈", "notin": "∉",
-        "subset": "⊂", "supset": "⊃", "cup": "∪", "cap": "∩",
+        "subset": "⊂", "supset": "⊃", "subseteq": "⊆", "supseteq": "⊇",
+        "cup": "∪", "cap": "∩",
         "emptyset": "∅", "ldots": "…", "cdots": "⋯", "vdots": "⋮",
-        "hline": "", "quad": " ", "qquad": "  ",
+        "ddots": "⋱", "hbar": "ℏ", "ell": "ℓ",
+        "langle": "⟨", "rangle": "⟩", "surd": "√", "backslash": "∖",
+        "circ": "∘", "bullet": "∙", "cdotp": "·", "colon": ":",
+        "sum": "∑", "prod": "∏", "int": "∫", "iint": "∬", "iiint": "∭",
+        "oint": "∮", "bigcup": "⋃", "bigcap": "⋂",
+        "bigoplus": "⊕", "bigotimes": "⊗", "coprod": "∐",
+        "lim": "lim", "limsup": "lim sup", "liminf": "lim inf",
+        "left": "", "right": "", "newcommand": "", "operatorname": " ",
+        "text": " ", "quad": " ", "qquad": "  ", "hline": "",
     }
 
     nodes: list[str] = []
@@ -117,7 +184,7 @@ def _parse_latex_math(s: str) -> list[str]:
     while i < n:
         c = s[i]
 
-        if c == " " or c == "," or c == "\n":
+        if c == " " or c == "\n":
             i += 1
             continue
 
@@ -129,8 +196,16 @@ def _parse_latex_math(s: str) -> list[str]:
                 break
             nxt = s[i]
             # Escaped special: \{ \} \_ \^ \* \% \$
-            if nxt in ("{", "}", "_", "^", "*", "%", "$", " ", "|"):
+            if nxt in ("{", "}", "_", "^", "*", "%", "$", "|"):
                 nodes.append(_omml_run(nxt))
+                i += 1
+                continue
+            # Spacing commands: \  \, \; \: \! 
+            if nxt == " ":
+                i += 1
+                continue
+            if nxt in ",;:!":
+                nodes.append(_omml_run(" " if nxt != "!" else ""))
                 i += 1
                 continue
             # Command name
@@ -142,12 +217,49 @@ def _parse_latex_math(s: str) -> list[str]:
                 i = j
                 if cmd in _ALPHA_MAP:
                     nodes.append(_omml_run(_ALPHA_MAP[cmd]))
+                elif cmd == "frac":
+                    num, i = _read_braced(i)
+                    den, i = _read_braced(i)
+                    nodes.append(_omml_fraction(num, den))
+                elif cmd == "binom":
+                    num, i = _read_braced(i)
+                    den, i = _read_braced(i)
+                    inner = _omml_fraction(num, den, bar=False)
+                    nodes.append(
+                        '<m:d><m:dPr><m:begChr m:val="("/>'
+                        '<m:endChr m:val=")"/></m:dPr>'
+                        f"<m:e>{inner}</m:e></m:d>"
+                    )
                 elif cmd == "sqrt":
+                    deg = None
+                    if i < n and s[i] == "[":
+                        end = s.find("]", i)
+                        if end != -1:
+                            deg = s[i + 1:end]
+                            i = end + 1
                     inner, i = _read_braced(i)
-                    nodes.append(_omml_sqrt("".join(_parse_latex_math(inner))))
+                    inner_xml = "".join(_parse_latex_math(inner))
+                    deg_xml = "".join(_parse_latex_math(deg)) if deg else ""
+                    nodes.append(_omml_sqrt_n(inner_xml, deg_xml))
                 elif cmd == "text":
                     inner, i = _read_braced(i)
                     nodes.append(_omml_run(inner))
+                elif cmd == "operatorname":
+                    inner, i = _read_braced(i)
+                    nodes.append(_omml_run(inner))
+                elif cmd == "mathbb":
+                    inner, i = _read_braced(i)
+                    ch = inner.strip()
+                    nodes.append(_omml_run(_MATHBB_MAP.get(ch, ch)))
+                elif cmd in ("mathrm", "mathbf", "mathit", "mathcal",
+                             "mathtt", "mathsf", "mathscr", "mathnormal"):
+                    inner, i = _read_braced(i)
+                    nodes.append(_omml_run(inner))
+                elif cmd in ("hat", "widehat", "bar", "overline", "underline",
+                             "vec", "dot", "ddot", "tilde", "widetilde",
+                             "check", "acute", "grave", "breve"):
+                    inner, i = _read_braced(i)
+                    nodes.append(_omml_math_accent(cmd, inner))
                 elif cmd == "begin":
                     env, i = _read_braced(i)
                     content, i = _read_until_end(s, i, env)
@@ -198,7 +310,8 @@ def _parse_latex_math(s: str) -> list[str]:
             nodes.extend(_parse_latex_math(inner))
             continue
 
-        # Parenthesized group → single run (so (AB)_{11} becomes a proper base)
+        # Parenthesized group → <m:d> delimiter (so (AB)_{11} stays one base
+        # AND inner LaTeX like \beta_0 is parsed recursively, not raw text).
         if c == "(":
             depth, j = 1, i + 1
             while j < n and depth:
@@ -208,7 +321,11 @@ def _parse_latex_math(s: str) -> list[str]:
                     depth -= 1
                 j += 1
             if depth == 0:
-                nodes.append(_omml_run(s[i:j]))
+                inner = "".join(_parse_latex_math(s[i + 1 : j - 1])) or _omml_run("")
+                nodes.append(
+                    '<m:d><m:dPr><m:begChr m:val="("/><m:endChr m:val=")"/>'
+                    f"</m:dPr><m:e>{inner}</m:e></m:d>"
+                )
                 i = j
             else:
                 nodes.append(_omml_run(s[i:]))
@@ -324,6 +441,18 @@ def _add_italic_runs(paragraph, text: str):
 
 
 def _add_italic_text(paragraph, text: str):
+    """Terapkan *italic* dan konversi ruas LaTeX inline (\\beta, \\sigma^2, ...)
+    yang ditulis tanpa $...$ menjadi equation."""
+    pos = 0
+    for start, end in _find_math_spans(text):
+        if start > pos:
+            _add_italic_plain(paragraph, text[pos:start])
+        _append_equation(paragraph, text[start:end])
+        pos = end
+    _add_italic_plain(paragraph, text[pos:])
+
+
+def _add_italic_plain(paragraph, text: str):
     pos = 0
     for m in _ITALIC_RE.finditer(text):
         if m.start() > pos:
@@ -346,13 +475,112 @@ def _normalize_text(text: str) -> str:
     return text
 
 
+_LATEX_CMD_RE = re.compile(r"\\[A-Za-z]+")
+
+# Kata yang sah di dalam ekspresi matematika (nama fungsi, kata LaTeX).
+_MATH_WORDS = {
+    "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+    "iota", "kappa", "lambda", "mu", "nu", "xi", "omicron", "pi", "rho",
+    "sigma", "tau", "upsilon", "phi", "chi", "psi", "omega",
+    "Normal", "Bernoulli", "Binomial", "Poisson", "Exponential", "Uniform",
+    "Gaussian", "sim", "mid", "given", "s.t", "of", "and", "or",
+    "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan",
+    "sinh", "cosh", "tanh", "log", "ln", "exp", "lim", "sup", "inf", "max",
+    "min", "Pr", "P", "E", "Var", "Cov", "Corr", "det", "dim", "mod", "Ker",
+    "Im", "Re", "adj", "sum", "prod", "int", "frac", "sqrt", "times", "cdot",
+    "left", "right", "quad", "text", "begin", "end", "pmatrix", "bmatrix",
+    "gather", "eqnarray", "matrix", "mid", "vert", "Vert",
+}
+
+
+def _tokenize_rough(line: str) -> list[str]:
+    return re.findall(r"[A-Za-z]+|\d+(?:\.\d+)?|[^\sA-Za-z0-9]+", line)
+
+
+def _line_is_display_math(line: str) -> bool:
+    """True bila satu baris (tanpa $) sebagian besar adalah ekspresi LaTeX,
+    mis. `YmidX;∼;Normal(\\beta_0 + \\beta_1 x_1,\\; \\sigma^2)`."""
+    line = (line or "").strip()
+    if not line or "$" in line:
+        return False  # sudah ditangani jalur $...$ / $$...$$
+    if not _LATEX_CMD_RE.search(line):
+        return False  # tidak ada perintah LaTeX → teks biasa
+    toks = _tokenize_rough(line)
+    if not toks:
+        return False
+    prose = sum(
+        1 for t in toks
+        if t.isalpha() and len(t) >= 4 and t not in _MATH_WORDS
+    )
+    # Maksimal ~20% token adalah kata prosa murni: kalimat seperti
+    # `Jadi nilai yang dicari adalah \beta = 5` jangan dijadikan equation.
+    return prose * 5 <= len(toks)
+
+
+def _scan_math_run_end(text: str, j: int) -> int:
+    """Perluas dari posisi j sampai batas akhir ruas matematika yang masuk akal."""
+    n = len(text)
+    depth = 0
+    while j < n:
+        c = text[j]
+        if c == " " and depth == 0:
+            k = j
+            while k < n and text[k] == " ":
+                k += 1
+            m = re.match(r"[\\A-Za-z0-9_.^]+", text[k:k + 10])
+            nxt = m.group(0) if m else ""
+            if nxt and "\\" not in nxt and re.fullmatch(r"[A-Za-z]+", nxt):
+                if nxt.lower() not in _MATH_WORDS:
+                    return j
+                j = k
+                continue
+            j = k
+            continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth < 0:
+                return j
+        j += 1
+    return n
+
+
+def _find_math_spans(text: str) -> list[tuple[int, int]]:
+    """Temukan ruas inline LaTeX tanpa $ di dalam teks → list (start, end).
+    Ruas diperluas ke kurung pembuka/penutup yang mengelilinginya, jadi
+    `Normal(\\beta_0 + \\beta_1, \\sigma^2)` ikut ditangkap mencakup parens."""
+    spans: list[tuple[int, int]] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        m = _LATEX_CMD_RE.search(text, i)
+        if not m:
+            break
+        start = m.start()
+        end = _scan_math_run_end(text, m.end())
+        if end > start:
+            s2, e2 = start, end
+            for op, cl in (("(", ")"), ("[", "]"), ("{", "}")):
+                k = s2 - 1
+                while k >= 0 and text[k] == " ":
+                    k -= 1
+                t = e2
+                while t < n and text[t] == " ":
+                    t += 1
+                if k >= 0 and text[k] == op and t < n and text[t] == cl:
+                    s2, e2 = k, t + 1
+                    break
+            spans.append((s2, e2))
+            i = max(e2, m.end())
+    return spans
+
+
 def _is_table_row(line: str) -> bool:
     return line.strip().startswith("|") and line.strip().endswith("|") and "|" in line[1:]
 
 
 def _render_markdown(doc: Document, md: str):
-    from docx.shared import Cm
-
     lines = md.splitlines()
     i = 0
     ordered_idx = 0
@@ -415,6 +643,19 @@ def _render_markdown(doc: Document, md: str):
             if re.fullmatch(r"\$\$.*\$\$", base.strip()):
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             ordered_idx = 0
+            i += 1
+            continue
+
+        # Equation LaTeX telanjang (tanpa $): baris seperti
+        # `YmidX;∼;Normal(\beta_0 + \beta_1 x_1,\; \sigma^2)`.
+        if (
+            re.match(r"^[-*>#|\d]", line.strip()) is None
+            and _line_is_display_math(line)
+        ):
+            p = doc.add_paragraph()
+            if len(line.strip()) < 60:
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _append_equation(p, line.strip())
             i += 1
             continue
 

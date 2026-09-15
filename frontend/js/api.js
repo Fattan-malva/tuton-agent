@@ -123,6 +123,10 @@ const RunAPI = {
         return apiRequest("/api/run/output");
     },
 
+    async getStatus() {
+        return apiRequest("/api/run/status");
+    },
+
     async stop() {
         return apiRequest("/api/run/stop", { method: "POST" });
     },

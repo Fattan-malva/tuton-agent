@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,49 +33,100 @@ from moodle.scraper import CourseScraper
 app = Flask(__name__, static_folder="frontend", static_url_path="")
 CORS(app)
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+
 # Global state for running processes
 running_process: subprocess.Popen | None = None
 process_output: list[str] = []
 process_lock = threading.Lock()
+_process_start_time: float = 0.0
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
+
+def _kill_proc_tree(proc: subprocess.Popen) -> None:
+    """Kill sebuah proses beserta seluruh anaknya. Di Windows pakai
+    taskkill /T sehingga opencode/node yang dibesarkan ikut mati (tidak orphan)."""
+    if os.name != "nt":
+        proc.kill()
+        return
+    try:
+        subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            capture_output=True,
+            timeout=10,
+        )
+    except (subprocess.SubprocessError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def _read_process_output(proc: subprocess.Popen):
+    """Read stdout chunks and split by \\n/\\r so spinner/progress (bare \\r)
+    doesn't block the log on Windows."""
+    global process_output
+    buf = ""
+    try:
+        while True:
+            chunk = proc.stdout.read(4096)
+            if not chunk:
+                break
+            buf += chunk
+            while True:
+                sep = -1
+                if "\n" in buf:
+                    sep = buf.index("\n")
+                if "\r" in buf and (sep == -1 or buf.index("\r") < sep):
+                    sep = buf.index("\r")
+                if sep == -1:
+                    break
+                line = _strip_ansi(buf[:sep]).rstrip("\r")
+                if line:
+                    with process_lock:
+                        process_output.append(line)
+                buf = buf[sep + 1:]
+        line = _strip_ansi(buf).rstrip("\r")
+        if line:
+            with process_lock:
+                process_output.append(line)
+    except Exception as e:
+        with process_lock:
+            process_output.append(f"ERROR: {e}")
+    finally:
+        proc.wait()
 
 
 def run_command_async(cmd: list[str], cwd: Path | None = None) -> dict:
     """Run a command asynchronously and return process info."""
-    global running_process, process_output
-    
+    global running_process, process_output, _process_start_time
+
     with process_lock:
         if running_process and running_process.poll() is None:
             return {"success": False, "error": "Another process is already running"}
-        
+
         process_output = []
-        
-        def read_output():
-            global running_process, process_output
-            try:
-                running_process = subprocess.Popen(
-                    cmd,
-                    cwd=cwd or Path(__file__).parent,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    bufsize=1,
-                )
-                for line in iter(running_process.stdout.readline, ""):
-                    if not line:
-                        break
-                    with process_lock:
-                        process_output.append(line.rstrip())
-                running_process.wait()
-            except Exception as e:
-                with process_lock:
-                    process_output.append(f"ERROR: {e}")
-        
-        thread = threading.Thread(target=read_output, daemon=True)
-        thread.start()
-        
-        return {"success": True, "message": "Process started"}
+        _process_start_time = time.time()
+
+        kwargs: dict[str, Any] = dict(
+            cwd=str(cwd or Path(__file__).parent),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+        running_process = subprocess.Popen(cmd, **kwargs)
+
+    thread = threading.Thread(target=_read_process_output, args=(running_process,), daemon=True)
+    thread.start()
+
+    return {"success": True, "message": "Process started"}
 
 
 @app.route("/")
@@ -456,7 +508,33 @@ def get_run_output():
     """Get current process output."""
     global process_output
     with process_lock:
-        return jsonify({"output": process_output.copy()})
+        return jsonify({
+            "output": process_output.copy(),
+            "running": bool(running_process and running_process.poll() is None),
+            "returncode": running_process.poll() if running_process else None,
+        })
+
+
+@app.route("/api/run/status")
+def get_run_status():
+    """Get status of the running process (for the UI to detect stuck vs alive)."""
+    global running_process, _process_start_time
+    with process_lock:
+        running = bool(running_process and running_process.poll() is None)
+        elapsed = 0.0
+        last_output = None
+        out_len = len(process_output)
+        if running:
+            elapsed = time.time() - _process_start_time
+            last_output = process_output[-1] if out_len else None
+        return jsonify({
+            "success": True,
+            "running": running,
+            "returncode": running_process.poll() if running_process else None,
+            "elapsed": round(elapsed, 1),
+            "line_count": out_len,
+            "last_output": last_output,
+        })
 
 
 @app.route("/api/run/stop", methods=["POST"])
@@ -465,11 +543,14 @@ def stop_run():
     global running_process
     with process_lock:
         if running_process and running_process.poll() is None:
-            running_process.terminate()
+            _kill_proc_tree(running_process)
+            some_ref = running_process
+            process_output.append("user@tuton:~$ Proses dihentikan oleh pengguna")
+            # Tunggu di luar lock supaya thread pembaca bisa flush hasil akhir.
             try:
-                running_process.wait(timeout=5)
+                some_ref.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                running_process.kill()
+                some_ref.kill()
             return jsonify({"success": True, "message": "Process stopped"})
         return jsonify({"success": False, "error": "No process running"})
 
@@ -493,7 +574,10 @@ def save_schedule():
 if __name__ == "__main__":
     # Ensure output directory exists
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    
+
     print("Starting Tuton Agent Web Server...")
     print(f"Output directory: {OUTPUT_DIR}")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # use_reloader=False: watchdog reloader di Windows mematikan proses run
+    # yang sedang berjalan (state process ada di memori). Dev tetap dapat
+    # traceback (debug), hanya saja tidak auto-restart di tengah run.
+    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)

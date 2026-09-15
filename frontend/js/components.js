@@ -132,7 +132,7 @@ const Terminal = {
     clear() {
         const terminal = document.getElementById("terminal-output");
         if (terminal) {
-            terminal.innerHTML = `<div class="text-green-400">user@tuton:~$ Terminal dibersihkan.</div>`;
+            terminal.innerHTML = `<div class="terminal-line cmd">user@tuton:~$ Terminal dibersihkan.</div>`;
         }
     },
 };

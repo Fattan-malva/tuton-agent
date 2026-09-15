@@ -39,6 +39,14 @@ const elements = {
     statusTableBody: null,
     resultsGrid: null,
     statsCards: null,
+    btnStopRun: null,
+    runStatusBar: null,
+    runStatusLabel: null,
+    runStatusMeta: null,
+    runProgressBar: null,
+    runElapsed: null,
+    runStep: null,
+    runBadge: null,
 };
 
 function populateConfigForm(config) {
@@ -79,6 +87,14 @@ function initElements() {
     elements.statusTableBody = document.getElementById("statusTableBody");
     elements.resultsGrid = document.getElementById("resultsGrid");
     elements.statsCards = document.getElementById("statsCards");
+    elements.btnStopRun = document.getElementById("btnStopRun");
+    elements.runStatusBar = document.getElementById("runStatusBar");
+    elements.runStatusLabel = document.getElementById("runStatusLabel");
+    elements.runStatusMeta = document.getElementById("runStatusMeta");
+    elements.runProgressBar = document.getElementById("runProgressBar");
+    elements.runElapsed = document.getElementById("runElapsed");
+    elements.runStep = document.getElementById("runStep");
+    elements.runBadge = document.getElementById("runBadge");
 }
 
 // === Event Handlers ===
@@ -275,6 +291,11 @@ async function handleRun(e) {
     
     appStore.set("isRunning", true);
     appStore.set("runOutput", []);
+    appStore.set("stoppedByUser", false);
+    resetRunProgress();
+    showRunStatus(true);
+    elements.runStatusLabel.textContent = "Menyiapkan…";
+    elements.runElapsed.textContent = "00:00";
     
     try {
         const response = await appRunAPI.start({ course_id: courseId, sesi, force });
@@ -298,36 +319,51 @@ let pollInterval = null;
 function pollRunOutput() {
     pollInterval = setInterval(async () => {
         try {
-            const response = await appRunAPI.getOutput();
-            const newOutput = response.output || [];
-            
-            // Only append new lines
+            const [statusRes, outputRes] = await Promise.all([
+                appRunAPI.getStatus(),
+                appRunAPI.getOutput(),
+            ]);
+
+            const newOutput = outputRes.output || [];
             const currentOutput = appStore.get("runOutput") || [];
-            const newLines = newOutput.slice(currentOutput.length);
-            
+
+            // Jika output server direset (mis. proses selesai/mulai ulang),
+            // jangan potong buta — reset tampilan ke state baru.
+            if (newOutput.length < currentOutput.length) {
+                appTerminal.clear();
+                appStore.set("runOutput", []);
+                resetRunProgress();
+            }
+
+            const tail = appStore.get("runOutput") || [];
+            const newLines = newOutput.slice(tail.length);
+
             newLines.forEach((line) => {
                 let type = "info";
                 if (line.includes("ERROR") || line.includes("Gagal") || line.includes("✗")) {
                     type = "error";
                 } else if (line.includes("✓") || line.includes("Selesai") || line.includes("siap")) {
                     type = "success";
-                } else if (line.includes("dilewati") || line.includes("timeout")) {
+                } else if (line.includes("dilewati") || line.includes("timeout") || line.includes("BERHENTI")) {
                     type = "warning";
                 } else if (line.startsWith("user@tuton")) {
                     type = "cmd";
                 }
                 appTerminal.append(line, type);
+                updateRunProgress(line);
             });
-            
+
             appStore.set("runOutput", newOutput);
-            
-            // Check if process finished
-            if (newOutput.length > 0) {
-                const lastLine = newOutput[newOutput.length - 1];
-                if (lastLine.includes("Selesai") || lastLine.includes("Gagal") || lastLine.includes("exit")) {
-                    stopPolling();
-                    onRunComplete();
-                }
+
+            // Update elapsed dari server (lebih akurat dari timer lokal)
+            if (statusRes.elapsed != null && elements.runElapsed) {
+                elements.runElapsed.textContent = formatElapsedMs(statusRes.elapsed * 1000);
+            }
+
+            // Selesai hanya jika server bilang proses tidak running lagi
+            if (!statusRes.running) {
+                stopPolling();
+                onRunComplete(statusRes.returncode || 0);
             }
         } catch (error) {
             console.error("Polling error:", error);
@@ -342,8 +378,10 @@ function stopPolling() {
     }
 }
 
-async function onRunComplete() {
+async function onRunComplete(returnCode) {
     appStore.set("isRunning", false);
+    const stoppedByUser = !!appStore.get("stoppedByUser");
+    appStore.set("stoppedByUser", false);
     
     // Re-enable button
     elements.runBtn.disabled = false;
@@ -351,19 +389,34 @@ async function onRunComplete() {
     elements.runBtn.innerHTML = `<i data-lucide="play" class="w-5 h-5"></i> Jalankan Sekarang`;
     if (window.lucide) lucide.createIcons();
     
+    // Sembunyikan status bar
+    showRunStatus(false);
+    
     // Refresh data
     await loadStatus();
     await loadResults();
     
-    appToast.show("Run selesai dieksekusi");
+    if (stoppedByUser) {
+        appTerminal.append("user@tuton:~$ Run dihentikan oleh pengguna", "warning");
+        appToast.show("Run dihentikan oleh pengguna");
+    } else if (returnCode !== 0) {
+        appTerminal.append(`user@tuton:~$ Run selesai dengan exit code ${returnCode}`, "error");
+        appToast.show(`Proses selesai dengan error (exit ${returnCode})`, "error");
+    } else {
+        appTerminal.append("user@tuton:~$ Run selesai dieksekusi", "success");
+        appToast.show("Run selesai dieksekusi");
+    }
 }
 
 async function handleStopRun() {
     try {
-        await appRunAPI.stop();
-        stopPolling();
-        appTerminal.append("user@tuton:~$ Proses dihentikan oleh pengguna", "warning");
-        appToast.show("Proses dihentikan");
+        const res = await appRunAPI.stop();
+        if (res && res.success) {
+            appStore.set("stoppedByUser", true);
+            elements.btnStopRun?.classList.add("hidden");
+        } else {
+            appToast.show((res && res.error) || "Proses sudah berhenti", "warning");
+        }
     } catch (error) {
         appToast.show("Gagal menghentikan: " + error.message, "error");
     }
@@ -371,6 +424,118 @@ async function handleStopRun() {
 
 function handleClearTerminal() {
     appTerminal.clear();
+}
+
+// === Run Progress (progress bar + status strip) ===
+const runProgress = {
+    matkul: "",
+    kind: "diskusi",
+    itemLabel: "",
+    itemsTotal: 0,
+    itemsDone: 0,
+    step: "idle",
+};
+
+function resetRunProgress() {
+    runProgress.matkul = "";
+    runProgress.kind = "diskusi";
+    runProgress.itemLabel = "";
+    runProgress.itemsTotal = 0;
+    runProgress.itemsDone = 0;
+    runProgress.step = "idle";
+}
+
+function updateRunProgress(line) {
+    if (!line) return;
+
+    const mCourse = line.match(/^=== (.+) ===$/);
+    if (mCourse) {
+        runProgress.matkul = mCourse[1];
+        runProgress.itemsTotal = 0;
+        runProgress.itemsDone = 0;
+        runProgress.step = "scraping";
+    }
+
+    if (/^\s*· (DISKUSI|TUGAS)\s*:/.test(line)) {
+        runProgress.itemsTotal += 1;
+    }
+
+    const mItem = line.match(/^\s*· \[(diskusi|tugas)\]\s+(.+?)\s+→/);
+    if (mItem) {
+        runProgress.kind = mItem[1];
+        runProgress.itemLabel = mItem[2];
+        runProgress.step = "mengerjakan";
+    }
+
+    if (/^\s*· Transkripsi /.test(line)) runProgress.step = "transkripsi";
+    if (/→ .*? run \.\.\./.test(line)) runProgress.step = "opencode";
+    if (/✓ .+? siap\.$/.test(line)) {
+        runProgress.itemsDone += 1;
+        runProgress.step = "membuat docx";
+    }
+    if (/Selesai\. (\d+) item diproses/.test(line)) {
+        runProgress.itemsDone = parseInt(line.match(/Selesai\. (\d+) item diproses/)[1], 10);
+        runProgress.step = "selesai";
+    }
+    if (/✗ Gagal|ERROR|timeout|BERHENTI/.test(line)) runProgress.step = "error";
+
+    renderRunStatus();
+}
+
+function stepLabel() {
+    const map = {
+        idle: "Idle",
+        scraping: "Membaca struktur",
+        mengerjakan: runProgress.kind === "tugas" ? "Mengerjakan: " + (runProgress.itemLabel || "tugas") : "Mengerjakan: " + (runProgress.itemLabel || "diskusi"),
+        transkripsi: "Transkripsi lampiran",
+        opencode: "Menjalankan opencode",
+        "membuat docx": "Generate DOCX",
+        selesai: "Selesai",
+        error: "Error",
+    };
+    return map[runProgress.step] || runProgress.step;
+}
+
+function formatElapsedMs(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const s = total % 60;
+    const m = Math.floor(total / 60) % 60;
+    const h = Math.floor(total / 3600);
+    const pad = (v) => String(v).padStart(2, "0");
+    return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+function renderRunStatus() {
+    if (!elements.runStatusBar || !elements.runProgressBar) return;
+
+    const total = runProgress.itemsTotal;
+    const done = runProgress.itemsDone;
+    let pct = 0;
+    if (runProgress.step === "selesai") {
+        pct = 100;
+    } else if (total > 0) {
+        pct = Math.min(100, Math.round((done / total) * 100));
+    }
+
+    elements.runProgressBar.style.width = pct + "%";
+    elements.runStatusLabel.textContent = runProgress.matkul || "Menyiapkan…";
+    elements.runStatusMeta.textContent = `${done}/${total || "?"} item`;
+    elements.runStep.textContent = stepLabel();
+}
+
+function showRunStatus(show) {
+    if (elements.runStatusBar) {
+        if (show) elements.runStatusBar.classList.remove("hidden");
+        else elements.runStatusBar.classList.add("hidden");
+    }
+    if (elements.runBadge) {
+        if (show) elements.runBadge.classList.remove("hidden");
+        else elements.runBadge.classList.add("hidden");
+    }
+    if (elements.btnStopRun) {
+        if (show) elements.btnStopRun.classList.remove("hidden");
+        else elements.btnStopRun.classList.add("hidden");
+    }
 }
 
 async function handleSaveSchedule(e) {
@@ -468,6 +633,7 @@ function init() {
     elements.loginForm?.addEventListener("submit", handleLogin);
     elements.loginForm?.setAttribute("onsubmit", "return false;");
     elements.runBtn?.addEventListener("click", handleRun);
+    elements.btnStopRun?.addEventListener("click", handleStopRun);
     elements.clearTerminalBtn?.addEventListener("click", handleClearTerminal);
     document.getElementById("envForm")?.addEventListener("submit", handleSaveEnv);
     

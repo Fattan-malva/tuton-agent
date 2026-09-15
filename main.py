@@ -249,7 +249,7 @@ def _process_item(
         "matkul": course.name,
         "kind_label": "Diskusi" if kind == "diskusi" else "Tugas",
         "display_index": index,
-        "file_base": f"{kind}{index}",
+        "file_base": f"{course.folder_name}_{'Diskusi' if kind == 'diskusi' else 'Tugas'}{index}",
     }
     _, doc_path = save_doc(
         jawaban_md=jawaban_md,
