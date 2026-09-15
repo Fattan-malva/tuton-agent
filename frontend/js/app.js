@@ -223,26 +223,26 @@ function updateStatsCards(stats) {
     if (!elements.statsCards) return;
     
     elements.statsCards.innerHTML = `
-        <div class="bg-white p-6 rounded-2xl border border-gray-100 shadow-soft">
-            <div class="w-12 h-12 rounded-full bg-green-50 text-green-600 flex items-center justify-center mb-4">
+        <div class="bg-surface/50 backdrop-blur-sm p-6 rounded-2xl border border-white/5 transition-all hover:border-success/30 hover:shadow-lg hover:shadow-success/5">
+            <div class="w-12 h-12 rounded-xl bg-success/20 text-success flex items-center justify-center mb-4">
                 <i data-lucide="check-circle-2" class="w-6 h-6"></i>
             </div>
-            <p class="text-sm text-gray-500 font-medium mb-1">Pekerjaan Selesai</p>
-            <p class="text-3xl font-bold text-gray-900">${stats.done}</p>
+            <p class="text-sm text-gray-400 font-medium mb-1">Pekerjaan Selesai</p>
+            <p class="text-3xl font-bold text-white">${stats.done}</p>
         </div>
-        <div class="bg-white p-6 rounded-2xl border border-gray-100 shadow-soft">
-            <div class="w-12 h-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center mb-4">
+        <div class="bg-surface/50 backdrop-blur-sm p-6 rounded-2xl border border-white/5 transition-all hover:border-danger/30 hover:shadow-lg hover:shadow-danger/5">
+            <div class="w-12 h-12 rounded-xl bg-danger/20 text-danger flex items-center justify-center mb-4">
                 <i data-lucide="x-circle" class="w-6 h-6"></i>
             </div>
-            <p class="text-sm text-gray-500 font-medium mb-1">Pekerjaan Gagal</p>
-            <p class="text-3xl font-bold text-gray-900">${stats.failed}</p>
+            <p class="text-sm text-gray-400 font-medium mb-1">Pekerjaan Gagal</p>
+            <p class="text-3xl font-bold text-white">${stats.failed}</p>
         </div>
-        <div class="bg-white p-6 rounded-2xl border border-gray-100 shadow-soft">
-            <div class="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-4">
+        <div class="bg-surface/50 backdrop-blur-sm p-6 rounded-2xl border border-white/5 transition-all hover:border-accent/30 hover:shadow-lg hover:shadow-accent/5">
+            <div class="w-12 h-12 rounded-xl bg-accent/20 text-accent flex items-center justify-center mb-4">
                 <i data-lucide="clock" class="w-6 h-6"></i>
             </div>
-            <p class="text-sm text-gray-500 font-medium mb-1">Dalam Antrean</p>
-            <p class="text-3xl font-bold text-gray-900">${stats.pending}</p>
+            <p class="text-sm text-gray-400 font-medium mb-1">Dalam Antrean</p>
+            <p class="text-3xl font-bold text-white">${stats.pending}</p>
         </div>
     `;
     

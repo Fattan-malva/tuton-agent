@@ -67,9 +67,9 @@ const Spinner = {
 const StatusBadge = {
     render(status) {
         const classes = {
-            done: "bg-green-100 text-green-700",
-            failed: "bg-red-100 text-red-700",
-            pending: "bg-gray-100 text-gray-600",
+            done: "status-badge done",
+            failed: "status-badge failed",
+            pending: "status-badge pending",
         };
         
         const icons = {
@@ -88,7 +88,7 @@ const StatusBadge = {
         const icon = icons[status] || icons.pending;
         const label = labels[status] || status.toUpperCase();
         
-        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md ${cls} text-xs font-bold">
+        return `<span class="${cls}">
             <i data-lucide="${icon}" class="w-3 h-3"></i> ${label}
         </span>`;
     },
@@ -143,27 +143,38 @@ const Navigation = {
         // Hide all tabs
         document.querySelectorAll(".tab-content").forEach((tab) => {
             tab.classList.add("hidden");
-            tab.classList.remove("flex");
         });
         
         // Show selected tab
         const activeTab = document.getElementById(`tab-${tabId}`);
         if (activeTab) {
             activeTab.classList.remove("hidden");
-            activeTab.classList.add("flex");
         }
         
-        // Update nav buttons
+        // Update desktop nav buttons
         document.querySelectorAll(".nav-btn").forEach((btn) => {
-            btn.classList.remove("active", "bg-white/10", "text-white");
-            btn.classList.add("text-slate-400");
+            btn.classList.remove("active", "bg-accent/10", "text-accent", "border-accent/20");
+            btn.classList.add("text-gray-400");
         });
         
-        // Highlight active nav
+        // Highlight active desktop nav
         const activeNav = document.getElementById(`nav-${tabId}`);
         if (activeNav) {
-            activeNav.classList.add("active", "bg-white/10", "text-white");
-            activeNav.classList.remove("text-slate-400");
+            activeNav.classList.add("active", "bg-accent/10", "text-accent", "border-accent/20");
+            activeNav.classList.remove("text-gray-400");
+        }
+        
+        // Update mobile nav buttons
+        document.querySelectorAll(".mobile-nav-btn").forEach((btn) => {
+            btn.classList.remove("text-accent");
+            btn.classList.add("text-gray-500");
+        });
+        
+        // Highlight active mobile nav
+        const activeMobileNav = document.getElementById(`nav-${tabId}-mobile`);
+        if (activeMobileNav) {
+            activeMobileNav.classList.add("text-accent");
+            activeMobileNav.classList.remove("text-gray-500");
         }
         
         state.set("currentTab", tabId);
@@ -174,17 +185,17 @@ const Navigation = {
 const TableRenderer = {
     renderStatusTable(items) {
         if (!items || items.length === 0) {
-            return `<tr><td colspan="4" class="px-6 py-8 text-center text-gray-500">Tidak ada data</td></tr>`;
+            return `<tr><td colspan="4" class="px-4 md:px-6 py-8 text-center text-gray-500">Tidak ada data</td></tr>`;
         }
         
         return items.map((item) => `
-            <tr class="hover:bg-gray-50 transition-colors">
-                <td class="px-6 py-4">
+            <tr class="hover:bg-white/5 transition-colors">
+                <td class="px-4 md:px-6 py-3 md:py-4">
                     ${StatusBadge.render(item.status)}
                 </td>
-                <td class="px-6 py-4 font-medium text-gray-900">${item.matkul}</td>
-                <td class="px-6 py-4 text-gray-600">${item.sesi ? `Sesi ${item.sesi}` : "-"}</td>
-                <td class="px-6 py-4 text-gray-600">${item.desc}</td>
+                <td class="px-4 md:px-6 py-3 md:py-4 font-medium text-white">${item.matkul}</td>
+                <td class="px-4 md:px-6 py-3 md:py-4 text-gray-400 hidden sm:table-cell">${item.sesi ? `Sesi ${item.sesi}` : "-"}</td>
+                <td class="px-4 md:px-6 py-3 md:py-4 text-gray-400">${item.desc}</td>
             </tr>
         `).join("");
     },
@@ -196,15 +207,15 @@ const CardRenderer = {
         const fileCount = course.files.length;
         if (fileCount === 0) {
             return `
-                <div class="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden flex flex-col border-dashed opacity-70">
-                    <div class="p-6 border-b border-gray-50 bg-gray-50/30 flex items-start justify-between">
+                <div class="bg-surface/50 backdrop-blur-sm rounded-2xl border border-white/5 overflow-hidden flex flex-col border-dashed opacity-70">
+                    <div class="p-6 border-b border-white/5 bg-surfaceLight/30 flex items-start justify-between">
                         <div>
-                            <div class="text-xs font-bold text-gray-400 mb-1 uppercase tracking-wider">${course.name}</div>
-                            <h3 class="text-lg font-bold text-gray-600">${course.name}</h3>
-                            <p class="text-xs text-gray-400 mt-1">Belum ada file selesai</p>
+                            <div class="text-xs font-bold text-gray-500 mb-1 uppercase tracking-wider">${course.name}</div>
+                            <h3 class="text-lg font-bold text-gray-400">${course.name}</h3>
+                            <p class="text-xs text-gray-500 mt-1">Belum ada file selesai</p>
                         </div>
                         ${course.folder ? `
-                        <button class="text-gray-400 hover:text-red-600 transition-colors p-2" 
+                        <button class="text-gray-500 hover:text-danger transition-colors p-2" 
                                 onclick="Results.deleteCourse('${course.folder.replace(/\\/g, "\\\\")}')" title="Hapus matkul">
                             <i data-lucide="trash-2" class="w-5 h-5"></i>
                         </button>` : ""}
@@ -214,20 +225,20 @@ const CardRenderer = {
         }
         
         const fileItems = course.files.map((file) => `
-            <li class="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-100 transition-colors group">
+            <li class="flex items-center justify-between p-3 rounded-xl hover:bg-white/5 border border-transparent hover:border-white/10 transition-colors group">
                 <div class="flex items-center gap-3 overflow-hidden">
-                    <i data-lucide="file-text" class="w-4 h-4 text-blue-500 shrink-0"></i>
+                    <i data-lucide="file-text" class="w-4 h-4 text-accent shrink-0"></i>
                     <div class="truncate">
-                        <p class="text-sm font-medium text-gray-900 truncate">${file.name}</p>
-                        <p class="text-[10px] text-gray-400">Sesi ${file.sesi || "?"} • ${FileUtils.formatSize(file.size)}</p>
+                        <p class="text-sm font-medium text-white truncate">${file.name}</p>
+                        <p class="text-[10px] text-gray-500">Sesi ${file.sesi || "?"} - ${FileUtils.formatSize(file.size)}</p>
                     </div>
                 </div>
                 <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button class="text-gray-400 hover:text-accent transition-colors p-2" 
+                    <button class="text-gray-500 hover:text-accent transition-colors p-2" 
                             onclick="Results.download('${file.path.replace(/\\/g, "\\\\")}')" title="Download DOCX">
                         <i data-lucide="download" class="w-4 h-4"></i>
                     </button>
-                    <button class="text-gray-400 hover:text-red-600 transition-colors p-2" 
+                    <button class="text-gray-500 hover:text-danger transition-colors p-2" 
                             onclick="Results.delete('${file.path.replace(/\\/g, "\\\\")}')" title="Hapus DOCX">
                         <i data-lucide="trash-2" class="w-4 h-4"></i>
                     </button>
@@ -236,20 +247,20 @@ const CardRenderer = {
         `).join("");
         
         return `
-            <div class="bg-white rounded-2xl border border-gray-100 shadow-soft overflow-hidden flex flex-col transition-transform hover:-translate-y-1 duration-200">
-                <div class="p-6 border-b border-gray-50 bg-gray-50/30 flex items-start justify-between">
+            <div class="bg-surface/50 backdrop-blur-sm rounded-2xl border border-white/5 overflow-hidden flex flex-col transition-all hover:border-accent/30 hover:shadow-lg hover:shadow-accent/5 duration-200">
+                <div class="p-6 border-b border-white/5 bg-surfaceLight/30 flex items-start justify-between">
                     <div>
                         <div class="text-xs font-bold text-accent mb-1 uppercase tracking-wider">${course.name}</div>
-                        <h3 class="text-lg font-bold text-gray-900">${course.name}</h3>
-                        <p class="text-xs text-gray-500 mt-1">${fileCount} file berhasil dibuat</p>
+                        <h3 class="text-lg font-bold text-white">${course.name}</h3>
+                        <p class="text-xs text-gray-400 mt-1">${fileCount} file berhasil dibuat</p>
                     </div>
                     <div class="flex items-center gap-1">
                         ${course.folder ? `
-                        <button class="text-gray-400 hover:text-red-600 transition-colors p-2" 
+                        <button class="text-gray-500 hover:text-danger transition-colors p-2" 
                                 onclick="Results.deleteCourse('${course.folder.replace(/\\/g, "\\\\")}')" title="Hapus matkul">
                             <i data-lucide="trash-2" class="w-5 h-5"></i>
                         </button>` : ""}
-                        <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-accent">
+                        <div class="w-10 h-10 rounded-xl bg-accent/20 flex items-center justify-center text-accent">
                             <i data-lucide="book-open" class="w-5 h-5"></i>
                         </div>
                     </div>

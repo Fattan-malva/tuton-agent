@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tuton Agent - Desktop Controller</title>
+    <title>Tuton Agent - Auto-Grader Controller</title>
     
     <!-- Tailwind CSS via CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -11,162 +11,198 @@
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
+    <!-- Outfit Font - Distinctive Modern Sans -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
     <!-- Custom Stylesheet -->
-    <link rel="stylesheet" href="/css/style.css?v=4">
+    <link rel="stylesheet" href="/css/style.css?v=5">
     
     <script>
         tailwind.config = {
             theme: {
                 extend: {
                     colors: {
-                        primary: '#0f172a',
+                        primary: '#0a0f1e',
                         secondary: '#64748b',
-                        accent: '#4f46e5',
-                        darkbg: '#1e293b'
+                        accent: '#818cf8',
+                        surface: '#111827',
+                        surfaceLight: '#1f2937',
+                        border: '#1e293b',
+                        success: '#34d399',
+                        danger: '#f87171',
+                        warning: '#fbbf24'
+                    },
+                    fontFamily: {
+                        sans: ['Outfit', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace']
                     }
                 }
             }
         }
     </script>
 </head>
-<body class="text-gray-800 antialiased selection:bg-indigo-100 selection:text-indigo-900">
+<body class="bg-primary text-gray-100 antialiased font-sans">
 
     <!-- ================== LOGIN VIEW ================== -->
-    <div id="loginView" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50 transition-opacity duration-300">
-        <div class="w-full max-w-md bg-white p-10 rounded-3xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] border border-gray-100">
-            <div class="mb-10 text-center">
-                <div class="inline-flex items-center justify-center w-16 h-16 bg-indigo-50 rounded-2xl mb-5 border border-indigo-100 shadow-soft">
-                    <i data-lucide="bot" class="w-8 h-8 text-accent"></i>
+    <div id="loginView" class="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-primary via-surface to-primary">
+        <div class="absolute inset-0 overflow-hidden">
+            <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-accent/10 rounded-full blur-3xl"></div>
+            <div class="absolute bottom-1/4 right-1/4 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl"></div>
+        </div>
+        
+        <div class="relative w-full max-w-md mx-4">
+            <div class="bg-surface/80 backdrop-blur-xl p-10 rounded-3xl border border-white/5 shadow-2xl">
+                <div class="mb-10 text-center">
+                    <div class="inline-flex items-center justify-center w-16 h-16 bg-accent/20 rounded-2xl mb-5 border border-accent/30">
+                        <i data-lucide="cpu" class="w-8 h-8 text-accent"></i>
+                    </div>
+                    <h1 class="text-2xl font-bold tracking-tight text-white">Tuton Agent</h1>
+                    <p class="text-sm text-gray-400 mt-2 font-medium">Auto-Grader & Submission Controller</p>
                 </div>
-                <h1 class="text-2xl font-bold tracking-tight text-gray-900">Tuton Agent</h1>
-                <p class="text-sm text-gray-500 mt-2 font-medium">Auto-Grader & Submission Controller</p>
-            </div>
 
-            <form id="loginForm" class="space-y-5">
-                <div>
-                    <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2 ml-1">Username Moodle / Admin</label>
-                    <div class="relative w-full">
-                        <input type="text" id="username" autocomplete="off" placeholder="Masukkan username" required
-                            class="w-full pl-11 pr-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent focus:ring-4 focus:ring-accent/10 outline-none transition-all text-sm font-medium">
-                        <i data-lucide="user" class="w-4 h-4 text-gray-400 absolute left-4 top-3.5"></i>
+                <form id="loginForm" class="space-y-5">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 ml-1">Username Moodle / Admin</label>
+                        <div class="relative w-full">
+                            <input type="text" id="username" autocomplete="off" placeholder="Masukkan username" required
+                                class="w-full pl-11 pr-4 py-3.5 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 focus:ring-4 focus:ring-accent/10 outline-none transition-all text-sm text-white placeholder-gray-500">
+                            <i data-lucide="user" class="w-4 h-4 text-gray-500 absolute left-4 top-4"></i>
+                        </div>
                     </div>
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2 ml-1">Kata Sandi</label>
-                    <div class="relative w-full">
-                        <input type="password" id="password" autocomplete="new-password" placeholder="Masukkan kata sandi" required
-                            class="w-full pl-11 pr-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent focus:ring-4 focus:ring-accent/10 outline-none transition-all text-sm font-medium">
-                        <i data-lucide="lock" class="w-4 h-4 text-gray-400 absolute left-4 top-3.5"></i>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 ml-1">Kata Sandi</label>
+                        <div class="relative w-full">
+                            <input type="password" id="password" autocomplete="new-password" placeholder="Masukkan kata sandi" required
+                                class="w-full pl-11 pr-4 py-3.5 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 focus:ring-4 focus:ring-accent/10 outline-none transition-all text-sm text-white placeholder-gray-500">
+                            <i data-lucide="lock" class="w-4 h-4 text-gray-500 absolute left-4 top-4"></i>
+                        </div>
                     </div>
-                </div>
-                
-                <button type="submit" id="loginBtn"
-                    class="w-full bg-primary text-white text-sm font-semibold py-3.5 rounded-xl hover:bg-slate-800 active:scale-[0.98] transition-all mt-8 shadow-md flex items-center justify-center gap-2">
-                    <span>Akses Sistem</span>
-                    <i data-lucide="arrow-right" class="w-4 h-4"></i>
-                </button>
-            </form>
+                    
+                    <button type="submit" id="loginBtn"
+                        class="w-full bg-accent text-white text-sm font-semibold py-3.5 rounded-xl hover:bg-indigo-400 active:scale-[0.98] transition-all mt-8 shadow-lg shadow-accent/25 flex items-center justify-center gap-2">
+                        <span>Akses Sistem</span>
+                        <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                    </button>
+                </form>
+            </div>
         </div>
     </div>
 
-    <!-- ================== MAIN APP VIEW (DESKTOP) ================== -->
-    <div id="appView" class="hidden h-screen w-full flex bg-[#f8fafc]">
+    <!-- ================== MAIN APP VIEW ================== -->
+    <div id="appView" class="hidden h-screen w-full flex flex-col md:flex-row bg-primary">
         
-        <!-- SIDEBAR -->
-        <aside class="w-64 bg-primary text-white flex flex-col shadow-2xl relative z-20 flex-shrink-0">
+        <!-- SIDEBAR - Desktop -->
+        <aside class="hidden md:flex w-72 bg-surface/50 backdrop-blur-xl flex-col border-r border-white/5 relative z-20 flex-shrink-0">
             <!-- Brand -->
-            <div class="h-20 flex items-center px-6 border-b border-white/10 shrink-0">
+            <div class="h-20 flex items-center px-6 border-b border-white/5 shrink-0">
                 <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 bg-accent rounded-xl flex items-center justify-center shadow-lg">
-                        <i data-lucide="bot" class="w-5 h-5 text-white"></i>
+                    <div class="w-10 h-10 bg-gradient-to-br from-accent to-purple-500 rounded-xl flex items-center justify-center shadow-lg shadow-accent/20">
+                        <i data-lucide="cpu" class="w-5 h-5 text-white"></i>
                     </div>
                     <div>
-                        <h2 class="text-sm font-bold leading-tight">Tuton Agent</h2>
-                        <p class="text-[10px] text-indigo-200 font-medium uppercase tracking-wider">CLI Web UI</p>
+                        <h2 class="text-sm font-bold text-white leading-tight">Tuton Agent</h2>
+                        <p class="text-[10px] text-accent font-semibold uppercase tracking-wider">CLI Web UI</p>
                     </div>
                 </div>
             </div>
 
             <!-- Navigation -->
-            <nav class="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
-                <p class="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3 mt-2">Main Menu</p>
+            <nav class="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
+                <p class="px-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-3">Main Menu</p>
                 
-                <button onclick="Navigation.switchTo('status', store)" id="nav-status" class="nav-btn w-full flex items-center gap-3 px-3 py-3 rounded-xl bg-white/10 text-white font-medium text-sm transition-colors">
+                <button onclick="Navigation.switchTo('status', store)" id="nav-status" class="nav-btn w-full flex items-center gap-3 px-3 py-3 rounded-xl bg-accent/10 text-accent font-medium text-sm transition-all border border-accent/20">
                     <i data-lucide="activity" class="w-5 h-5"></i>
                     Status Pekerjaan
                 </button>
 
-                <button onclick="Navigation.switchTo('result', store)" id="nav-result" class="nav-btn w-full flex items-center gap-3 px-3 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-colors">
+                <button onclick="Navigation.switchTo('result', store)" id="nav-result" class="nav-btn w-full flex items-center gap-3 px-3 py-3 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all">
                     <i data-lucide="folder-check" class="w-5 h-5"></i>
                     Result
                 </button>
 
-                <button onclick="Navigation.switchTo('run', store)" id="nav-run" class="nav-btn w-full flex items-center gap-3 px-3 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-colors">
+                <button onclick="Navigation.switchTo('run', store)" id="nav-run" class="nav-btn w-full flex items-center gap-3 px-3 py-3 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all">
                     <i data-lucide="terminal" class="w-5 h-5"></i>
                     Run Agent
                 </button>
 
-                <p class="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3 mt-8">Configuration</p>
+                <p class="px-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-3 mt-8">Configuration</p>
                 
-                <button onclick="Navigation.switchTo('settings', store)" id="nav-settings" class="nav-btn w-full flex items-center gap-3 px-3 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-colors">
-                    <i data-lucide="sliders-horizontal" class="w-5 h-5"></i>
+                <button onclick="Navigation.switchTo('settings', store)" id="nav-settings" class="nav-btn w-full flex items-center gap-3 px-3 py-3 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all">
+                    <i data-lucide="settings" class="w-5 h-5"></i>
                     Settings
                 </button>
             </nav>
 
             <!-- User Footer -->
-            <div class="p-4 border-t border-white/10 shrink-0">
-                <div class="bg-slate-800/50 rounded-xl p-3 flex items-center justify-between">
+            <div class="p-4 border-t border-white/5 shrink-0">
+                <div class="bg-surfaceLight/50 rounded-xl p-3 flex items-center justify-between">
                     <div class="flex items-center gap-3">
-                        <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">AD</div>
+                        <div class="w-9 h-9 rounded-full bg-gradient-to-br from-accent to-purple-500 flex items-center justify-center text-xs font-bold text-white">AD</div>
                         <div class="overflow-hidden">
                             <p class="text-xs font-medium text-white truncate">Admin Moodle</p>
-                            <p class="text-[10px] text-green-400 flex items-center gap-1"><span class="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></span> Online</p>
+                            <p class="text-[10px] text-success flex items-center gap-1.5">
+                                <span class="w-1.5 h-1.5 bg-success rounded-full animate-pulse"></span> Online
+                            </p>
                         </div>
                     </div>
-                    <button onclick="handleLogout()" class="text-slate-400 hover:text-red-400 transition-colors p-1" title="Logout">
-                        <i data-lucide="power" class="w-4 h-4"></i>
+                    <button onclick="handleLogout()" class="text-gray-500 hover:text-danger transition-colors p-2 rounded-lg hover:bg-white/5" title="Logout">
+                        <i data-lucide="log-out" class="w-4 h-4"></i>
                     </button>
                 </div>
             </div>
         </aside>
 
+        <!-- MOBILE HEADER -->
+        <header class="md:hidden h-16 bg-surface/80 backdrop-blur-xl border-b border-white/5 flex items-center justify-between px-4 shrink-0 z-30">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 bg-gradient-to-br from-accent to-purple-500 rounded-xl flex items-center justify-center">
+                    <i data-lucide="cpu" class="w-5 h-5 text-white"></i>
+                </div>
+                <span class="font-bold text-white text-sm">Tuton Agent</span>
+            </div>
+            <button onclick="handleLogout()" class="text-gray-400 hover:text-white p-2 rounded-lg hover:bg-white/5">
+                <i data-lucide="log-out" class="w-5 h-5"></i>
+            </button>
+        </header>
+
         <!-- MAIN CONTENT AREA -->
-        <main class="flex-1 flex flex-col h-full overflow-hidden relative">
+        <main class="flex-1 md:flex md:flex-col overflow-y-auto relative pb-20 md:pb-0 app-main-content">
             
             <!-- TAB: STATUS -->
-            <div id="tab-status" class="tab-content h-full flex flex-col p-8 animate-fade-in block overflow-y-auto">
-                <div class="flex justify-between items-end mb-8">
+            <div id="tab-status" class="tab-content p-4 md:p-8 animate-fade-in block">
+                <div class="flex flex-col md:flex-row md:justify-between md:items-end mb-6 md:mb-8 gap-4">
                     <div>
-                        <h1 class="text-2xl font-bold text-gray-900">Status Pekerjaan</h1>
-                        <p class="text-sm text-gray-500 mt-1">Laporan dari <code>state.json</code> (cmd: status)</p>
+                        <h1 class="text-xl md:text-2xl font-bold text-white">Status Pekerjaan</h1>
+                        <p class="text-sm text-gray-400 mt-1">Laporan dari <code class="text-accent/80 bg-accent/10 px-1.5 py-0.5 rounded">state.json</code> (cmd: status)</p>
                     </div>
-                    <button class="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-gray-50 shadow-sm flex items-center gap-2">
+                    <button class="bg-surfaceLight border border-white/10 text-gray-300 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-white/10 hover:text-white transition-all flex items-center justify-center gap-2 shrink-0">
                         <i data-lucide="refresh-cw" class="w-4 h-4"></i> Refresh Data
                     </button>
                 </div>
 
                 <!-- Stats Cards -->
-                <div id="statsCards" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div id="statsCards" class="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6 mb-6 md:mb-8">
                     <!-- Cards will be rendered by JS -->
                 </div>
 
                 <!-- State Table -->
-                <div class="bg-white border border-gray-100 rounded-2xl shadow-soft overflow-hidden flex-1 flex flex-col">
-                    <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
-                        <h3 class="font-semibold text-gray-800">Detail Status per Item</h3>
+                <div class="bg-surface/50 backdrop-blur-sm border border-white/5 rounded-2xl overflow-hidden">
+                    <div class="px-4 md:px-6 py-4 border-b border-white/5 bg-surfaceLight/30">
+                        <h3 class="font-semibold text-white text-sm">Detail Status per Item</h3>
                     </div>
-                    <div class="overflow-x-auto flex-1">
+                    <div class="overflow-x-auto">
                         <table class="w-full text-sm text-left">
-                            <thead class="text-xs text-gray-500 uppercase bg-gray-50 border-b border-gray-100">
+                            <thead class="text-xs text-gray-400 uppercase bg-surfaceLight/50 border-b border-white/5">
                                 <tr>
-                                    <th class="px-6 py-4 font-semibold">Status</th>
-                                    <th class="px-6 py-4 font-semibold">Mata Kuliah</th>
-                                    <th class="px-6 py-4 font-semibold">Sesi</th>
-                                    <th class="px-6 py-4 font-semibold">Deskripsi Aktivitas</th>
+                                    <th class="px-4 md:px-6 py-3 md:py-4 font-semibold">Status</th>
+                                    <th class="px-4 md:px-6 py-3 md:py-4 font-semibold">Mata Kuliah</th>
+                                    <th class="px-4 md:px-6 py-3 md:py-4 font-semibold hidden sm:table-cell">Sesi</th>
+                                    <th class="px-4 md:px-6 py-3 md:py-4 font-semibold">Deskripsi</th>
                                 </tr>
                             </thead>
-                            <tbody id="statusTableBody" class="divide-y divide-gray-100">
+                            <tbody id="statusTableBody" class="divide-y divide-white/5">
                                 <!-- Rows will be rendered by JS -->
                             </tbody>
                         </table>
@@ -175,62 +211,62 @@
             </div>
 
             <!-- TAB: RESULT -->
-            <div id="tab-result" class="tab-content h-full hidden flex-col p-8 animate-fade-in overflow-y-auto">
-                <div class="flex justify-between items-end mb-8">
+            <div id="tab-result" class="tab-content hidden p-4 md:p-8 animate-fade-in">
+                <div class="flex flex-col md:flex-row md:justify-between md:items-end mb-6 md:mb-8 gap-4">
                     <div>
-                        <h1 class="text-2xl font-bold text-gray-900">Hasil Pekerjaan (Result)</h1>
-                        <p class="text-sm text-gray-500 mt-1">Unduh file jawaban (.docx) yang telah diselesaikan oleh Agent.</p>
+                        <h1 class="text-xl md:text-2xl font-bold text-white">Hasil Pekerjaan (Result)</h1>
+                        <p class="text-sm text-gray-400 mt-1">Unduh file jawaban (.docx) yang telah diselesaikan oleh Agent.</p>
                     </div>
-                    <button class="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-gray-50 shadow-sm flex items-center gap-2">
+                    <button class="bg-surfaceLight border border-white/10 text-gray-300 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-white/10 hover:text-white transition-all flex items-center justify-center gap-2 shrink-0">
                         <i data-lucide="download-cloud" class="w-4 h-4"></i> Download Semua (ZIP)
                     </button>
                 </div>
 
                 <!-- Course Cards Grid -->
-                <div id="resultsGrid" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                <div id="resultsGrid" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
                     <!-- Cards will be rendered by JS -->
                 </div>
             </div>
 
             <!-- TAB: RUN (AGENT RUNNER) -->
-            <div id="tab-run" class="tab-content h-full hidden flex-col p-8 animate-fade-in overflow-y-auto">
+            <div id="tab-run" class="tab-content hidden p-4 md:p-8 animate-fade-in">
                 <div class="mb-6">
-                    <h1 class="text-2xl font-bold text-gray-900">Agent Runner</h1>
-                    <p class="text-sm text-gray-500 mt-1">Eksekusi alur otomatis: Scrape â†’ Kerjakan (OpenCode) â†’ Buat .docx</p>
+                    <h1 class="text-xl md:text-2xl font-bold text-white">Agent Runner</h1>
+                    <p class="text-sm text-gray-400 mt-1">Eksekusi alur otomatis: Scrape - Kerjakan (OpenCode) - Buat .docx</p>
                 </div>
 
-                <div class="flex gap-6 h-full min-h-[500px]">
+                <div class="flex flex-col lg:flex-row gap-4 md:gap-6">
                     <!-- Left: Control Panel -->
-                    <div class="w-1/3 bg-white p-6 rounded-2xl border border-gray-100 shadow-soft flex flex-col overflow-y-auto">
-                        <h3 class="font-bold text-gray-900 mb-6 flex items-center gap-2 shrink-0">
+                    <div class="w-full lg:w-1/3 bg-surface/50 backdrop-blur-sm p-5 md:p-6 rounded-2xl border border-white/5">
+                        <h3 class="font-bold text-white mb-6 flex items-center gap-2 shrink-0">
                             <i data-lucide="sliders" class="w-5 h-5 text-accent"></i> Parameter Eksekusi
                         </h3>
                         
                         <form onsubmit="handleRun(event)" class="space-y-5">
                             <div>
-                                <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2 ml-1">Mata Kuliah dari Scrape</label>
+                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 ml-1">Mata Kuliah dari Scrape</label>
                                 <select id="runCourseId"
-                                    class="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all text-sm">
+                                    class="w-full px-4 py-3 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 focus:ring-2 focus:ring-accent/20 outline-none transition-all text-sm text-white appearance-none cursor-pointer">
                                     <option value="">Semua mata kuliah</option>
                                 </select>
                             </div>
                             
                             <div>
-                                <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2 ml-1">Filter Sesi</label>
+                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 ml-1">Filter Sesi</label>
                                 <input type="number" id="runSesi" placeholder="Contoh: 3"
-                                    class="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all text-sm">
+                                    class="w-full px-4 py-3 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 focus:ring-2 focus:ring-accent/20 outline-none transition-all text-sm text-white placeholder-gray-500">
                             </div>
 
-                            <label class="flex items-center gap-3 p-4 border border-gray-200 rounded-xl cursor-pointer hover:bg-gray-50 transition-colors">
-                                <input type="checkbox" id="runForce" class="w-4 h-4 text-accent rounded border-gray-300 focus:ring-accent">
+                            <label class="flex items-center gap-3 p-4 border border-white/10 rounded-xl cursor-pointer hover:bg-surfaceLight/50 transition-colors">
+                                <input type="checkbox" id="runForce" class="w-4 h-4 text-accent rounded border-gray-600 bg-primary focus:ring-accent">
                                 <div class="flex flex-col">
-                                    <span class="text-sm font-semibold text-gray-900">Force Run (--force)</span>
+                                    <span class="text-sm font-semibold text-white">Force Run (--force)</span>
                                     <span class="text-[10px] text-gray-500">Ulangi item yang sudah selesai (DONE)</span>
                                 </div>
                             </label>
 
                             <div class="pt-2">
-                                <button type="submit" id="btnRun" class="w-full bg-accent text-white py-3.5 rounded-xl font-bold hover:bg-indigo-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-md">
+                                <button type="submit" id="btnRun" class="w-full bg-accent text-white py-3.5 rounded-xl font-bold hover:bg-indigo-400 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent/25">
                                     <i data-lucide="play" class="w-5 h-5"></i> Jalankan Sekarang
                                 </button>
                             </div>
@@ -239,29 +275,29 @@
                         <!-- Divider -->
                         <div class="relative my-8 shrink-0">
                             <div class="absolute inset-0 flex items-center" aria-hidden="true">
-                                <div class="w-full border-t border-gray-200"></div>
+                                <div class="w-full border-t border-white/10"></div>
                             </div>
                             <div class="relative flex justify-center">
-                                <span class="px-3 bg-white text-[10px] font-bold text-gray-400 uppercase tracking-wider">Atur Jadwal Otomatis</span>
+                                <span class="px-3 bg-surface text-[10px] font-bold text-gray-500 uppercase tracking-wider">Atur Jadwal Otomatis</span>
                             </div>
                         </div>
 
                         <!-- Cronjob Form -->
                         <form onsubmit="handleSaveSchedule(event)" class="space-y-4 shrink-0 pb-2">
-                            <div class="flex items-center justify-between mb-4 bg-gray-50 p-3 rounded-xl border border-gray-100">
-                                <label class="text-sm font-semibold text-gray-900 flex items-center gap-2 cursor-pointer" for="cronToggle">
-                                    <i data-lucide="calendar-clock" class="w-4 h-4 text-gray-500"></i> Aktifkan Cronjob
+                            <div class="flex items-center justify-between mb-4 bg-primary/50 p-3 rounded-xl border border-white/10">
+                                <label class="text-sm font-semibold text-white flex items-center gap-2 cursor-pointer" for="cronToggle">
+                                    <i data-lucide="calendar-clock" class="w-4 h-4 text-gray-400"></i> Aktifkan Cronjob
                                 </label>
                                 <label class="relative inline-flex items-center cursor-pointer">
                                   <input type="checkbox" id="cronToggle" class="sr-only peer">
-                                  <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
+                                  <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-success"></div>
                                 </label>
                             </div>
 
                             <div class="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label class="block text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5 ml-1">Hari Pelaksanaan</label>
-                                    <select id="cronDay" class="w-full px-3 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all text-sm font-medium appearance-none cursor-pointer">
+                                    <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Hari Pelaksanaan</label>
+                                    <select id="cronDay" class="w-full px-3 py-2.5 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 focus:ring-2 focus:ring-accent/20 outline-none transition-all text-sm font-medium appearance-none cursor-pointer text-white">
                                         <option value="*">Setiap Hari</option>
                                         <option value="1">Senin</option>
                                         <option value="2">Selasa</option>
@@ -273,13 +309,13 @@
                                     </select>
                                 </div>
                                 <div>
-                                    <label class="block text-[10px] font-semibold text-gray-600 uppercase tracking-wider mb-1.5 ml-1">Jam (WIB)</label>
-                                    <input type="time" id="cronTime" value="02:00" class="w-full px-3 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all text-sm font-medium">
+                                    <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Jam (WIB)</label>
+                                    <input type="time" id="cronTime" value="02:00" class="w-full px-3 py-2.5 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 focus:ring-2 focus:ring-accent/20 outline-none transition-all text-sm font-medium text-white">
                                 </div>
                             </div>
 
                             <div class="pt-2">
-                                <button id="btnSaveSchedule" type="submit" class="w-full bg-white border border-gray-200 text-gray-700 py-3 rounded-xl text-sm font-bold hover:bg-gray-50 hover:text-accent hover:border-accent/30 transition-all flex items-center justify-center gap-2 shadow-sm">
+                                <button id="btnSaveSchedule" type="submit" class="w-full bg-surfaceLight border border-white/10 text-gray-300 py-3 rounded-xl text-sm font-bold hover:bg-white/10 hover:text-white hover:border-accent/30 transition-all flex items-center justify-center gap-2">
                                     <i data-lucide="save" class="w-4 h-4"></i> Simpan Jadwal
                                 </button>
                             </div>
@@ -287,47 +323,47 @@
                     </div>
 
                     <!-- Right: Terminal Output -->
-                    <div class="w-2/3 bg-darkbg rounded-2xl shadow-xl flex flex-col overflow-hidden border border-slate-700 relative">
-                        <div class="bg-slate-900 px-4 py-3 flex items-center justify-between border-b border-slate-700/50">
+                    <div class="flex-1 min-h-[300px] lg:min-h-0 bg-primary rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-white/10 relative terminal-container">
+                        <div class="bg-surface px-4 py-3 flex items-center justify-between border-b border-white/5">
                             <div class="flex items-center gap-2">
-                                <div class="w-3 h-3 rounded-full bg-red-500"></div>
-                                <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
-                                <div class="w-3 h-3 rounded-full bg-green-500"></div>
-                                <span id="runBadge" class="hidden ml-2 text-[10px] font-bold text-red-400 uppercase tracking-wider flex items-center gap-1.5">
-                                    <span class="w-1.5 h-1.5 bg-red-400 rounded-full animate-pulse"></span> Running
+                                <div class="w-3 h-3 rounded-full bg-danger"></div>
+                                <div class="w-3 h-3 rounded-full bg-warning"></div>
+                                <div class="w-3 h-3 rounded-full bg-success"></div>
+                                <span id="runBadge" class="hidden ml-2 text-[10px] font-bold text-danger uppercase tracking-wider flex items-center gap-1.5">
+                                    <span class="w-1.5 h-1.5 bg-danger rounded-full animate-pulse"></span> Running
                                 </span>
                             </div>
                             <div class="flex items-center gap-2">
-                                <button id="btnStopRun" onclick="handleStopRun()" class="hidden text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 flex items-center gap-1 font-mono px-2.5 py-1.5 rounded-lg transition-colors border border-red-500/30">
+                                <button id="btnStopRun" onclick="handleStopRun()" class="hidden text-xs text-danger hover:text-red-300 hover:bg-danger/10 flex items-center gap-1 font-mono px-2.5 py-1.5 rounded-lg transition-colors border border-danger/30">
                                     <i data-lucide="square" class="w-3 h-3"></i> stop
                                 </button>
-                                <button id="clearTerminal" onclick="clearTerminal()" class="text-xs text-slate-400 hover:text-white flex items-center gap-1 font-mono">
+                                <button id="clearTerminal" onclick="clearTerminal()" class="text-xs text-gray-500 hover:text-white flex items-center gap-1 font-mono">
                                     <i data-lucide="trash-2" class="w-3 h-3"></i> clear
                                 </button>
                             </div>
                         </div>
 
                         <!-- Progress / Status Strip -->
-                        <div id="runStatusBar" class="hidden border-b border-slate-700/50 bg-slate-900/80 px-4 py-3">
+                        <div id="runStatusBar" class="hidden border-b border-white/5 bg-surface/80 px-4 py-3">
                             <div class="flex items-center gap-4">
                                 <div class="flex-1 min-w-0">
                                     <div class="flex items-center justify-between mb-1.5 gap-3">
-                                        <span id="runStatusLabel" class="font-mono text-xs text-slate-300 truncate">Menyiapkanâ€¦</span>
-                                        <span id="runStatusMeta" class="font-mono text-[10px] text-slate-500 shrink-0">0/? item</span>
+                                        <span id="runStatusLabel" class="font-mono text-xs text-gray-300 truncate">Menyiapkan...</span>
+                                        <span id="runStatusMeta" class="font-mono text-[10px] text-gray-500 shrink-0">0/? item</span>
                                     </div>
-                                    <div class="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
-                                        <div id="runProgressBar" class="h-full bg-gradient-to-r from-indigo-500 via-accent to-emerald-400 rounded-full transition-all duration-500 ease-out" style="width:0%"></div>
+                                    <div class="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                                        <div id="runProgressBar" class="h-full bg-gradient-to-r from-accent via-purple-400 to-success rounded-full transition-all duration-500 ease-out" style="width:0%"></div>
                                     </div>
                                 </div>
                                 <div class="shrink-0 text-right">
-                                    <div id="runElapsed" class="font-mono text-sm text-slate-300">00:00</div>
-                                    <div id="runStep" class="text-[10px] text-slate-500 uppercase tracking-wider mt-0.5">Idle</div>
+                                    <div id="runElapsed" class="font-mono text-sm text-gray-300">00:00</div>
+                                    <div id="runStep" class="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">Idle</div>
                                 </div>
                             </div>
                         </div>
 
-                        <div id="terminal-output" class="p-5 overflow-auto flex-1 font-mono text-sm leading-relaxed text-slate-300 space-y-1">
-                            <div class="text-green-400">user@tuton:~$ Sistem siap menerima perintah.</div>
+                        <div id="terminal-output" class="p-4 md:p-5 overflow-auto flex-1 font-mono text-sm leading-relaxed text-gray-300 space-y-1">
+                            <div class="text-success">user@tuton:~$ Sistem siap menerima perintah.</div>
                             <!-- Logs will appear here -->
                         </div>
                     </div>
@@ -335,67 +371,73 @@
             </div>
 
             <!-- TAB: SETTINGS (.ENV) -->
-            <div id="tab-settings" class="tab-content h-full hidden flex-col p-8 animate-fade-in overflow-y-auto">
-                <div class="mb-8">
-                    <h1 class="text-2xl font-bold text-gray-900">Settings</h1>
-                    <p class="text-sm text-gray-500 mt-1">Atur kredensial Moodle, identitas mahasiswa, dan API Key OpenCode.</p>
+            <div id="tab-settings" class="tab-content hidden p-4 md:p-8 animate-fade-in">
+                <div class="mb-6 md:mb-8">
+                    <h1 class="text-xl md:text-2xl font-bold text-white">Settings</h1>
+                    <p class="text-sm text-gray-400 mt-1">Atur kredensial Moodle, identitas mahasiswa, dan API Key OpenCode.</p>
                 </div>
 
-                <div class="bg-white p-8 rounded-2xl border border-gray-100 shadow-soft max-w-4xl">
+                <div class="bg-surface/50 backdrop-blur-sm p-6 md:p-8 rounded-2xl border border-white/5 max-w-4xl">
                     <form id="envForm" class="space-y-6">
                         
-                        <div class="border-b border-gray-100 pb-4 mb-4">
-                            <h3 class="text-sm font-bold text-gray-900 uppercase tracking-wider mb-1"><i data-lucide="user-square" class="inline w-4 h-4 mr-1 -mt-0.5 text-accent"></i> Data Mahasiswa</h3>
+                        <div class="border-b border-white/5 pb-4 mb-4">
+                            <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-2">
+                                <i data-lucide="user-square" class="w-4 h-4 text-accent"></i> Data Mahasiswa
+                            </h3>
                             <p class="text-xs text-gray-500 mb-4">Digunakan untuk metadata dokumen jawaban (.docx).</p>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
-                                    <label class="block text-xs font-semibold text-gray-600 mb-2">NAMA LENGKAP</label>
-                                    <input type="text" name="nama" value="" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium">
+                                    <label class="block text-xs font-semibold text-gray-400 mb-2">NAMA LENGKAP</label>
+                                    <input type="text" name="nama" value="" class="w-full px-4 py-2.5 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 outline-none text-sm font-medium text-white placeholder-gray-500">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-semibold text-gray-600 mb-2">NIM</label>
-                                    <input type="text" name="nim" value="" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium">
+                                    <label class="block text-xs font-semibold text-gray-400 mb-2">NIM</label>
+                                    <input type="text" name="nim" value="" class="w-full px-4 py-2.5 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 outline-none text-sm font-medium text-white placeholder-gray-500">
                                 </div>
                                 <div class="md:col-span-2">
-                                    <label class="block text-xs font-semibold text-gray-600 mb-2">PROGRAM STUDI (PRODI)</label>
-                                    <input type="text" name="prodi" value="" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium">
+                                    <label class="block text-xs font-semibold text-gray-400 mb-2">PROGRAM STUDI (PRODI)</label>
+                                    <input type="text" name="prodi" value="" class="w-full px-4 py-2.5 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 outline-none text-sm font-medium text-white placeholder-gray-500">
                                 </div>
                             </div>
                         </div>
 
-                        <div class="border-b border-gray-100 pb-4 mb-4">
-                            <h3 class="text-sm font-bold text-gray-900 uppercase tracking-wider mb-1"><i data-lucide="globe" class="inline w-4 h-4 mr-1 -mt-0.5 text-accent"></i> Kredensial Moodle</h3>
+                        <div class="border-b border-white/5 pb-4 mb-4">
+                            <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-2">
+                                <i data-lucide="globe" class="w-4 h-4 text-accent"></i> Kredensial Moodle
+                            </h3>
                             <div class="grid grid-cols-1 gap-4 mt-4">
                                 <div>
-                                    <label class="block text-xs font-semibold text-gray-600 mb-2">MOODLE_COOKIE (MoodleSession)</label>
-                                    <input type="text" name="moodle_session" placeholder="Paste cookie session Anda di sini (misal: MoodleSession=...)" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium font-mono">
-                                    <p class="text-[10px] text-gray-400 mt-1.5">Disimpan ke moodle_credentials.json (bukan .env) dan langsung dipakai tanpa restart server.</p>
+                                    <label class="block text-xs font-semibold text-gray-400 mb-2">MOODLE_COOKIE (MoodleSession)</label>
+                                    <input type="text" name="moodle_session" placeholder="Paste cookie session Anda di sini (misal: MoodleSession=...)" class="w-full px-4 py-2.5 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 outline-none text-sm font-medium font-mono text-white placeholder-gray-500">
+                                    <p class="text-[10px] text-gray-500 mt-1.5">Disimpan ke moodle_credentials.json (bukan .env) dan langsung dipakai tanpa restart server.</p>
                                 </div>
-                                <div class="hidden"> <!-- Menyembunyikan field yang lama tetapi tetap ada di DOM jika dibutuhkan struktur formnya -->
-                                    <label class="block text-xs font-semibold text-gray-600 mb-2">MOODLE_PASSWORD</label>
-                                    <input type="password" value="secret123" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium font-mono">
+                                <div class="hidden">
+                                    <label class="block text-xs font-semibold text-gray-400 mb-2">MOODLE_PASSWORD</label>
+                                    <input type="password" value="secret123" class="w-full px-4 py-2.5 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 outline-none text-sm font-medium font-mono text-white">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-semibold text-gray-600 mb-2">MOODLE_URL</label>
-                                    <input type="url" name="moodle_url" value="" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium font-mono text-gray-500">
+                                    <label class="block text-xs font-semibold text-gray-400 mb-2">MOODLE_URL</label>
+                                    <input type="url" name="moodle_url" value="" class="w-full px-4 py-2.5 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 outline-none text-sm font-medium font-mono text-white placeholder-gray-500">
                                 </div>
                             </div>
                         </div>
 
                         <div>
-                            <h3 class="text-sm font-bold text-gray-900 uppercase tracking-wider mb-1"><i data-lucide="cpu" class="inline w-4 h-4 mr-1 -mt-0.5 text-accent"></i> Model Configuration</h3>
+                            <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-2">
+                                <i data-lucide="cpu" class="w-4 h-4 text-accent"></i> Model Configuration
+                            </h3>
                             <div class="mt-4">
-                                <label class="block text-xs font-semibold text-gray-600 mb-2">OPENCODE_MODEL</label>
-                                <input type="text" name="opencode_model" placeholder="opencode/big-pickle" class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium font-mono">
+                                <label class="block text-xs font-semibold text-gray-400 mb-2">OPENCODE_MODEL</label>
+                                <input type="text" name="opencode_model" placeholder="opencode/big-pickle" class="w-full px-4 py-2.5 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 outline-none text-sm font-medium font-mono text-white placeholder-gray-500">
                             </div>
                             <div class="mt-4">
-                                <label class="block text-xs font-semibold text-gray-600 mb-2">OUTPUT_DIR</label>
-                                <input type="text" name="output_dir" value="./output" readonly class="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-accent outline-none text-sm font-medium font-mono text-gray-500">
+                                <label class="block text-xs font-semibold text-gray-400 mb-2">OUTPUT_DIR</label>
+                                <input type="text" name="output_dir" value="./output" readonly class="w-full px-4 py-2.5 rounded-xl bg-primary/50 border border-white/10 focus:bg-surfaceLight focus:border-accent/50 outline-none text-sm font-medium font-mono text-gray-500 cursor-not-allowed">
                             </div>
                         </div>
 
                         <div class="pt-4 flex justify-end">
-                            <button type="submit" id="btnSaveEnv" class="bg-primary text-white px-8 py-3.5 rounded-xl font-bold hover:bg-slate-800 transition-all flex items-center gap-2 shadow-md">
+                            <button type="submit" id="btnSaveEnv" class="bg-accent text-white px-8 py-3.5 rounded-xl font-bold hover:bg-indigo-400 transition-all flex items-center gap-2 shadow-lg shadow-accent/25">
                                 <i data-lucide="save" class="w-5 h-5"></i> Simpan Settings
                             </button>
                         </div>
@@ -404,19 +446,41 @@
             </div>
 
         </main>
-        
+
+        <!-- MOBILE BOTTOM NAV -->
+        <nav class="md:hidden fixed bottom-0 left-0 right-0 bg-surface/95 backdrop-blur-xl border-t border-white/10 z-40 safe-area-bottom">
+            <div class="flex items-center justify-around py-2">
+                <button onclick="Navigation.switchTo('status', store)" id="nav-status-mobile" class="mobile-nav-btn flex flex-col items-center gap-1 px-3 py-2 text-accent">
+                    <i data-lucide="activity" class="w-5 h-5"></i>
+                    <span class="text-[10px] font-medium">Status</span>
+                </button>
+                <button onclick="Navigation.switchTo('result', store)" id="nav-result-mobile" class="mobile-nav-btn flex flex-col items-center gap-1 px-3 py-2 text-gray-500">
+                    <i data-lucide="folder-check" class="w-5 h-5"></i>
+                    <span class="text-[10px] font-medium">Result</span>
+                </button>
+                <button onclick="Navigation.switchTo('run', store)" id="nav-run-mobile" class="mobile-nav-btn flex flex-col items-center gap-1 px-3 py-2 text-gray-500">
+                    <i data-lucide="terminal" class="w-5 h-5"></i>
+                    <span class="text-[10px] font-medium">Run</span>
+                </button>
+                <button onclick="Navigation.switchTo('settings', store)" id="nav-settings-mobile" class="mobile-nav-btn flex flex-col items-center gap-1 px-3 py-2 text-gray-500">
+                    <i data-lucide="settings" class="w-5 h-5"></i>
+                    <span class="text-[10px] font-medium">Settings</span>
+                </button>
+            </div>
+        </nav>
+
         <!-- Notification Toast -->
-        <div id="toast" class="fixed top-8 right-8 bg-gray-900 text-white px-6 py-4 rounded-xl text-sm font-medium shadow-2xl z-[60] transition-all duration-300 transform translate-x-[120%] flex items-center gap-3">
-            <i data-lucide="check-circle" class="w-5 h-5 text-green-400 shrink-0"></i>
+        <div id="toast" class="fixed top-4 right-4 md:top-8 md:right-8 bg-surface/95 backdrop-blur-xl text-white px-5 py-4 rounded-2xl text-sm font-medium shadow-2xl z-[60] transition-all duration-300 transform translate-x-[120%] flex items-center gap-3 border border-white/10">
+            <i data-lucide="check-circle" class="w-5 h-5 text-success shrink-0"></i>
             <span id="toast-message">Berhasil!</span>
         </div>
 
     </div>
 
-    <script src="/js/state.js?v=4"></script>
-    <script src="/js/api.js?v=4"></script>
-    <script src="/js/components.js?v=4"></script>
-    <script src="/js/app.js?v=4"></script>
+    <script src="/js/state.js?v=5"></script>
+    <script src="/js/api.js?v=5"></script>
+    <script src="/js/components.js?v=5"></script>
+    <script src="/js/app.js?v=5"></script>
     <script>
         if (window.lucide) {
             lucide.createIcons();
