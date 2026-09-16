@@ -34,6 +34,7 @@ const elements = {
     cronDay: null,
     cronTime: null,
     saveScheduleBtn: null,
+    cronNextRun: null,
     saveEnvBtn: null,
     clearTerminalBtn: null,
     statusTableBody: null,
@@ -82,6 +83,7 @@ function initElements() {
     elements.cronDay = document.getElementById("cronDay");
     elements.cronTime = document.getElementById("cronTime");
     elements.saveScheduleBtn = document.getElementById("btnSaveSchedule");
+    elements.cronNextRun = document.getElementById("cronNextRun");
     elements.saveEnvBtn = document.getElementById("btnSaveEnv");
     elements.clearTerminalBtn = document.getElementById("clearTerminal");
     elements.statusTableBody = document.getElementById("statusTableBody");
@@ -169,6 +171,9 @@ async function loadInitialData() {
         
         // Load courses for dropdown
         await loadCourses();
+        
+        // Load cron schedule config
+        await loadSchedule();
     } catch (error) {
         console.error("Failed to load initial data:", error);
         appToast.show("Gagal memuat data awal: " + error.message, "error");
@@ -198,6 +203,39 @@ async function loadCourses() {
         console.error("Failed to load courses:", error);
         select.innerHTML = '<option value="">Course tidak tersedia - perbarui session Moodle</option>';
         select.disabled = true;
+    }
+}
+
+async function loadSchedule() {
+    try {
+        const response = await appScheduleAPI.get();
+        appStore.set("schedule", response);
+        
+        if (elements.cronToggle) elements.cronToggle.checked = !!response.enabled;
+        if (elements.cronDay) elements.cronDay.value = response.day || "*";
+        if (elements.cronTime) elements.cronTime.value = response.time || "02:00";
+        updateCronNextRun(response);
+    } catch (error) {
+        console.error("Failed to load schedule:", error);
+    }
+}
+
+function updateCronNextRun(schedule) {
+    if (!elements.cronNextRun) return;
+    const next = schedule && schedule.next_run ? schedule.next_run.replace("T", " ") : null;
+    const lastStatus = schedule && schedule.last_status ? schedule.last_status : null;
+    let text = "";
+    if (next) {
+        text = `Jadwal berikutnya: ${next} WIB`;
+        if (lastStatus === "skipped_busy") text += " (terakhir: dilewati)";
+    } else {
+        text = "Cronjob nonaktif.";
+    }
+    elements.cronNextRun.textContent = text;
+    elements.cronNextRun.classList.remove("hidden");
+    if (elements.cronNextRun) {
+        elements.cronNextRun.classList.toggle("text-success", !!next);
+        elements.cronNextRun.classList.toggle("text-gray-500", !next);
     }
 }
 
@@ -576,10 +614,12 @@ async function handleSaveSchedule(e) {
     
     try {
         const response = await appScheduleAPI.save({ enabled, day, time });
-        appToast.show(response.message);
+        appStore.set("schedule", response);
+        updateCronNextRun(response);
         
         if (enabled) {
-            appTerminal.append(`user@tuton:~$ Konfigurasi cron berhasil diperbarui. Agent akan berjalan ${day === "*" ? "setiap hari" : `hari ${day}`} pukul ${time} WIB.`, "success");
+            const next = response.next_run ? ` (berikutnya: ${response.next_run.replace("T", " ")} WIB)` : "";
+            appTerminal.append(`user@tuton:~$ Konfigurasi cron diperbarui. Agent akan berjalan ${day === "*" ? "setiap hari" : `hari ${day}`} pukul ${time} WIB${next}.`, "success");
         } else {
             appTerminal.append(`user@tuton:~$ Konfigurasi cron dinonaktifkan.`, "warning");
         }

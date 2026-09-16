@@ -134,6 +134,10 @@ const RunAPI = {
 
 // === Schedule ===
 const ScheduleAPI = {
+    async get() {
+        return apiRequest("/api/schedule");
+    },
+
     async save(data) {
         return apiRequest("/api/schedule", {
             method: "POST",

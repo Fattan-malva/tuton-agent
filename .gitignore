@@ -11,6 +11,10 @@ secrets/
 *.pem
 *.key
 
+# Cronjob config / log
+cronjob.json
+cron.log
+
 # Python
 __pycache__/
 *.py[cod]
