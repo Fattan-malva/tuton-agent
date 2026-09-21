@@ -79,21 +79,42 @@ def build_prompt(
             "   - Format APA edisi ke-7:",
             "     Buku  : Penulis, A. A., & Penulis, B. B. (Tahun). *Judul Buku* (edisi). Penerbit.",
             "     Jurnal: Penulis, A. A. (Tahun). Judul artikel. *Nama Jurnal, Vol*(No), hlm–hlm. https://doi.org/...",
-            "6. Gunakan skill `humanizer` (load via tool skill) untuk menulis ulang jawaban agar terdengar "
-            "seperti ditulis manusia: hilangkan pola AI (bahasa kaku, kata seperti 'delve', 'landscape', "
-            "kalimat berimbuhan berlebihan, dashes, not-X-but-Y, dan sejenisnya). Mode embedded: hasil langsung teks final.",
-            "   - Pertahankan semua fakta, rumus, istilah teknis, dan sitasi.",
-            "   - Untuk jawaban matematika: berikan langkah penyelesaian sebagai teks + notasi matematika teks yang jelas.",
-            f"7. Tulis jawaban final dalam format Markdown ke `{jawaban_path}`. Struktur wajib:",
-            "```",
-            "## Jawab",
-            "(jawaban untuk setiap butir soal, gunakan subheading/penomoran sesuai soal: a, b, c, ...)",
-            "",
-            "## Daftar Pustaka",
-            "1. ...",
-            "2. ...",
-            "```",
-            "8. Kembalikan di output terminal hanya satu kalimat status singkat (misal: 'Selesai').",
+"6. Gunakan skill `humanizer` (load via tool skill) untuk menulis ulang jawaban agar terdengar "
+        "seperti ditulis manusia: hilangkan pola AI (bahasa kaku, kata seperti 'delve', 'landscape', "
+        "kalimat berimbuhan berlebihan, dashes, not-X-but-Y, dan sejenisnya). Mode embedded: hasil langsung teks final.",
+        "   - Pertahankan semua fakta, rumus, istilah teknis, dan sitasi.",
+        "   - Untuk jawaban matematika: berikan langkah penyelesaian sebagai teks + notasi matematika teks yang jelas.",
+        f"7. Tulis jawaban final dalam format Markdown ke `{jawaban_path}`. Struktur wajib:",
+        "```",
+        "## Jawab",
+        "(jawaban untuk setiap butir soal, gunakan subheading/penomoran sesuai soal: a, b, c, ...)",
+        "",
+        "## Daftar Pustaka",
+        "1. ...",
+        "2. ...",
+        "```",
+        ]
+    )
+    if work_kind == "diskusi":
+        lines.extend(
+            [
+                "",
+                "8. Argumentasi manfaat (HANYA jika relevan): sebelum menulis, nilai dulu apakah topik soal "
+                "punya aplikasi nyata yang jelas (sistem informasi seperti HRIS, organisasi, perusahaan, industri, "
+                "atau praktik profesional lain).",
+                "   - JIKA relevan: akhiri bagian `## Jawab` dengan sub-bagian `### Manfaat dan Relevansi` berisi "
+                "argumentasi mengapa konsep/keterampilan ini berguna di konteks nyata tersebut (mekanisme/alasan "
+                "logis, bukan klaim kosong), didukung literatur nyata yang diverifikasi via websearch/webfetch.",
+                "   - JIKA TIDAK relevan (soal murni teoretis/abstrak/ hitungan tanpa konteks aplikatif): JANGAN "
+                "memaksakan bagian ini, langsung ke `## Daftar Pustaka`. Jangan menulis 'Manfaat dan Relevansi' "
+                "yang dibuat-buat.",
+                "   - DILARANG menulis tanggapan ke teman/postingan orang lain (tidak ada data teman; fiktif "
+                "dilarang).",
+            ]
+        )
+    lines.extend(
+        [
+            "9. Kembalikan di output terminal hanya satu kalimat status singkat (misal: 'Selesai').",
             "",
             "Penting: ACCURACY > kecepatan. Periksa kembali jawaban sebelum menulis file.",
         ]

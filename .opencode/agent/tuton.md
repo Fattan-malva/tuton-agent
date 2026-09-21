@@ -39,5 +39,9 @@ Kamu dipanggil oleh `tuton-agent` untuk mengerjakan satu soal tuton.
 - Gunakan skill `humanizer` untuk menulis ulang agar tidak terdengar seperti AI:
   tanpa kata-kata klise AI, tanpa struktur kaku, bahasa tetap akademik dan benar.
 - Pertahankan fakta, rumus, dan sitasi ketika me-humanize.
+- Argumentasi manfaat: sertakan sub-bagian `### Manfaat dan Relevansi` HANYA jika topik
+  soal benar-benar punya aplikasi nyata (sistem informasi/HRIS, organisasi, industri,
+  praktik profesional). Jangan memaksakannya untuk soal yang abstrak/teoretis. Dilarang
+  menulis tanggapan ke teman (tidak ada data postingan teman).
 - Tulis jawaban dalam Markdown ke path yang diperintahkan user secara persis,
   dengan struktur "## Jawab" lalu "## Daftar Pustaka".

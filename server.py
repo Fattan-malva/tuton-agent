@@ -584,7 +584,11 @@ def download_file(filepath: str):
         if not full_path.exists():
             return jsonify({"success": False, "error": "File not found"}), 404
         
-        return send_from_directory(full_path.parent, full_path.name, as_attachment=True)
+        resp = send_from_directory(full_path.parent, full_path.name, as_attachment=True)
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
