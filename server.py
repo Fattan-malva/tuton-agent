@@ -68,48 +68,41 @@ def _kill_proc_tree(proc: subprocess.Popen) -> None:
 
 
 def _read_process_output(proc: subprocess.Popen):
-    """Stream stdout proses anak secara real-time.
+    """Stream stdout proses anak secara real-time (Linux + Windows).
 
-    Di Windows, `pipe.read(n)` memblokir sampai EOF → semua baris baru muncul
-    di akhir run. Jadi di Windows pakai readline() (streaming per baris) lalu
-    pecah ulang per \\r supaya spinner/progress (bare \\r) tetap terlihat.
-    Di Linux, chunk read baku sudah streaming per potongan."""
+    Baca dalam mode binary chunk kecil (bukan TextIOWrapper): TextIOWrapper
+    buffer 8KB bikin isi pipe baru terbaca setelah EOF di Windows sehingga
+    log di UI muncul baru di akhir run. Binary + read chunk mengalir begitu
+    data tersedia di kedua OS. Spinner/progress (bare \\r) dipecah manual
+    supaya tetap keluar sebagai baris ke UI."""
     global process_output
+    # read1 -> BufferedReader (mengembalikan chunk begitu ada data);
+    # read -> FileIO/_WindowsPipeIO (raw pipe, bufsize=0).
+    read = getattr(proc.stdout, "read1", proc.stdout.read)
+    buf = b""
     try:
-        if os.name == "nt":
+        while True:
+            chunk = read(4096)
+            if not chunk:
+                break
+            buf += bytes(chunk)
             while True:
-                line = proc.stdout.readline()
-                if not line:
+                nl = buf.find(b"\n")
+                cr = buf.find(b"\r")
+                if nl == -1 and cr == -1:
                     break
-                for piece in line.split("\r"):
-                    piece = _strip_ansi(piece).strip()
-                    if piece:
-                        with process_lock:
-                            process_output.append(piece)
-        else:
-            buf = ""
-            while True:
-                chunk = proc.stdout.read(4096)
-                if not chunk:
-                    break
-                buf += chunk
-                while True:
-                    sep = -1
-                    if "\n" in buf:
-                        sep = buf.index("\n")
-                    if "\r" in buf and (sep == -1 or buf.index("\r") < sep):
-                        sep = buf.index("\r")
-                    if sep == -1:
-                        break
-                    line = _strip_ansi(buf[:sep]).rstrip("\r")
-                    if line:
-                        with process_lock:
-                            process_output.append(line)
-                    buf = buf[sep + 1:]
-            line = _strip_ansi(buf).rstrip("\r")
-            if line:
-                with process_lock:
-                    process_output.append(line)
+                sep = nl if (nl != -1 and (cr == -1 or nl < cr)) else cr
+                line = _strip_ansi(
+                    buf[:sep].decode("utf-8", errors="replace")
+                ).rstrip("\r")
+                buf = buf[sep + 1:]
+                if line:
+                    with process_lock:
+                        process_output.append(line)
+        line = _strip_ansi(buf.decode("utf-8", errors="replace")).rstrip("\r\n")
+        if line:
+            with process_lock:
+                process_output.append(line)
     except Exception as e:
         with process_lock:
             process_output.append(f"ERROR: {e}")
@@ -132,9 +125,9 @@ def run_command_async(cmd: list[str], cwd: Path | None = None) -> dict:
             cwd=str(cwd or Path(__file__).parent),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            # Binary + bufsize=0: tanpa TextIOWrapper/WH bundling sehingga
+            # pembacaan stdout realtime di Linux maupun Windows.
+            bufsize=0,
         )
         if os.name == "nt":
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP

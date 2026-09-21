@@ -117,7 +117,12 @@ def _process_course(
     total = len(all_work)
     print(f"  · TOTAL: {total} item")
     worked = 0
+    blocked_section: int | None = None
     for pos, (item, kind, section_num) in enumerate(all_work, 1):
+        # item per-sesi tergabung di all_work, jadi begitu satu soal tak
+        # ditemukan, sesi itu dilewati utuh lalu lanjut ke sesi/matkul lain.
+        if blocked_section == section_num:
+            continue
         try:
             worked += _process_item(
                 session, scraper, downloader, parser,
@@ -125,9 +130,9 @@ def _process_course(
                 pos=pos, total=total, force=force,
             )
         except SoalNotFound as exc:
-            print(f"\n  ⛔ BERHENTI: {exc}")
-            print("  Sisa item tidak dikerjakan sampai soal ditemukan/diperbaiki.")
-            return
+            print(f"\n  ⛔ Sesi {section_num} dilewati: {exc}")
+            print("  Sisa item sesi ini tidak dikerjakan; lanjut sesi/matkul berikut.")
+            blocked_section = section_num
     print(f"\nSelesai. {worked} item diproses untuk {course.name}.")
 
 
@@ -165,6 +170,7 @@ def _process_item(
     # Transkripsi isi lampiran (gambar/PDF via model vision -> agent transcriber;
     # Excel/docx via ekstraksi Python). teks masuk ke soal.md agar model menjawab
     # cukup dari satu file teks.
+    print(f"  · {progress_flag}[{kind}] {item.title} → transkripsi ...")
     from moodle.transcribe import process_attachment
 
     transcribed = []
@@ -226,6 +232,7 @@ def _process_item(
 
     for attempt in (1, 2):
         try:
+            print(f"  · {progress_flag}[{kind}] {item.title} → opencode run ...")
             result = run_opencode(prompt)
         except TimeoutError:
             print("  ! opencode timeout, coba ulang...")
@@ -247,6 +254,7 @@ def _process_item(
             print(f"  {ok[-1][:120]}")
 
     # 3) Generate .docx (equation OMML asli)
+    print(f"  · {progress_flag}[{kind}] {item.title} → membuat docx ...")
     jawaban_md = jawaban_path.read_text(encoding="utf-8")
     # Jangan baca ulang soal.md dari disk: agent opencode bisa menghapus/memindahnya
     # saat bekerja. Pakai konten yang sudah kita susun di memori.

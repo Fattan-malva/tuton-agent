@@ -8,7 +8,6 @@ mode: primary
 tools:
   read: true
   edit: true
-  bash: false
   webfetch: true
   websearch: true
   skill: true

@@ -471,6 +471,7 @@ const runProgress = {
     itemLabel: "",
     itemsTotal: 0,
     itemsDone: 0,
+    partial: 0,
     step: "idle",
 };
 
@@ -480,6 +481,7 @@ function resetRunProgress() {
     runProgress.itemLabel = "";
     runProgress.itemsTotal = 0;
     runProgress.itemsDone = 0;
+    runProgress.partial = 0;
     runProgress.step = "idle";
 }
 
@@ -502,14 +504,28 @@ function updateRunProgress(line) {
         runProgress.itemsTotal += 1;
     }
 
-    // Marker progres dari main.py: "· [3/5] [diskusi] Judul → output/..."
+    // Marker progres dari main.py: "· [3/5] [diskusi] Judul → transkripsi ..."
     const mItem = line.match(/^\s*· \[(\d+)\/(\d+)\]\s+\[(diskusi|tugas)\]\s+(.+?)\s+→/);
     if (mItem) {
         runProgress.itemsTotal = parseInt(mItem[2], 10);
         runProgress.itemsDone = parseInt(mItem[1], 10) - 1;
         runProgress.kind = mItem[3];
         runProgress.itemLabel = mItem[4];
-        runProgress.step = "mengerjakan";
+        // Sub-progres dalam satu item supaya bar ikut bergerak realtime:
+        // parse → transkripsi → opencode → docx.
+        if (/→ transkripsi/.test(line)) {
+            runProgress.partial = 0.35;
+            runProgress.step = "transkripsi";
+        } else if (/→ opencode/.test(line)) {
+            runProgress.partial = 0.7;
+            runProgress.step = "opencode";
+        } else if (/→ membuat docx/.test(line)) {
+            runProgress.partial = 0.92;
+            runProgress.step = "membuat docx";
+        } else {
+            runProgress.partial = 0;
+            runProgress.step = "mengerjakan";
+        }
     } else {
         const mItemOld = line.match(/^\s*· \[(diskusi|tugas)\]\s+(.+?)\s+→/);
         if (mItemOld) {
@@ -529,6 +545,7 @@ function updateRunProgress(line) {
     if (/→ .*? run \.\.\./.test(line)) runProgress.step = "opencode";
     if (/✓ .+? siap\.$/.test(line)) {
         runProgress.itemsDone += 1;
+        runProgress.partial = 0;
         runProgress.step = "membuat docx";
     }
     if (/Selesai\. (\d+) item diproses/.test(line)) {
@@ -572,7 +589,8 @@ function renderRunStatus() {
     if (runProgress.step === "selesai") {
         pct = 100;
     } else if (total > 0) {
-        pct = Math.min(100, Math.round((done / total) * 100));
+        const partial = runProgress.partial || 0;
+        pct = Math.min(100, Math.round(((done + partial) / total) * 100));
     }
 
     elements.runProgressBar.style.width = pct + "%";
