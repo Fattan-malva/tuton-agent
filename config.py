@@ -35,15 +35,12 @@ class Config:
     PRODI = os.getenv("PRODI", "")
     OPENCODE_MODEL = (os.getenv("OPENCODE_MODEL") or "").strip()
 
-    OPENCODE_VISION_MODEL_IMAGE = (
-        os.getenv("OPENCODE_VISION_MODEL_IMAGE", "opencode/mimo-v2.5-free").strip()
-    )
-    OPENCODE_VISION_MODEL_IMAGE_BACKUP = os.getenv(
-        "OPENCODE_VISION_MODEL_IMAGE_BACKUP", "opencode/muse-spark-1.3-contributor-free"
-    ).strip()
-    OPENCODE_VISION_MODEL_PDF = os.getenv(
-        "OPENCODE_VISION_MODEL_PDF", "opencode/muse-spark-1.3-contributor-free"
-    ).strip()
+    # Model transcriber (vision) dipilih OTOMATIS dari `opencode models`
+    # berdasarkan yang support image/pdf, jadi tidak di-hardcode. Variabel ini
+    # opsional untuk memprioritaskan model tertentu bila masih tersedia.
+    OPENCODE_VISION_PREFER = [
+        p.strip() for p in os.getenv("OPENCODE_VISION_PREFER", "").split(",") if p.strip()
+    ]
     OPENCODE_VISION_VARIANT = os.getenv("OPENCODE_VISION_VARIANT", "low").strip()
     TUTON_TIMEOUT_TRANSCRIBE = int(os.getenv("TUTON_TIMEOUT_TRANSCRIBE", "300"))
 

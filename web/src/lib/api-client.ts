@@ -12,7 +12,6 @@ import type {
   RunOutputResponse,
   RunStartResponse,
   RunStatusResponse,
-  Schedule,
   Section,
   SectionsResponse,
   StatusResponse,
@@ -172,17 +171,6 @@ export const apiClient = {
 
   stopRun(): Promise<StopResponse> {
     return envelope('/api/run/stop', { method: 'POST' });
-  },
-
-  getSchedule(): Promise<Schedule> {
-    return request<Schedule>('/api/schedule');
-  },
-
-  saveSchedule(schedule: { enabled: boolean; day: Schedule['day']; time: string }): Promise<Schedule> {
-    return request<Schedule>('/api/schedule', {
-      method: 'POST',
-      body: JSON.stringify(schedule),
-    });
   },
 };
 

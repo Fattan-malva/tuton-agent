@@ -5,12 +5,15 @@ from pathlib import Path
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Cm, Pt
 
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
+_INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 _MATRIX_INLINE_RE = re.compile(r"\[\[.*?\]\]")
+_CODE_FENCE_RE = re.compile(r"^\s*(```+|~~~+)")
 _LATEX_REPLACEMENTS = {
     r"\rightarrow": "→",
     r"\to": "→",
@@ -511,6 +514,19 @@ def _add_italic_text(paragraph, text: str):
 
 
 def _add_italic_plain(paragraph, text: str):
+    """Tambah run dengan dukungan *italic* dan inline ``code`` (monospace)."""
+    pos = 0
+    for m in _INLINE_CODE_RE.finditer(text):
+        if m.start() > pos:
+            _add_italic_plain_runs(paragraph, text[pos:m.start()])
+        run = paragraph.add_run(m.group(1))
+        run.font.name = "Consolas"
+        run.font.size = Pt(10)
+        pos = m.end()
+    _add_italic_plain_runs(paragraph, text[pos:])
+
+
+def _add_italic_plain_runs(paragraph, text: str):
     pos = 0
     for m in _ITALIC_RE.finditer(text):
         if m.start() > pos:
@@ -638,12 +654,58 @@ def _is_table_row(line: str) -> bool:
     return line.strip().startswith("|") and line.strip().endswith("|") and "|" in line[1:]
 
 
+def _shade_paragraph(paragraph, fill: str = "F2F2F2"):
+    """Beri latar abu-abu tipis pada paragraf (hasil: blok kode terlihat)."""
+    ppr = paragraph._p.get_or_add_pPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), fill)
+    ppr.append(shd)
+
+
+def _add_code_block(doc: Document, code: str):
+    """Render blok kode (` ```sql ... ``` `) sebagai satu paragraf bergaya
+    monospace dengan latar abu-abu dan indent, baris dipertahankan."""
+    lines = code.replace("\r\n", "\n").split("\n")
+    p = doc.add_paragraph()
+    _shade_paragraph(p)
+    pf = p.paragraph_format
+    pf.left_indent = Cm(0.6)
+    pf.right_indent = Cm(0.6)
+    pf.space_before = Pt(6)
+    pf.space_after = Pt(6)
+    for idx, code_line in enumerate(lines):
+        run = p.add_run(code_line if code_line else " ")
+        run.font.name = "Consolas"
+        run.font.size = Pt(9)
+        if idx < len(lines) - 1:
+            run.add_break()
+
+
 def _render_markdown(doc: Document, md: str):
     lines = md.splitlines()
     i = 0
     ordered_idx = 0
     while i < len(lines):
         line = lines[i].rstrip()
+
+        # Fenced code block (```sql ... ```): render apa adanya, tanpa parsing
+        # markdown/math di dalamnya.
+        fence_m = _CODE_FENCE_RE.match(line)
+        if fence_m:
+            fence = fence_m.group(1)[0] * 3
+            code_lines: list[str] = []
+            i += 1
+            while i < len(lines):
+                if lines[i].strip().startswith(fence):
+                    i += 1
+                    break
+                code_lines.append(lines[i])
+                i += 1
+            _add_code_block(doc, "\n".join(code_lines))
+            ordered_idx = 0
+            continue
 
         # Inline math: convert one-line $...$ expressions to Word equations.
         if line.count("$") >= 2 and "$$" not in line:

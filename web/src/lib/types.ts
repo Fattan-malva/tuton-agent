@@ -106,19 +106,6 @@ export interface AppConfig {
   output_dir: string;
 }
 
-export interface Schedule {
-  enabled: boolean;
-  day: '*' | '0' | '1' | '2' | '3' | '4' | '5' | '6';
-  time: string;
-  timezone: string;
-  last_run: string | null;
-  next_run: string | null;
-  last_status: string | null;
-  updated_at: string | null;
-  success?: boolean;
-  error?: string;
-}
-
 export interface RunOptions {
   course_id?: number;
   sesi?: number;

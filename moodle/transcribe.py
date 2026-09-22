@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import subprocess
+import time
 import zipfile
 
-from config import Config
+from config import Config, PROJECT_ROOT
 from generator.opencode_runner import run_opencode
 from moodle.ocr import is_image, ocr_image
 
@@ -29,21 +32,139 @@ ATURAN:
 
 
 def _image_candidates() -> list[tuple[str, str]]:
-    cands: list[tuple[str, str]] = []
-    primary = Config.OPENCODE_VISION_MODEL_IMAGE
-    if primary:
-        cands.append((primary, ""))
-    backup = Config.OPENCODE_VISION_MODEL_IMAGE_BACKUP
-    if backup and backup != primary:
-        cands.append((backup, Config.OPENCODE_VISION_VARIANT))
-    return cands
+    """Model vision untuk gambar: pilih otomatis yang mendukung input image."""
+    return list(_candidates(pdf=False))
 
 
 def _pdf_candidates() -> list[tuple[str, str]]:
-    model = Config.OPENCODE_VISION_MODEL_PDF
-    if not model:
-        return []
-    return [(model, Config.OPENCODE_VISION_VARIANT)]
+    """Model vision untuk PDF: pilih otomatis yang mendukung input image+pdf."""
+    return list(_candidates(pdf=True))
+
+
+# ============================================================================
+# Auto-deteksi model vision lewat `opencode models --verbose`.
+# Model tidak di-hardcode karena daftar bisa berubah sewaktu-waktu (ada
+# model yang hilang/tambah). Diprioritaskan: (1) prefer list dari config,
+# (2) urutan yang dikembalikan opencode.
+# ============================================================================
+_models_cache: tuple[float, list[dict]] | None = None
+_MODELS_CACHE_TTL = 120  # detik: hindari panggil CLI tiap attachment
+
+
+def _parse_verbose_models(data: str) -> list[dict]:
+    """Parse `opencode models --verbose`: setiap model = `id\n{json}\n`."""
+    models: list[dict] = []
+    pending_name: str | None = None
+    depth = 0
+    buf: list[str] = []
+    for raw in data.splitlines():
+        if pending_name is None:
+            line = raw.strip()
+            if not line:
+                continue
+            pending_name = line
+            depth = 0
+            buf = []
+            continue
+        if not buf and "{" not in raw:
+            continue
+        buf.append(raw)
+        depth += raw.count("{") - raw.count("}")
+        if depth == 0:
+            try:
+                meta = json.loads("\n".join(buf))
+            except json.JSONDecodeError:
+                meta = {}
+            if meta:
+                full = f"{meta.get('providerID', '')}/{meta.get('id', '')}".strip("/")
+                meta["full_id"] = full
+                models.append(meta)
+            pending_name = None
+    return models
+
+
+def _fetch_models() -> list[dict]:
+    global _models_cache
+    now = time.time()
+    if _models_cache is not None and now - _models_cache[0] < _MODELS_CACHE_TTL:
+        return _models_cache[1]
+    models: list[dict] = []
+    try:
+        from generator.opencode_runner import _resolve_opencode
+
+        cmd = _resolve_opencode() + ["models", "--verbose"]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            cwd=str(PROJECT_ROOT),
+        )
+        data = (result.stdout or "") + (result.stderr or "")
+        models = _parse_verbose_models(data)
+    except Exception as exc:  # noqa: BLE001 - apapun blokirannya, lanjut fallback
+        print(f"    ! gagal membaca daftar model opencode: {exc}")
+    _models_cache = (now, models)
+    return models
+
+
+def _filter_vision_models(models: list[dict], *, pdf: bool) -> list[dict]:
+    out: list[dict] = []
+    for m in models:
+        status = m.get("status") or "active"
+        if status != "active":
+            continue
+        caps = m.get("capabilities") or {}
+        inp = caps.get("input") or {}
+        if not inp.get("image"):
+            continue
+        if pdf and not inp.get("pdf"):
+            continue
+        out.append(m)
+    return out
+
+
+def _match_model_id(pref: str, ids: list[str]) -> str | None:
+    pref = pref.strip().strip("/")
+    for mid in ids:
+        if mid == pref or mid.endswith("/" + pref):
+            return mid
+    return None
+
+
+def _ordered_vision_ids(*, pdf: bool) -> list[str]:
+    available = _filter_vision_models(_fetch_models(), pdf=pdf)
+    ids: list[str] = []
+    for m in available:
+        fid = m.get("full_id")
+        if fid and fid not in ids:
+            ids.append(fid)
+    prefer = Config.OPENCODE_VISION_PREFER
+    if prefer:
+        ranked: list[str] = []
+        for p in prefer:
+            hit = _match_model_id(p, ids)
+            if hit and hit not in ranked:
+                ranked.append(hit)
+        ids = ranked + [i for i in ids if i not in ranked]
+    return ids
+
+
+def _candidates(*, pdf: bool) -> list[tuple[str, str]]:
+    """(model_id, variant) untuk transcriber. Variant hanya dipakai bila model
+    menyediakan variant tsb (mis. `low` untuk reasoning effort)."""
+    models = _filter_vision_models(_fetch_models(), pdf=pdf)
+    variants_map = {
+        m.get("full_id", ""): set(m.get("variants") or {}) for m in models
+    }
+    variant = Config.OPENCODE_VISION_VARIANT
+    cands: list[tuple[str, str]] = []
+    for mid in _ordered_vision_ids(pdf=pdf):
+        v = variant if variant and variant in variants_map.get(mid, set()) else ""
+        cands.append((mid, v))
+    return cands
 
 
 def _transcribe_with_model(
@@ -57,7 +178,7 @@ def _transcribe_with_model(
         .replace("{OUT}", str(out_file))
     )
     try:
-        run_opencode(
+        result = run_opencode(
             prompt,
             agent="transcriber",
             attach=[str(path)],
@@ -69,6 +190,8 @@ def _transcribe_with_model(
         print(f"    ! transkripsi {path.name} timeout di model {model}")
         out_file.unlink(missing_ok=True)
         return ""
+    if result.returncode != 0:
+        print(f"    ! transkripsi {path.name} gagal di model {model} (exit {result.returncode})")
     if out_file.exists() and out_file.stat().st_size > 20:
         text = out_file.read_text(encoding="utf-8").strip()
         if text:

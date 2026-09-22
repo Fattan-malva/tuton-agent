@@ -1,11 +1,10 @@
-import type { AppConfig, Course, ResultCourse, Schedule, StatusResponse } from './types';
+import type { AppConfig, Course, ResultCourse, StatusResponse } from './types';
 
 export interface StoreState {
   config: AppConfig | null;
   courses: Course[];
   status: StatusResponse | null;
   results: ResultCourse[];
-  schedule: Schedule | null;
   currentTab: 'status' | 'results' | 'run' | 'settings';
   isLoggedIn: boolean;
   isLoading: boolean;
@@ -18,7 +17,6 @@ class Store {
     courses: [],
     status: null,
     results: [],
-    schedule: null,
     currentTab: 'status',
     isLoggedIn: false,
     isLoading: false,

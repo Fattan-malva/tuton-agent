@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import mimetypes
 import os
 import re
@@ -9,10 +8,8 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import requests
 
@@ -137,170 +134,6 @@ def run_command_async(cmd: list[str], cwd: Path | None = None) -> dict:
     thread.start()
 
     return {"success": True, "message": "Process started"}
-
-
-# === Cronjob scheduler =====================================================
-# Jadwal tersimpan di cronjob.json (project root) supaya persisten dan bisa
-# di-update dari web UI. Scheduler berjalan sebagai background thread di
-# dalam server (bukan cron OS) sehingga hidup selama container berjalan.
-# Eksekusi memakai `python main.py run` TANPA --force dan TANPA --course:
-# semua matkul dikerjakan, item yang sudah selesai otomatis dilewati lewat
-# output/state.json.
-
-CRON_FILE = Path(__file__).parent / "cronjob.json"
-CRON_LOG = Path(__file__).parent / "cron.log"
-_CRON_TZ = None
-
-CRON_POLL_SECONDS = 30
-CRON_GRACE_SECONDS = 3 * 60 * 60  # catch-up 3 jam bila server sempat mati/sibuk
-
-_CRON_VALID_DAYS = ("*", "0", "1", "2", "3", "4", "5", "6")
-
-
-def _cron_tz() -> ZoneInfo:
-    """Timezone jadwal. Fallback ke timezone sistem bila Asia/Jakarta
-    tidak tersedia (mis. tzdata belum terpasang)."""
-    global _CRON_TZ
-    if _CRON_TZ is None:
-        try:
-            _CRON_TZ = ZoneInfo("Asia/Jakarta")
-        except Exception:  # noqa: BLE001 - ZoneInfoNotFoundError dkk.
-            _CRON_TZ = datetime.now().astimezone().tzinfo
-    return _CRON_TZ
-
-
-def _cron_now() -> datetime:
-    return datetime.now(_cron_tz())
-
-
-def _default_cron_config() -> dict:
-    return {
-        "enabled": False,
-        "day": "*",
-        "time": "02:00",
-        "timezone": "Asia/Jakarta",
-        "last_run": None,
-        "next_run": None,
-        "last_status": None,
-        "updated_at": None,
-    }
-
-
-def _load_cron_config() -> dict:
-    try:
-        data = json.loads(CRON_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    cfg = {**_default_cron_config(), **data}
-    cfg["enabled"] = bool(cfg.get("enabled"))
-    day = str(cfg.get("day", "*"))
-    cfg["day"] = day if day in _CRON_VALID_DAYS else "*"
-    time_str = str(cfg.get("time", "02:00"))
-    cfg["time"] = time_str if re.fullmatch(r"\d{2}:\d{2}", time_str) else "02:00"
-    return cfg
-
-
-def _save_cron_config(cfg: dict) -> None:
-    CRON_FILE.write_text(
-        json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-
-
-def _cron_next_time(cfg: dict, after: datetime) -> datetime | None:
-    """Waktu kemunculan jadwal berikutnya yang (ketat) setelah `after`."""
-    hh, mm = (int(x) for x in cfg["time"].split(":"))
-    day_str = cfg["day"]
-    target = after + timedelta(minutes=1)
-    for day_offset in range(8):
-        d = target.date() + timedelta(days=day_offset)
-        cron_wd = (d.weekday() + 1) % 7  # Python: Mon=0..Sun=6 -> cron: Sun=0
-        if day_str != "*" and cron_wd != int(day_str):
-            continue
-        cand = datetime.combine(d, dtime(hh, mm), tzinfo=_cron_tz())
-        if cand >= target:
-            return cand
-    return None
-
-
-def _cron_log(message: str) -> None:
-    try:
-        with CRON_LOG.open("a", encoding="utf-8") as fh:
-            fh.write(f"[{_cron_now().isoformat(timespec='seconds')}] {message}\n")
-    except OSError:
-        pass
-
-
-def _cron_run_cmd() -> list[str]:
-    # Semua matkul, tanpa --force: hanya item yang belum selesai yang dikerjakan.
-    return [sys.executable, "-u", "main.py", "run"]
-
-
-def _cron_fire(cfg: dict, nxt: datetime) -> str:
-    """Eksekusi pekerjaan terjadwal. Return status: started/skipped_busy/failed."""
-    with process_lock:
-        busy = bool(running_process and running_process.poll() is None)
-    if busy:
-        return "skipped_busy"
-    res = run_command_async(_cron_run_cmd())
-    if not res.get("success"):
-        return "failed"
-    with process_lock:
-        process_output.insert(0, "user@tuton:~$ [cron] " + " ".join(_cron_run_cmd()))
-    _cron_log(f"run otomatis dimulai (jadwal {nxt.isoformat(timespec='minutes')})")
-    return "started"
-
-
-def _cron_check() -> None:
-    cfg = _load_cron_config()
-    now = _cron_now()
-    if not cfg.get("enabled"):
-        if cfg.get("next_run") is not None:
-            cfg["next_run"] = None
-            _save_cron_config(cfg)
-        return
-
-    nxt_saved = cfg.get("next_run")
-    if nxt_saved:
-        try:
-            nxt = datetime.fromisoformat(nxt_saved)
-        except (TypeError, ValueError):
-            nxt = None
-    else:
-        nxt = None
-    if nxt is None:
-        nxt = _cron_next_time(cfg, now)
-        cfg["next_run"] = nxt.isoformat() if nxt else None
-        _save_cron_config(cfg)
-        return
-
-    if now < nxt:
-        return
-    if (now - nxt).total_seconds() > CRON_GRACE_SECONDS:
-        cfg["next_run"] = _cron_next_time(cfg, now).isoformat()
-        _save_cron_config(cfg)
-        return
-
-    status = _cron_fire(cfg, nxt)
-    cfg["last_run"] = now.isoformat(timespec="seconds")
-    cfg["last_status"] = status
-    cfg["next_run"] = _cron_next_time(cfg, now).isoformat()
-    _save_cron_config(cfg)
-
-
-def _start_cron_scheduler() -> None:
-    """Background thread: cek jadwal tiap CRON_POLL_SECONDS detik."""
-
-    def _loop():
-        while True:
-            try:
-                _cron_check()
-            except Exception as exc:  # noqa: BLE001
-                _cron_log(f"ERROR scheduler: {exc}")
-            time.sleep(CRON_POLL_SECONDS)
-
-    threading.Thread(target=_loop, name="cron-scheduler", daemon=True).start()
 
 
 @app.route("/")
@@ -818,46 +651,9 @@ def stop_run():
         return jsonify({"success": False, "error": "No process running"})
 
 
-@app.route("/api/schedule", methods=["GET"])
-def get_schedule():
-    """Kembalikan config cron saat ini (untuk mengisi form UI)."""
-    cfg = _load_cron_config()
-    nxt = cfg.get("next_run")
-    if cfg["enabled"] and not nxt:
-        nxt_time = _cron_next_time(cfg, _cron_now())
-        if nxt_time:
-            cfg["next_run"] = nxt_time.isoformat()
-            _save_cron_config(cfg)
-    return jsonify({"success": True, **cfg})
-
-
-@app.route("/api/schedule", methods=["POST"])
-def save_schedule():
-    """Simpan config cron baru dan hitung jadwal berikutnya."""
-    data = request.get_json() or {}
-    enabled = bool(data.get("enabled", False))
-    day = str(data.get("day", "*"))
-    time_str = str(data.get("time", "02:00"))
-    if day not in _CRON_VALID_DAYS or not re.fullmatch(r"\d{2}:\d{2}", time_str):
-        return jsonify({"success": False, "error": "day/time tidak valid"}), 400
-    cfg = _load_cron_config()
-    cfg.update(enabled=enabled, day=day, time=time_str, updated_at=_cron_now().isoformat(timespec="seconds"))
-    cfg["last_status"] = None
-    cfg["next_run"] = _cron_next_time(cfg, _cron_now()).isoformat() if enabled else None
-    _save_cron_config(cfg)
-    _cron_log(f"config: enabled={enabled} day={day} time={time_str}")
-    return jsonify({"success": True, **cfg})
-
-
 if __name__ == "__main__":
     # Ensure output directory exists
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Mulai scheduler cron (background thread).
-    # Berjalan selama server hidup, cek tiap 30 detik apakah waktunya
-    # menjalankan `python main.py run` (tanpa --force, semua matkul).
-    _start_cron_scheduler()
-    _cron_log("server started, cron scheduler active")
 
     print("Starting Tuton Agent Web Server...")
     print(f"Output directory: {OUTPUT_DIR}")

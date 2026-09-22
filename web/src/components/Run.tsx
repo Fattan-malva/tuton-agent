@@ -1,38 +1,22 @@
-import { CalendarClock, Play, Save, Terminal as TerminalIcon } from 'lucide-react';
+import { Play, Terminal as TerminalIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import apiClient from '../lib/api-client';
-import type { Course, Schedule, ToastType } from '../lib/types';
+import type { Course, ToastType } from '../lib/types';
 import Terminal, { type TerminalController } from './Terminal';
 
 interface RunProps {
   courses: Course[];
-  schedule: Schedule | null;
   onRefresh: () => Promise<void>;
   onNotify: (message: string, type?: ToastType) => void;
   terminal: TerminalController;
 }
 
-const dayLabels: Record<Schedule['day'], string> = {
-  '*': 'Setiap Hari',
-  '0': 'Minggu',
-  '1': 'Senin',
-  '2': 'Selasa',
-  '3': 'Rabu',
-  '4': 'Kamis',
-  '5': 'Jumat',
-  '6': 'Sabtu',
-};
-
-export default function Run({ courses, schedule, onRefresh, onNotify, terminal }: RunProps) {
+export default function Run({ courses, onRefresh, onNotify, terminal }: RunProps) {
   const [courseId, setCourseId] = useState('');
   const [sesi, setSesi] = useState('');
   const [force, setForce] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [launched, setLaunched] = useState(false);
-  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
-  const [enabled, setEnabled] = useState(false);
-  const [day, setDay] = useState<Schedule['day']>('*');
-  const [time, setTime] = useState('02:00');
 
   const isRunning = terminal.snapshot.running;
   const busy = isRunning || isStarting || launched;
@@ -40,13 +24,6 @@ export default function Run({ courses, schedule, onRefresh, onNotify, terminal }
   useEffect(() => {
     if (terminal.snapshot.running) setLaunched(false);
   }, [terminal.snapshot.running]);
-
-  useEffect(() => {
-    if (!schedule) return;
-    setEnabled(!!schedule.enabled);
-    setDay(schedule.day === '*' ? '*' : schedule.day);
-    setTime(schedule.time || '02:00');
-  }, [schedule]);
 
   const startRun = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -97,30 +74,6 @@ export default function Run({ courses, schedule, onRefresh, onNotify, terminal }
     }
   };
 
-  const saveSchedule = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setIsSavingSchedule(true);
-
-    try {
-      const response = await apiClient.saveSchedule({ enabled, day, time });
-      setEnabled(!!response.enabled);
-      setDay(response.day);
-      setTime(response.time);
-      onNotify(
-        response.enabled
-          ? `Cronjob dijadwalkan ${dayLabels[response.day]} pukul ${response.time} WIB.`
-          : 'Cronjob dinonaktifkan.',
-        response.enabled ? 'success' : 'warning',
-      );
-    } catch (caught) {
-      onNotify(caught instanceof Error ? caught.message : 'Gagal menyimpan jadwal.', 'error');
-    } finally {
-      setIsSavingSchedule(false);
-    }
-  };
-
-  const nextRun = schedule?.next_run?.replace('T', ' ').replace('+07:00', ' WIB') || '';
-
   return (
     <section aria-labelledby="run-heading">
       <div className="mb-6 max-w-3xl">
@@ -167,45 +120,6 @@ export default function Run({ courses, schedule, onRefresh, onNotify, terminal }
                 <><Play size={17} fill="currentColor" aria-hidden="true" /><span>{isRunning ? 'Running...' : 'Jalankan Sekarang'}</span></>
               )}
             </button>
-          </form>
-
-          <div className="pixel-divider my-7">
-            <span>Atur Jadwal Otomatis</span>
-          </div>
-
-          <form onSubmit={saveSchedule} className="space-y-4">
-            <label className="pixel-check pixel-check-between">
-              <span className="flex items-center gap-2 text-xs font-semibold text-text">
-                <CalendarClock size={15} className="text-accent" aria-hidden="true" />
-                Aktifkan Cronjob
-              </span>
-              <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-            </label>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label className="pixel-field">
-                <span className="pixel-label">Hari</span>
-                <select className="pixel-input" value={day} onChange={(event) => setDay(event.target.value as Schedule['day'])}>
-                  {Object.entries(dayLabels).map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="pixel-field">
-                <span className="pixel-label">Jam (WIB)</span>
-                <input className="pixel-input" type="time" value={time} onChange={(event) => setTime(event.target.value)} />
-              </label>
-            </div>
-
-            <button type="submit" disabled={isSavingSchedule} className="pixel-button pixel-button-secondary w-full justify-center">
-              {isSavingSchedule ? <><span className="pixel-spinner" aria-hidden="true" /><span>Menyimpan...</span></> : <><Save size={16} aria-hidden="true" /><span>Simpan Jadwal</span></>}
-            </button>
-
-            {schedule && (
-              <p className={`pixel-helper ${schedule.enabled ? 'text-success' : 'text-muted'}`}>
-                {schedule.enabled ? `Berikutnya: ${nextRun || 'menghitung...'}` : 'Cronjob nonaktif.'}
-              </p>
-            )}
           </form>
         </div>
 

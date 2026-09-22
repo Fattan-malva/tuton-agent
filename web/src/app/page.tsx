@@ -14,7 +14,6 @@ import type {
   AppConfig,
   Course,
   ResultCourse,
-  Schedule,
   StatusResponse,
   Tab,
   ToastMessage,
@@ -34,7 +33,6 @@ export default function Home() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [statusData, setStatusData] = useState<StatusResponse>(emptyStatus);
   const [results, setResults] = useState<ResultCourse[]>([]);
-  const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [command, setCommand] = useState('');
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -79,19 +77,11 @@ export default function Home() {
     }
   }, [notify]);
 
-  const loadSchedule = useCallback(async () => {
-    try {
-      setSchedule(await apiClient.getSchedule());
-    } catch {
-      setSchedule(null);
-    }
-  }, []);
-
   const refreshAll = useCallback(async () => {
     setIsLoading(true);
-    await Promise.allSettled([loadStatus(), loadResults(), loadCourses(), loadSchedule()]);
+    await Promise.allSettled([loadStatus(), loadResults(), loadCourses()]);
     setIsLoading(false);
-  }, [loadCourses, loadResults, loadSchedule, loadStatus]);
+  }, [loadCourses, loadResults, loadStatus]);
 
   useEffect(() => {
     if (isLoggedIn) void refreshAll();
@@ -194,7 +184,6 @@ export default function Home() {
           {activeTab === 'run' && (
             <Run
               courses={courses}
-              schedule={schedule}
               onRefresh={refreshAll}
               onNotify={notify}
               terminal={terminalController}
