@@ -681,6 +681,91 @@ def run_agent():
     return jsonify(result)
 
 
+@app.route("/api/solve", methods=["POST"])
+def solve_soal():
+    """Run agent untuk soal custom dari form (teks atau file upload)."""
+    data = dict(request.form or {})
+    if request.is_json:
+        data.update(request.get_json(silent=True) or {})
+
+    course_id = str(data.get("course_id", "") or "").strip()
+    sesi = str(data.get("sesi", "") or "").strip()
+    kind = str(data.get("kind", "") or "").strip().lower()
+    title = str(data.get("title", "") or "").strip()
+    soal_text = str(data.get("soal_text", "") or "").strip()
+
+    if not course_id.isdigit() or not sesi.isdigit():
+        return jsonify({"success": False, "error": "Matkul dan sesi wajib diisi."}), 400
+    if kind not in ("tugas", "diskusi"):
+        return jsonify({"success": False, "error": "Jenis harus tugas atau diskusi."}), 400
+
+    jobs_dir = OUTPUT_DIR / ".jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+
+    text_path = None
+    if soal_text:
+        text_path = jobs_dir / f"solve_{int(time.time() * 1000)}.md"
+        text_path.write_text(soal_text, encoding="utf-8")
+
+    file_path = None
+    upload = request.files.get("file")
+    if upload and upload.filename:
+        fname = os.path.basename(upload.filename) or "upload"
+        file_path = jobs_dir / f"solve_{int(time.time() * 1000)}_{fname}"
+        upload.save(str(file_path))
+
+    if text_path is None and file_path is None:
+        return jsonify({
+            "success": False,
+            "error": "Isi teks soal atau unggah file soal terlebih dahulu.",
+        }), 400
+
+    cmd = [
+        sys.executable, "-u", "main.py", "solve",
+        "--course", course_id,
+        "--sesi", sesi,
+        "--kind", kind,
+        "--title", title or f"{kind} {sesi}",
+    ]
+    if text_path is not None:
+        cmd += ["--text", str(text_path)]
+    if file_path is not None:
+        cmd += ["--file", str(file_path)]
+
+    result = run_command_async(cmd)
+    if not result.get("success"):
+        # Proses tidak jalan (mis. masih ada proses lain) → bersihkan file temp.
+        if text_path is not None:
+            text_path.unlink(missing_ok=True)
+        if file_path is not None:
+            file_path.unlink(missing_ok=True)
+    return jsonify(result)
+
+
+@app.route("/api/preview/<path:filepath>")
+def preview_file(filepath: str):
+    """Preview isi .docx hasil agent sebagai HTML (equation jadi MathML)."""
+    try:
+        full_path = _resolve_output_file(filepath)
+        if full_path is None:
+            return jsonify({"success": False, "error": "Access denied"}), 403
+        if full_path.suffix.lower() != ".docx":
+            return jsonify({"success": False, "error": "Hanya DOCX yang bisa di-preview"}), 400
+        if not full_path.exists():
+            return jsonify({"success": False, "error": "File not found"}), 404
+
+        from generator.preview import docx_to_html
+
+        html = docx_to_html(full_path)
+        resp = app.response_class(html, mimetype="text/html")
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/run/output")
 def get_run_output():
     """Get current process output."""

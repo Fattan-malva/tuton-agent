@@ -1,4 +1,6 @@
-export type Tab = 'status' | 'results' | 'run' | 'settings';
+export type Tab = 'status' | 'results' | 'run' | 'soal' | 'settings';
+
+export type WorkKind = 'tugas' | 'diskusi';
 
 export type StatusValue = 'done' | 'failed' | 'pending' | 'unknown';
 

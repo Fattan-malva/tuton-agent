@@ -41,7 +41,10 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   if (options.body && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
+    const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+    if (!isFormData) {
+      headers.set('Content-Type', 'application/json');
+    }
   }
 
   const response = await fetch(`${API_BASE}${endpoint}`, {
@@ -137,6 +140,26 @@ export const apiClient = {
       method: 'POST',
       body: JSON.stringify(options),
     });
+  },
+
+  submitSolve(payload: {
+    course_id: number;
+    sesi: number;
+    kind: 'tugas' | 'diskusi';
+    title: string;
+    soal_text: string;
+    file?: File | null;
+  }): Promise<RunStartResponse> {
+    const form = new FormData();
+    form.append('course_id', String(payload.course_id));
+    form.append('sesi', String(payload.sesi));
+    form.append('kind', payload.kind);
+    form.append('title', payload.title);
+    form.append('soal_text', payload.soal_text);
+    if (payload.file) {
+      form.append('file', payload.file);
+    }
+    return envelope('/api/solve', { method: 'POST', body: form });
   },
 
   getRunOutput(): Promise<RunOutputResponse> {

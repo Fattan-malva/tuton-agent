@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import sys
+import time
 from pathlib import Path
 
 # Console Windows/cp1252 tidak selalu mendukung karakter UTF-8 (→, ✓, huruf
@@ -136,6 +138,99 @@ def _process_course(
     print(f"\nSelesai. {worked} item diproses untuk {course.name}.")
 
 
+def _custom_index(title: str, kind: str) -> int:
+    """Nomor display untuk soal form: ambil angka dari judul (mis. 'Diskusi 2'),
+    fallback ke 1 bila tidak ada nomor."""
+    m = re.search(r"(?:diskusi|tugas)[.\s-]?(\d+)", title.lower())
+    return int(m.group(1)) if m else 1
+
+
+def _finish_work(
+    *,
+    course,
+    section_num: int,
+    item_title: str,
+    kind: str,
+    index: int,
+    soal_path: Path,
+    out_dir: Path,
+    lamp_dir: Path,
+    soal_text: str,
+    key: str,
+    progress_flag: str = "",
+) -> int:
+    """Lanjutan setelah soal.md siap: opencode → jawaban.md → docx → state."""
+    jawaban_path = out_dir / f"jawaban_{kind}_{index}.md"
+    prompt = build_prompt(
+        work_kind=kind,
+        index=index,
+        course_name=course.name,
+        section_num=section_num,
+        activity_title=item_title,
+        soal_path=soal_path,
+        attachment_dir=lamp_dir,
+        jawaban_path=jawaban_path,
+    )
+
+    result = None
+    for attempt in (1, 2):
+        try:
+            print(f"  · {progress_flag}[{kind}] {item_title} → opencode run ...")
+            result = run_opencode(prompt)
+        except TimeoutError:
+            print("  ! opencode timeout, coba ulang...")
+            continue
+        if result.returncode != 0:
+            tail = (result.stderr or result.stdout or "")[-1200:]
+            print(f"  ! opencode exit {result.returncode}\n{tail}")
+        if jawaban_path.exists() and jawaban_path.stat().st_size > 100:
+            break
+        print("  ! jawaban belum tertulis, percobaan ulang...")
+    else:
+        print("  ✗ Gagal menghasilkan jawaban.")
+        state.set_item(key, {"status": "failed", "matkul": course.name, "desc": item_title})
+        return 0
+
+    if result.returncode == 0:
+        ok = (result.stdout or "").strip().splitlines()
+        if ok:
+            print(f"  {ok[-1][:120]}")
+
+    # 3) Generate .docx (equation OMML asli)
+    print(f"  · {progress_flag}[{kind}] {item_title} → membuat docx ...")
+    jawaban_md = jawaban_path.read_text(encoding="utf-8")
+    # Jangan baca ulang soal.md dari disk: agent opencode bisa menghapus/memindahnya
+    # saat bekerja. Pakai konten yang sudah kita susun di memori.
+    meta = {
+        "nama": Config.NAMA,
+        "nim": Config.NIM,
+        "prodi": Config.PRODI,
+        "matkul": course.name,
+        "kind_label": "Diskusi" if kind == "diskusi" else "Tugas",
+        "display_index": index,
+        "file_base": f"{course.folder_name}_{'Diskusi' if kind == 'diskusi' else 'Tugas'}{index}",
+    }
+    _, doc_path = save_doc(
+        jawaban_md=jawaban_md,
+        soal_text=soal_text,
+        meta=meta,
+        out_dir=out_dir,
+    )
+    print(f"  ✓ {doc_path.name} siap.")
+
+    # 4) State
+    state.set_item(key, {
+        "status": "done",
+        "matkul": course.name,
+        "sesi": section_num,
+        "kind": kind,
+        "index": index,
+        "desc": item_title,
+        "outputs": [str(doc_path), str(jawaban_path)],
+    })
+    return 1
+
+
 def _process_item(
     session, scraper, downloader, parser,
     course, section_num, item, kind, *, force: bool,
@@ -217,76 +312,123 @@ def _process_item(
         )
     soal_path.write_text("\n".join(soal_md_lines), encoding="utf-8")
 
-    # 2) Panggil opencode
-    jawaban_path = out_dir / f"jawaban_{kind}_{index}.md"
-    prompt = build_prompt(
-        work_kind=kind,
-        index=index,
-        course_name=course.name,
+    # 2) opencode → docx → state
+    return _finish_work(
+        course=course,
         section_num=section_num,
-        activity_title=item.title,
+        item_title=item.title,
+        kind=kind,
+        index=index,
         soal_path=soal_path,
-        attachment_dir=lamp_dir if saved else lamp_dir,
-        jawaban_path=jawaban_path,
-    )
-
-    for attempt in (1, 2):
-        try:
-            print(f"  · {progress_flag}[{kind}] {item.title} → opencode run ...")
-            result = run_opencode(prompt)
-        except TimeoutError:
-            print("  ! opencode timeout, coba ulang...")
-            continue
-        if result.returncode != 0:
-            tail = (result.stderr or result.stdout or "")[-1200:]
-            print(f"  ! opencode exit {result.returncode}\n{tail}")
-        if jawaban_path.exists() and jawaban_path.stat().st_size > 100:
-            break
-        print("  ! jawaban belum tertulis, percobaan ulang...")
-    else:
-        print("  ✗ Gagal menghasilkan jawaban.")
-        state.set_item(k, {"status": "failed", "matkul": course.name, "desc": item.title})
-        return 0
-
-    if result.returncode == 0:
-        ok = (result.stdout or "").strip().splitlines()
-        if ok:
-            print(f"  {ok[-1][:120]}")
-
-    # 3) Generate .docx (equation OMML asli)
-    print(f"  · {progress_flag}[{kind}] {item.title} → membuat docx ...")
-    jawaban_md = jawaban_path.read_text(encoding="utf-8")
-    # Jangan baca ulang soal.md dari disk: agent opencode bisa menghapus/memindahnya
-    # saat bekerja. Pakai konten yang sudah kita susun di memori.
-    soal_for_docx = "\n".join(soal_md_lines)
-    meta = {
-        "nama": Config.NAMA,
-        "nim": Config.NIM,
-        "prodi": Config.PRODI,
-        "matkul": course.name,
-        "kind_label": "Diskusi" if kind == "diskusi" else "Tugas",
-        "display_index": index,
-        "file_base": f"{course.folder_name}_{'Diskusi' if kind == 'diskusi' else 'Tugas'}{index}",
-    }
-    _, doc_path = save_doc(
-        jawaban_md=jawaban_md,
-        soal_text=soal_for_docx,
-        meta=meta,
         out_dir=out_dir,
+        lamp_dir=lamp_dir,
+        soal_text="\n".join(soal_md_lines),
+        key=k,
+        progress_flag=progress_flag,
     )
-    print(f"  ✓ {doc_path.name} siap.")
 
-    # 4) State
-    state.set_item(k, {
-        "status": "done",
-        "matkul": course.name,
-        "sesi": section_num,
-        "kind": kind,
-        "index": index,
-        "desc": item.title,
-        "outputs": [str(doc_path), str(jawaban_path)],
-    })
-    return 1
+
+def cmd_solve(args):
+    """Kerjakan soal dari form (bukan scrape): teks soal manual atau file upload."""
+    Config.require()
+    session = MoodleSession()
+    session.check_login()
+    scraper = CourseScraper(session)
+
+    courses = scraper.get_courses()
+    course = next((c for c in courses if c.id == args.course), None)
+    if not course:
+        print(f"Kursus id {args.course} tidak ditemukan.")
+        return
+
+    kind = args.kind
+    sesi = args.sesi
+    title = (args.title or f"{kind} {sesi}").strip()
+    index = _custom_index(title, kind)
+
+    out_dir = OUTPUT_DIR / course.folder_name / f"sesi{sesi}"
+    lamp_dir = out_dir / "lampiran"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    progress_flag = "[1/1] "
+    print(f"\n=== {course.name} (form soal) ===")
+    print(f"  · {progress_flag}[{kind}] {title} → {out_dir.relative_to(OUTPUT_DIR)}")
+
+    soal_md_lines = [f"# {title}", ""]
+    custom_body: list[str] = []
+
+    if getattr(args, "text", ""):
+        text_path = Path(args.text)
+        if text_path.exists():
+            body = text_path.read_text(encoding="utf-8", errors="replace").strip()
+            if body:
+                custom_body.append(body)
+                soal_md_lines.append(body)
+            text_path.unlink(missing_ok=True)
+
+    saved: list[Path] = []
+    if getattr(args, "file", ""):
+        upload_path = Path(args.file)
+        if upload_path.exists():
+            dest = lamp_dir / upload_path.name
+            if dest.exists():
+                dest = lamp_dir / f"custom_{int(time.time() * 1000)}_{upload_path.name}"
+            shutil.move(str(upload_path), str(dest))
+            saved.append(dest)
+
+    from moodle.transcribe import process_attachment
+
+    transcribed: list[str] = []
+    for p in saved:
+        print(f"  · Transkripsi {p.name} ...")
+        text = process_attachment(p, lamp_dir)
+        if text:
+            print(f"    -> {len(text)} karakter")
+        transcribed.append(text or "")
+        soal_md_lines.append("")
+        soal_md_lines.append(f"## Isi lampiran: {p.name} (transkripsi)")
+        soal_md_lines.append(text or "(tidak bisa dibaca otomatis - perlu dicek manual)")
+
+    _useful = [
+        t for t in transcribed
+        if t.strip() and "tidak bisa dibaca otomatis" not in t[:80]
+    ]
+    key = f"custom:{course.id}:{kind}:{sesi}:{index}"
+    soal_path = out_dir / "soal.md"
+    if not custom_body and not _useful:
+        soal_path.write_text(
+            "\n".join(soal_md_lines) + "\n\nTIDAK ADA SOAL DITEMUKAN. "
+            "Proses dihentikan, tidak ada jawaban yang dibuat.\n",
+            encoding="utf-8",
+        )
+        state.set_item(key, {
+            "status": "failed",
+            "matkul": course.name,
+            "sesi": sesi,
+            "kind": kind,
+            "index": index,
+            "desc": title,
+            "reason": "soal_tidak_ditemukan",
+        })
+        print(f"  ⛔ Soal kosong untuk '{title}'. Proses dihentikan.")
+        return
+
+    soal_path.write_text("\n".join(soal_md_lines), encoding="utf-8")
+
+    _finish_work(
+        course=course,
+        section_num=sesi,
+        item_title=title,
+        kind=kind,
+        index=index,
+        soal_path=soal_path,
+        out_dir=out_dir,
+        lamp_dir=lamp_dir,
+        soal_text="\n".join(soal_md_lines),
+        key=key,
+        progress_flag=progress_flag,
+    )
+    print(f"Selesai. 1 item diproses untuk {course.name} (form soal).")
 
 
 def cmd_run(args):
@@ -324,6 +466,18 @@ def main():
     p_scrape = sub.add_parser("scrape", help="Lihat kursus/sesi/aktivitas saja")
     p_scrape.add_argument("--course", help="ID mata kuliah")
     p_scrape.set_defaults(fn=cmd_scrape)
+
+    p_solve = sub.add_parser(
+        "solve",
+        help="Kerjakan soal custom dari form (teks / file) tanpa scrape otomatis",
+    )
+    p_solve.add_argument("--course", required=True, type=int, help="ID mata kuliah")
+    p_solve.add_argument("--sesi", required=True, type=int, help="Nomor sesi")
+    p_solve.add_argument("--kind", required=True, choices=["tugas", "diskusi"], help="Jenis pekerjaan")
+    p_solve.add_argument("--title", default="", help="Judul aktivitas (contoh: 'Diskusi 1')")
+    p_solve.add_argument("--text", default="", help="Path file teks berisi soal (opsional bila --file ada)")
+    p_solve.add_argument("--file", default="", help="Path file lampiran soal yang di-upload (opsional)")
+    p_solve.set_defaults(fn=cmd_solve)
 
     p_status = sub.add_parser("status", help="Lihat progres")
     p_status.set_defaults(fn=cmd_status)

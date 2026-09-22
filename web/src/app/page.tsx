@@ -1,12 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import FormSoal from '../components/FormSoal';
 import Login from '../components/Login';
 import Navigation from '../components/Navigation';
 import Results from '../components/Results';
 import Run from '../components/Run';
 import Settings from '../components/Settings';
 import Status from '../components/Status';
+import { useTerminalMonitor } from '../hooks/useTerminalMonitor';
 import apiClient from '../lib/api-client';
 import type {
   AppConfig,
@@ -34,8 +36,10 @@ export default function Home() {
   const [results, setResults] = useState<ResultCourse[]>([]);
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [command, setCommand] = useState('');
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopRequestedRef = useRef(false);
 
   const notify = useCallback((message: string, type: ToastType = 'info') => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -93,6 +97,31 @@ export default function Home() {
     if (isLoggedIn) void refreshAll();
   }, [isLoggedIn, refreshAll]);
 
+  const handleTerminalComplete = useCallback(
+    async (returncode: number) => {
+      const wasStopped = stopRequestedRef.current;
+      stopRequestedRef.current = false;
+      await refreshAll();
+      if (wasStopped) {
+        notify('Proses dihentikan oleh pengguna.', 'warning');
+      } else if (returncode !== 0) {
+        notify(`Proses selesai dengan error (exit ${returncode}).`, 'error');
+      } else {
+        notify('Proses selesai dieksekusi.', 'success');
+      }
+    },
+    [notify, refreshAll],
+  );
+
+  // Terminal dipantau di level aplikasi: polling tetap jalan saat user
+  // berpindah menu, sehingga proses run agent / form soal tidak "hilang".
+  const { output, snapshot, reset } = useTerminalMonitor(true, handleTerminalComplete);
+
+  const clearTerminal = useCallback(() => {
+    reset();
+    setCommand('');
+  }, [reset]);
+
   const handleAuthenticated = useCallback(
     async (nextConfig: AppConfig) => {
       setConfig(nextConfig);
@@ -120,7 +149,7 @@ export default function Home() {
       setActiveTab(tab);
       if (tab === 'status') void loadStatus();
       if (tab === 'results') void loadResults();
-      if (tab === 'run') void loadCourses();
+      if (tab === 'run' || tab === 'soal') void loadCourses();
     },
     [loadCourses, loadResults, loadStatus],
   );
@@ -136,6 +165,18 @@ export default function Home() {
   if (!isLoggedIn) {
     return <Login onAuthenticated={handleAuthenticated} />;
   }
+
+  const terminalController = {
+    output,
+    snapshot,
+    command,
+    setCommand,
+    reset,
+    onStopRequested: () => {
+      stopRequestedRef.current = true;
+    },
+    onClearTerminal: clearTerminal,
+  };
 
   return (
     <div className="relative min-h-[100dvh] bg-primary text-text">
@@ -156,6 +197,15 @@ export default function Home() {
               schedule={schedule}
               onRefresh={refreshAll}
               onNotify={notify}
+              terminal={terminalController}
+            />
+          )}
+          {activeTab === 'soal' && (
+            <FormSoal
+              courses={courses}
+              onRefresh={refreshAll}
+              onNotify={notify}
+              terminal={terminalController}
             />
           )}
           {activeTab === 'settings' && (

@@ -1,4 +1,5 @@
-import { BookOpen, Download, FileText, Inbox, RefreshCw, Trash2 } from 'lucide-react';
+import { BookOpen, Download, Eye, FileText, Inbox, RefreshCw, Trash2, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import type { ResultCourse } from '../lib/types';
 import apiClient from '../lib/api-client';
 import type { ToastType } from '../lib/types';
@@ -18,6 +19,31 @@ function formatSize(bytes: number): string {
 }
 
 export default function Results({ courses, loading, onRefresh, onNotify }: ResultsProps) {
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [previewLoaded, setPreviewLoaded] = useState(false);
+
+  useEffect(() => {
+    if (previewPath === null) return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPreviewPath(null);
+        setPreviewLoaded(false);
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [previewPath]);
+
+  const openPreview = (path: string) => {
+    setPreviewLoaded(false);
+    setPreviewPath(path);
+  };
+
+  const closePreview = () => {
+    setPreviewPath(null);
+    setPreviewLoaded(false);
+  };
+
   const handleDeleteResult = async (path: string) => {
     if (!window.confirm('Hapus file DOCX ini?')) return;
 
@@ -120,6 +146,15 @@ export default function Results({ courses, loading, onRefresh, onNotify }: Resul
                           </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openPreview(file.path)}
+                            className="pixel-icon-button text-text"
+                            aria-label={`Pratinjau ${file.name}`}
+                            title="Pratinjau DOCX"
+                          >
+                            <Eye size={15} aria-hidden="true" />
+                          </button>
                           <a
                             href={`/api/download/${encodeURI(file.path)}`}
                             target="_blank"
@@ -147,6 +182,35 @@ export default function Results({ courses, loading, onRefresh, onNotify }: Resul
               </article>
             );
           })}
+        </div>
+      )}
+
+      {previewPath && (
+        <div className="pixel-modal-overlay" role="dialog" aria-modal="true" aria-label="Pratinjau dokumen" onClick={closePreview}>
+          <div className="pixel-modal pixel-modal-wide" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between border-b-2 border-border bg-panel-strong px-4 py-3">
+              <span className="truncate font-terminal text-[10px] uppercase tracking-[0.12em] text-text">Pratinjau</span>
+              <button type="button" onClick={closePreview} className="pixel-icon-button text-muted hover:text-text" aria-label="Tutup pratinjau">
+                <X size={17} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="relative h-[70vh]">
+              <iframe
+                title="Pratinjau DOCX"
+                src={`/api/preview/${encodeURI(previewPath)}`}
+                onLoad={() => setPreviewLoaded(true)}
+                className={`h-full w-full border-0 bg-white transition-opacity duration-150 ${previewLoaded ? 'opacity-100' : 'opacity-0'}`}
+              />
+              {!previewLoaded && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="flex items-center gap-2 font-terminal text-[10px] uppercase tracking-[0.12em] text-muted">
+                    <span className="pixel-spinner" aria-hidden="true" />
+                    Memuat pratinjau...
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </section>

@@ -1,4 +1,4 @@
-import { Activity, Cpu, FolderCheck, LogOut, Settings, Terminal } from 'lucide-react';
+import { Activity, ClipboardList, Cpu, FolderCheck, LogOut, Settings, Terminal } from 'lucide-react';
 import type { Tab } from '../lib/types';
 
 interface NavigationProps {
@@ -11,6 +11,7 @@ const items: Array<{ id: Tab; label: string; icon: typeof Activity }> = [
   { id: 'status', label: 'Status Pekerjaan', icon: Activity },
   { id: 'results', label: 'Result', icon: FolderCheck },
   { id: 'run', label: 'Run Agent', icon: Terminal },
+  { id: 'soal', label: 'Form Soal', icon: ClipboardList },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -85,7 +86,7 @@ export default function Navigation({ activeTab, onSwitch, onLogout }: Navigation
       </header>
 
       <nav className="fixed bottom-0 left-0 right-0 z-30 border-t-2 border-border bg-surface/95 px-2 pb-2 pt-2 md:hidden" aria-label="Navigasi mobile">
-        <div className="grid grid-cols-4 gap-1">
+        <div className="grid grid-cols-5 gap-1">
           {items.map(({ id, label, icon: Icon }) => {
             const active = activeTab === id;
             return (
@@ -101,7 +102,7 @@ export default function Navigation({ activeTab, onSwitch, onLogout }: Navigation
                 }`}
               >
                 <Icon size={17} strokeWidth={2.2} aria-hidden="true" />
-                <span>{label === 'Status Pekerjaan' ? 'Status' : label}</span>
+                <span>{label === 'Status Pekerjaan' ? 'Status' : label === 'Form Soal' ? 'Soal' : label}</span>
               </button>
             );
           })}

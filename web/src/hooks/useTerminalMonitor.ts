@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import apiClient from '../lib/api-client';
 
 export interface TerminalSnapshot {
@@ -12,6 +12,18 @@ export interface TerminalSnapshot {
   done: number;
   total: number;
 }
+
+const initialSnapshot: TerminalSnapshot = {
+  output: [],
+  running: false,
+  returncode: null,
+  elapsed: 0,
+  progress: 0,
+  step: 'idle',
+  label: 'Menyiapkan...',
+  done: 0,
+  total: 0,
+};
 
 interface ProgressState {
   course: string;
@@ -43,7 +55,7 @@ function parseProgress(lines: string[]): Omit<TerminalSnapshot, 'output' | 'runn
   for (const line of lines) {
     const courseMatch = line.match(/^=== (.+) ===$/);
     if (courseMatch) {
-      progress.course = courseMatch[1];
+      progress.course = courseMatch[1].replace(/\s+\(form soal\)\s*$/, '').trim();
       progress.total = 0;
       progress.done = 0;
       progress.step = 'scraping';
@@ -51,6 +63,7 @@ function parseProgress(lines: string[]): Omit<TerminalSnapshot, 'output' | 'runn
 
     const totalMatch = line.match(/TOTAL:\s*(\d+)\s*item/i);
     if (totalMatch) progress.total = Number(totalMatch[1]);
+    if (progress.total <= 0) progress.total = 1;
 
     const itemMatch = line.match(/\[\s*(\d+)\s*\/\s*(\d+)\s*\]\s*\[(diskusi|tugas)\]\s+(.+?)\s+→/);
     if (itemMatch) {
@@ -90,7 +103,7 @@ function parseProgress(lines: string[]): Omit<TerminalSnapshot, 'output' | 'runn
       progress.done = Number(line.match(/Selesai\. (\d+) item diproses/)?.[1] ?? 0);
       progress.step = 'selesai';
     }
-    if (/✗ Gagal|ERROR|timeout|BERHENTI/i.test(line)) progress.step = 'error';
+    if (/✗ Gagal|ERROR|timeout|BERHENTI|Soal kosong/i.test(line)) progress.step = 'error';
   }
 
   return {
@@ -102,19 +115,19 @@ function parseProgress(lines: string[]): Omit<TerminalSnapshot, 'output' | 'runn
   };
 }
 
-export function useTerminalMonitor(active: boolean, onComplete?: (returncode: number) => void) {
+/**
+ * Monitor jalannya proses `python main.py` di server (run agent / form soal).
+ *
+ * Polling berjalan terus-menerus selama aplikasi terbuka, sehingga proses
+ * TIDAK berhenti / hilang dari layar saat user pindah-pindah menu. onComplete
+ * hanya dipanggil bila sebuah proses benar-benar sempat terlihat berjalan,
+ * lalu selesai (tidak langsung dipanggil saat idle). `reset()` dipanggil
+ * setiap akan memulai run baru dan meng-aktifkan ulang deteksi selesai.
+ */
+export function useTerminalMonitor(active = true, onComplete?: (returncode: number) => void) {
   const [output, setOutput] = useState<string[]>([]);
-  const [snapshot, setSnapshot] = useState<TerminalSnapshot>({
-    output: [],
-    running: false,
-    returncode: null,
-    elapsed: 0,
-    progress: 0,
-    step: 'idle',
-    label: 'Menyiapkan...',
-    done: 0,
-    total: 0,
-  });
+  const [snapshot, setSnapshot] = useState<TerminalSnapshot>(initialSnapshot);
+  const [token, setToken] = useState(0);
   const onCompleteRef = useRef(onComplete);
   const completedRef = useRef(false);
   onCompleteRef.current = onComplete;
@@ -123,6 +136,7 @@ export function useTerminalMonitor(active: boolean, onComplete?: (returncode: nu
     if (!active) return;
 
     let cancelled = false;
+    let started = false;
     completedRef.current = false;
 
     const poll = async () => {
@@ -145,9 +159,11 @@ export function useTerminalMonitor(active: boolean, onComplete?: (returncode: nu
           elapsed: status.elapsed ?? 0,
         });
 
-        if (!status.running && !completedRef.current && onCompleteRef.current) {
+        if (status.running) started = true;
+
+        if (!status.running && started && !completedRef.current && onCompleteRef.current) {
           completedRef.current = true;
-          onCompleteRef.current(status.returncode ?? 1);
+          onCompleteRef.current(status.returncode ?? 0);
         }
       } catch {
         if (!cancelled) {
@@ -168,22 +184,13 @@ export function useTerminalMonitor(active: boolean, onComplete?: (returncode: nu
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [active]);
+  }, [active, token]);
 
-  const reset = () => {
+  const reset = useCallback(() => {
     setOutput([]);
-    setSnapshot({
-      output: [],
-      running: false,
-      returncode: null,
-      elapsed: 0,
-      progress: 0,
-      step: 'idle',
-      label: 'Menyiapkan...',
-      done: 0,
-      total: 0,
-    });
-  };
+    setSnapshot(initialSnapshot);
+    setToken((current) => current + 1);
+  }, []);
 
   return { output, snapshot, reset };
 }

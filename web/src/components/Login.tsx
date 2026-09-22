@@ -72,7 +72,7 @@ export default function Login({ onAuthenticated }: LoginProps) {
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
                   placeholder="Masukkan username"
-                  className="pixel-input w-full pl-9"
+                  className="pixel-input pixel-input-icon w-full"
                   disabled={isLoading}
                 />
               </div>
@@ -90,7 +90,7 @@ export default function Login({ onAuthenticated }: LoginProps) {
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   placeholder="Masukkan kata sandi"
-                  className="pixel-input w-full pl-9"
+                  className="pixel-input pixel-input-icon w-full"
                   disabled={isLoading}
                 />
               </div>

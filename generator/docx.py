@@ -120,6 +120,19 @@ def _omml_nary(chr_: str, sub: str, sup: str, inner: str) -> str:
     )
 
 
+def _omml_lim(base_cmd: str, limit: str, over: bool) -> str:
+    """OMML untuk \\overset{}{} / \\underset{}{} / \\xrightarrow{}.
+
+    ``base_cmd`` adalah tulisan LaTeX pada posisi utama (mis. \\rightarrow),
+    ``limit`` adalah label di atas/bawah. Gunakan m:limUpp / m:limLow.
+    """
+    base_xml = "".join(_parse_latex_math(base_cmd)) or _omml_run("")
+    limit_xml = "".join(_parse_latex_math(limit)) or _omml_run("")
+    if over:
+        return f"<m:limUpp><m:e>{base_xml}</m:e><m:lim>{limit_xml}</m:lim></m:limUpp>"
+    return f"<m:limLow><m:e>{base_xml}</m:e><m:lim>{limit_xml}</m:lim></m:limLow>"
+
+
 def _parse_latex_math(s: str) -> list[str]:
     """Parse LaTeX math string into OMML XML element list.
 
@@ -144,11 +157,26 @@ def _parse_latex_math(s: str) -> list[str]:
         "rightarrow": "→", "leftarrow": "←", "leftrightarrow": "↔",
         "Rightarrow": "⇒", "Leftarrow": "⇐", "Leftrightarrow": "⇔",
         "to": "→", "mapsto": "↦", "longrightarrow": "⟶",
-        "longleftarrow": "⟵", "iff": "⟺", "%": "%",
+        "longleftarrow": "⟵", "Longrightarrow": "⟹", "Longleftarrow": "⟸",
+        "Longleftrightarrow": "⟺", "iff": "⟺", "%": "%",
+        "Longmapsto": "⟼", "hookrightarrow": "↪", "hookleftarrow": "↩",
+        "rightharpoonup": "⇀", "leftharpoonup": "↼", "rightharpoondown": "⇁",
+        "leftharpoondown": "↽", "rightsquigarrow": "⇝", "uparrow": "↑",
+        "downarrow": "↓", "updownarrow": "↕", "Uparrow": "⇑", "Downarrow": "⇓",
+        "Updownarrow": "⇕", "nearrow": "↗", "searrow": "↘", "nwarrow": "↖",
+        "swarrow": "↙", "rightleftharpoons": "⇌", "dashrightarrow": "⇢",
         "infty": "∞", "partial": "∂", "nabla": "∇",
         "forall": "∀", "exists": "∃", "in": "∈", "notin": "∉",
         "subset": "⊂", "supset": "⊃", "subseteq": "⊆", "supseteq": "⊇",
         "cup": "∪", "cap": "∩",
+        "land": "∧", "wedge": "∧", "bigwedge": "⋀",
+        "lor": "∨", "vee": "∨", "bigvee": "⋁",
+        "lnot": "¬", "neg": "¬",
+        "top": "⊤", "bot": "⊥", "vdash": "⊢", "vDash": "⊨",
+        "models": "⊨", "implies": "⇒", "impliedby": "⇐",
+        "oplus": "⊕", "otimes": "⊗", "ominus": "⊖", "odot": "⊙",
+        "Box": "◻", "Diamond": "◇", "triangle": "△", "wr": "≀",
+        "dots": "…", "dotsc": "…", "vdots": "⋮",
         "emptyset": "∅", "ldots": "…", "cdots": "⋯", "vdots": "⋮",
         "ddots": "⋱", "hbar": "ℏ", "ell": "ℓ",
         "langle": "⟨", "rangle": "⟩", "surd": "√", "backslash": "∖",
@@ -260,6 +288,23 @@ def _parse_latex_math(s: str) -> list[str]:
                              "check", "acute", "grave", "breve"):
                     inner, i = _read_braced(i)
                     nodes.append(_omml_math_accent(cmd, inner))
+                elif cmd in ("overset", "stackrel"):
+                    over, i = _read_braced(i)
+                    base, i = _read_braced(i)
+                    nodes.append(_omml_lim(base, over, True))
+                elif cmd == "underset":
+                    under, i = _read_braced(i)
+                    base, i = _read_braced(i)
+                    nodes.append(_omml_lim(base, under, False))
+                elif cmd in ("xrightarrow", "longrightarrow", "xRightarrow",
+                             "xleftarrow", "xleftrightarrow", "xmapsto"):
+                    arrow_chr = {
+                        "xrightarrow": "→", "longrightarrow": "⟶",
+                        "xRightarrow": "⇒", "xleftarrow": "←",
+                        "xleftrightarrow": "↔", "xmapsto": "↦",
+                    }[cmd]
+                    label, i = _read_braced(i)
+                    nodes.append(_omml_lim(arrow_chr, label, True))
                 elif cmd == "begin":
                     env, i = _read_braced(i)
                     content, i = _read_until_end(s, i, env)
@@ -370,6 +415,19 @@ def _parse_latex_math(s: str) -> list[str]:
         if c == "*":
             nodes.append(_omml_run("×"))
             i += 1
+            continue
+
+        # ASCII arrows & relations → Unicode (jika AI menulis `A -> B`)
+        _ASCII_REPLS = (("<=>", "⟺"), ("<->", "↔"), ("->", "→"), ("<-", "←"),
+                        ("=>", "⇒"), ("<=", "⇐"), (">=", "≥"), ("!=", "≠"))
+        matched = None
+        for ascii_seq, uni in _ASCII_REPLS:
+            if s.startswith(ascii_seq, i):
+                matched = (ascii_seq, uni)
+                break
+        if matched:
+            nodes.append(_omml_run(matched[1]))
+            i += len(matched[0])
             continue
 
         # Everything else: parentheses, operators, brackets, etc.

@@ -1,14 +1,15 @@
-import { CalendarClock, Play, Save, Square, Terminal as TerminalIcon, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useTerminalMonitor } from '../hooks/useTerminalMonitor';
+import { CalendarClock, Play, Save, Terminal as TerminalIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import apiClient from '../lib/api-client';
 import type { Course, Schedule, ToastType } from '../lib/types';
+import Terminal, { type TerminalController } from './Terminal';
 
 interface RunProps {
   courses: Course[];
   schedule: Schedule | null;
   onRefresh: () => Promise<void>;
   onNotify: (message: string, type?: ToastType) => void;
+  terminal: TerminalController;
 }
 
 const dayLabels: Record<Schedule['day'], string> = {
@@ -22,63 +23,23 @@ const dayLabels: Record<Schedule['day'], string> = {
   '6': 'Sabtu',
 };
 
-function formatElapsed(seconds: number): string {
-  const total = Math.max(0, Math.floor(seconds));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const remainder = total % 60;
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return hours > 0 ? `${pad(hours)}:${pad(minutes)}:${pad(remainder)}` : `${pad(minutes)}:${pad(remainder)}`;
-}
-
-function lineTone(line: string): string {
-  if (/ERROR|Gagal|✗|exit code/i.test(line)) return 'error';
-  if (/✓|Selesai|siap\.$/i.test(line)) return 'success';
-  if (/dilewati|timeout|BERHENTI|warning/i.test(line)) return 'warning';
-  if (/^user@tuton/.test(line)) return 'cmd';
-  return 'info';
-}
-
-export default function Run({ courses, schedule, onRefresh, onNotify }: RunProps) {
+export default function Run({ courses, schedule, onRefresh, onNotify, terminal }: RunProps) {
   const [courseId, setCourseId] = useState('');
   const [sesi, setSesi] = useState('');
   const [force, setForce] = useState(false);
-  const [isRunning, setIsRunning] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [launched, setLaunched] = useState(false);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [day, setDay] = useState<Schedule['day']>('*');
   const [time, setTime] = useState('02:00');
-  const [command, setCommand] = useState('');
-  const [stoppedByUser, setStoppedByUser] = useState(false);
-  const stoppedByUserRef = useRef(false);
-  const terminalRef = useRef<HTMLDivElement>(null);
 
-  const handleComplete = useCallback(
-    (returncode: number) => {
-      const wasStopped = stoppedByUserRef.current;
-      setIsRunning(false);
-      setStoppedByUser(wasStopped);
-      stoppedByUserRef.current = false;
-      void onRefresh().then(() => {
-        if (wasStopped) {
-          onNotify('Run dihentikan oleh pengguna.', 'warning');
-        } else if (returncode !== 0) {
-          onNotify(`Proses selesai dengan error (exit ${returncode}).`, 'error');
-        } else {
-          onNotify('Run selesai dieksekusi.', 'success');
-        }
-      });
-    },
-    [onNotify, onRefresh],
-  );
-
-  const { output, snapshot, reset } = useTerminalMonitor(isRunning, handleComplete);
+  const isRunning = terminal.snapshot.running;
+  const busy = isRunning || isStarting || launched;
 
   useEffect(() => {
-    const terminal = terminalRef.current;
-    if (terminal) terminal.scrollTop = terminal.scrollHeight;
-  }, [output]);
+    if (terminal.snapshot.running) setLaunched(false);
+  }, [terminal.snapshot.running]);
 
   useEffect(() => {
     if (!schedule) return;
@@ -89,7 +50,7 @@ export default function Run({ courses, schedule, onRefresh, onNotify }: RunProps
 
   const startRun = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (isRunning || isStarting) return;
+    if (busy) return;
 
     const selectedCourse = courseId ? Number(courseId) : undefined;
     const selectedSesi = sesi ? Number(sesi) : undefined;
@@ -100,11 +61,10 @@ export default function Run({ courses, schedule, onRefresh, onNotify }: RunProps
       force ? '--force' : '',
     ].filter(Boolean).join(' ');
 
-    setCommand(`user@tuton:~$ ${commandLine}`);
-    setStoppedByUser(false);
-    stoppedByUserRef.current = false;
-    reset();
+    terminal.setCommand(`user@tuton:~$ ${commandLine}`);
+    terminal.reset();
     setIsStarting(true);
+    setLaunched(true);
 
     try {
       const response = await apiClient.startRun({
@@ -114,10 +74,10 @@ export default function Run({ courses, schedule, onRefresh, onNotify }: RunProps
       });
 
       if (!response.success) throw new Error(response.error || 'Gagal memulai run.');
-      setIsRunning(true);
       onNotify('Agent mulai dijalankan.', 'success');
     } catch (caught) {
-      setCommand('');
+      terminal.setCommand('');
+      setLaunched(false);
       onNotify(caught instanceof Error ? caught.message : 'Gagal menjalankan agent.', 'error');
     } finally {
       setIsStarting(false);
@@ -131,8 +91,7 @@ export default function Run({ courses, schedule, onRefresh, onNotify }: RunProps
         onNotify(response.error || 'Proses sudah berhenti.', 'warning');
         return;
       }
-      stoppedByUserRef.current = true;
-      setStoppedByUser(true);
+      terminal.onStopRequested();
     } catch (caught) {
       onNotify(caught instanceof Error ? caught.message : 'Gagal menghentikan run.', 'error');
     }
@@ -160,15 +119,7 @@ export default function Run({ courses, schedule, onRefresh, onNotify }: RunProps
     }
   };
 
-  const clearTerminal = () => {
-    setCommand('');
-    reset();
-    onNotify('Terminal dibersihkan.', 'info');
-  };
-
   const nextRun = schedule?.next_run?.replace('T', ' ').replace('+07:00', ' WIB') || '';
-  const progress = snapshot.progress;
-  const activeProgress = ['scraping', 'mengerjakan', 'transkripsi', 'opencode', 'docx'].includes(snapshot.step);
 
   return (
     <section aria-labelledby="run-heading">
@@ -188,7 +139,7 @@ export default function Run({ courses, schedule, onRefresh, onNotify }: RunProps
           <form onSubmit={startRun} className="space-y-4">
             <label className="pixel-field">
               <span className="pixel-label">Mata Kuliah dari Scrape</span>
-              <select className="pixel-input" value={courseId} onChange={(event) => setCourseId(event.target.value)} disabled={isRunning || isStarting}>
+              <select className="pixel-input" value={courseId} onChange={(event) => setCourseId(event.target.value)} disabled={busy}>
                 <option value="">Semua mata kuliah</option>
                 {courses.map((course) => (
                   <option key={course.id} value={course.id}>{course.name} (ID: {course.id})</option>
@@ -198,18 +149,18 @@ export default function Run({ courses, schedule, onRefresh, onNotify }: RunProps
 
             <label className="pixel-field">
               <span className="pixel-label">Filter Sesi</span>
-              <input className="pixel-input" type="number" min="1" value={sesi} onChange={(event) => setSesi(event.target.value)} placeholder="Contoh: 3" disabled={isRunning || isStarting} />
+              <input className="pixel-input" type="number" min="1" value={sesi} onChange={(event) => setSesi(event.target.value)} placeholder="Contoh: 3" disabled={busy} />
             </label>
 
             <label className="pixel-check">
-              <input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} disabled={isRunning || isStarting} />
+              <input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} disabled={busy} />
               <span>
                 <span className="block text-xs font-semibold text-text">Force Run (--force)</span>
                 <span className="mt-0.5 block font-terminal text-[9px] uppercase tracking-[0.08em] text-muted">Ulangi item yang sudah selesai</span>
               </span>
             </label>
 
-            <button type="submit" disabled={isRunning || isStarting} className="pixel-button pixel-button-primary w-full justify-center">
+            <button type="submit" disabled={busy} className="pixel-button pixel-button-primary w-full justify-center">
               {isStarting ? (
                 <><span className="pixel-spinner" aria-hidden="true" /><span>Mengeksekusi...</span></>
               ) : (
@@ -258,52 +209,14 @@ export default function Run({ courses, schedule, onRefresh, onNotify }: RunProps
           </form>
         </div>
 
-        <div className="pixel-terminal-panel min-h-[340px] overflow-hidden">
-          <div className="flex items-center justify-between border-b-2 border-border bg-panel-strong px-4 py-3">
-            <div className="flex items-center gap-2">
-              <span className="pixel-terminal-dot pixel-terminal-dot-danger" />
-              <span className="pixel-terminal-dot pixel-terminal-dot-warning" />
-              <span className="pixel-terminal-dot pixel-terminal-dot-success" />
-              {isRunning && <span className="pixel-running-label"><span className="pixel-online-dot" /> Running</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={stopRun} disabled={!isRunning} className="pixel-terminal-action text-danger">
-                <Square size={12} fill="currentColor" aria-hidden="true" /> stop
-              </button>
-              <button type="button" onClick={clearTerminal} className="pixel-terminal-action text-muted hover:text-text">
-                <Trash2 size={13} aria-hidden="true" /> clear
-              </button>
-            </div>
-          </div>
-
-          {(isRunning || progress > 0 || command) && (
-            <div className="border-b-2 border-border bg-panel px-4 py-3">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <span className="truncate font-terminal text-[10px] text-text">{snapshot.label}</span>
-                <span className="shrink-0 font-terminal text-[10px] text-muted">{snapshot.done}/{snapshot.total || '?'}</span>
-              </div>
-              <div className="pixel-progress" aria-label={`Progress ${progress}%`}>
-                <div className="pixel-progress-fill" style={{ width: `${progress}%` }} />
-              </div>
-              <div className="mt-2 flex items-center justify-between font-terminal text-[9px] uppercase tracking-[0.1em] text-muted">
-                <span>{activeProgress ? snapshot.step : snapshot.step}</span>
-                <span>{formatElapsed(snapshot.elapsed)}</span>
-              </div>
-            </div>
-          )}
-
-          <div ref={terminalRef} className="pixel-terminal-scroll" aria-live="polite">
-            {command && <div className="pixel-terminal-line pixel-terminal-cmd">{command}</div>}
-            {output.length === 0 && !command ? (
-              <div className="pixel-terminal-empty">
-                <span className="text-success">$</span>
-                <span>Sistem siap menerima perintah.</span>
-              </div>
-            ) : output.map((line, index) => (
-              <div key={`${index}-${line}`} className={`pixel-terminal-line pixel-terminal-${lineTone(line)}`}>{line || ' '}</div>
-            ))}
-          </div>
-        </div>
+        <Terminal
+          output={terminal.output}
+          snapshot={terminal.snapshot}
+          command={terminal.command}
+          onStop={() => void stopRun()}
+          onClear={terminal.onClearTerminal}
+          busy={busy}
+        />
       </div>
     </section>
   );
