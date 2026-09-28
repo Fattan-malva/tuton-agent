@@ -6,6 +6,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+from config import Config
 from moodle.auth import MoodleSession
 from moodle.scraper import Activity
 
@@ -114,6 +115,14 @@ def question_body(question: str) -> str:
     return "\n".join(kept).strip()
 
 
+def _section_url(activity: "Activity") -> str:
+    """URL halaman seksi. Mengikuti MOODLE_BASE_URL, bukan host hardcode."""
+    return (
+        f"{Config.base_url()}/course/view.php"
+        f"?id={activity.course_id}&section={activity.section}"
+    )
+
+
 @dataclass
 class ParsedQuestion:
     activity: Activity
@@ -199,10 +208,7 @@ class QuestionParser:
         """
         if not activity.course_id or activity.section <= 0:
             return
-        section_url = (
-            f"https://elearning.ut.ac.id/course/view.php?id={activity.course_id}"
-            f"&section={activity.section}"
-        )
+        section_url = _section_url(activity)
         resp = self.session.get(section_url)
         soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -337,10 +343,7 @@ class QuestionParser:
         """
         if not activity.course_id or activity.section <= 0:
             return
-        section_url = (
-            f"https://elearning.ut.ac.id/course/view.php?id={activity.course_id}"
-            f"&section={activity.section}"
-        )
+        section_url = _section_url(activity)
         resp = self.session.get(section_url)
         soup = BeautifulSoup(resp.text, "html.parser")
 

@@ -80,7 +80,10 @@ def _build_cmd(
 ) -> list[str]:
     cmd = _resolve_opencode()
     cmd += ["run", "-", "--agent", agent, "--title", "tuton-job"]
-    model = model or os.getenv("OPENCODE_MODEL", "").strip()
+    if model is None:
+        from config import Config
+
+        model = (Config.OPENCODE_MODEL or os.getenv("OPENCODE_MODEL", "")).strip()
     if model:
         cmd += ["--model", model]
     if variant:
@@ -96,6 +99,59 @@ def _display_name(cmd: list[str]) -> str:
     if base.lower() == "cmd.exe" and len(cmd) > 2:
         base = Path(cmd[2]).name
     return base
+
+
+# ---------------------------------------------------------------------------
+# Daftar model opencode.
+#
+# Satu sumber kebenaran untuk transkripsi vision maupun dropdown di Settings.
+# Di-cache 5 menit karena `opencode models` menelepon server, jadi tidak boleh
+# dipanggil setiap kali Settings dibuka.
+# ---------------------------------------------------------------------------
+_models_cache: tuple[float, list[str]] | None = None
+_MODELS_TTL = 300.0
+
+_NOISE_PREFIXES = (
+    "opencode.exe", "At line:", "CategoryInfo", "FullyQualified", "+ ", "  ",
+)
+
+
+def list_models(*, timeout: int = 45, use_cache: bool = True) -> list[str]:
+    """Semua id model yang tersedia, mis. `opencode/big-pickle`."""
+    global _models_cache
+    now = time.time()
+    if use_cache and _models_cache is not None and now - _models_cache[0] < _MODELS_TTL:
+        return list(_models_cache[1])
+
+    ids: list[str] = []
+    try:
+        result = subprocess.run(
+            _resolve_opencode() + ["models"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            cwd=str(PROJECT_ROOT),
+        )
+        data = (result.stdout or "") + (result.stderr or "")
+        skip = ("DESCRIPTION", "USAGE", "FLAGS", "GLOBAL FLAGS", "ERROR")
+        for raw in data.splitlines():
+            line = raw.strip()
+            if not line or line.startswith(skip) or line.startswith("-"):
+                continue
+            if line.startswith(_NOISE_PREFIXES):
+                continue
+            if "/" not in line or " " in line:
+                continue
+            ids.append(line)
+        ids = list(dict.fromkeys(ids))
+    except Exception as exc:  # noqa: BLE001 - UI harus tetap jalan walau CLI gagal
+        print(f"  ! gagal membaca daftar model opencode: {exc}")
+
+    if use_cache:
+        _models_cache = (now, ids)
+    return ids
 
 
 def _cap_line(line: str, limit: int = 120) -> str:

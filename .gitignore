@@ -39,6 +39,11 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
+# Build Next.js: cache & output, bukan sumber. `frontend/` tetap ikut disimpan
+# karena itu yang disajikan server.py sebagai static export.
+web/.next/
+web/out/
+web/tsconfig.tsbuildinfo
 
 # OS
 .DS_Store

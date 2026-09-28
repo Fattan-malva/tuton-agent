@@ -25,9 +25,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config import Config, OUTPUT_DIR, stamp_display
 from generator import state
 from moodle.auth import MoodleSession
+from moodle.discovery import SourceDiscovery
 from moodle.downloader import AttachmentDownloader
 from moodle.parser import QuestionParser
-from moodle.scraper import CourseScraper
+from moodle.reader import MoodleReader
+from moodle.reader_server import ensure_reader, handle_file, handle_soal, soalu
+from moodle.scraper import Activity, CourseScraper
 
 app = Flask(__name__, static_folder="frontend", static_url_path="")
 CORS(app)
@@ -35,6 +38,10 @@ CORS(app)
 # Soal sering dilampirkan sebagai PDF/gambar besar. Batas default Flask tak ada,
 # tapi nginx di depannya membatasi 1MB -> unggah besar ditolak 413.
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
+
+# Model bawaan opencode. Dipakai kalau .env belum menyebut OPENCODE_MODEL,
+# dan jadi nilai yang dikembalikan dropdown Settings sebagai pilihan awal.
+DEFAULT_MODEL = "opencode/big-pickle"
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
@@ -176,6 +183,66 @@ def login():
     }), 401
 
 
+def _positive_int(value, fallback: int, *, maximum: int = 100) -> int:
+    """Terima hanya bilangan bulat positif dalam batas; selain itu pakai fallback."""
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        return fallback
+    if number < 1:
+        return fallback
+    return min(number, maximum)
+
+
+def _enum_value(value, allowed: tuple[str, ...], fallback: str) -> str:
+    """Terima hanya nilai dari daftar yang diizinkan (kecil-kecil)."""
+    text = str(value or "").strip().lower()
+    return text if text in allowed else fallback
+
+
+@app.route("/api/models")
+def get_models():
+    """Daftar semua model opencode untuk dropdown di Settings.
+
+    Dikelompokkan per provider supaya daftar 400+ model masih bisa dibaca.
+    Model yang sedang dipakai ditandai `current`, jadi UI tidak perlu
+    membandingkan sendiri. Model aktif juga selalu ikut dikirim walau opencode
+    tidak melaporkannya, supaya pilihan di Settings tidak pernah "hilang".
+    """
+    try:
+        from generator.opencode_runner import list_models
+
+        refresh = request.args.get("refresh") == "1"
+        ids = list_models(use_cache=not refresh)
+        current = (Config.OPENCODE_MODEL or "").strip()
+
+        groups: dict[str, list[dict]] = {}
+        for model_id in ids:
+            provider, _, name = model_id.partition("/")
+            groups.setdefault(provider or "(lainnya)", []).append(
+                {"id": model_id, "name": name or model_id, "current": model_id == current}
+            )
+        ordered = [
+            {"provider": provider, "models": models}
+            for provider, models in sorted(groups.items())
+        ]
+        if current and not any(m["current"] for g in ordered for m in g["models"]):
+            provider, _, name = current.partition("/")
+            ordered.append({
+                "provider": provider or "(lainnya)",
+                "models": [{"id": current, "name": name or current, "current": True}],
+            })
+        return jsonify({
+            "success": True,
+            "current": current,
+            "default": DEFAULT_MODEL,
+            "total": len(ids),
+            "groups": ordered,
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/config")
 def get_config():
     """Get current configuration (without sensitive data)."""
@@ -183,10 +250,19 @@ def get_config():
         "nama": Config.NAMA,
         "nim": Config.NIM,
         "prodi": Config.PRODI,
-        "model": Config.OPENCODE_MODEL or "(default)",
+        "model": Config.OPENCODE_MODEL or DEFAULT_MODEL,
+        "default_model": DEFAULT_MODEL,
         "base_url": Config.MOODLE_BASE_URL,
         "has_session": bool(Config.moodle_session()),
         "output_dir": str(OUTPUT_DIR),
+        "runtime": {
+            "jobs": Config.TUTON_JOBS,
+            "soal_mode": Config.TUTON_SOAL_MODE,
+            "timeout": Config.TUTON_TIMEOUT,
+            "retries": Config.TUTON_RETRIES,
+            "transcribe": Config.TUTON_TRANSCRIBE,
+            "vision_tries": Config.OPENCODE_VISION_TRIES,
+        },
     })
 
 
@@ -216,8 +292,25 @@ def save_config():
         "NIM": data.get("nim", ""),
         "PRODI": data.get("prodi", ""),
         "MOODLE_BASE_URL": moodle_url,
-        "OPENCODE_MODEL": data.get("opencode_model") or Config.OPENCODE_MODEL,
+        "OPENCODE_MODEL": str(data.get("opencode_model") or "").strip()
+        or Config.OPENCODE_MODEL
+        or DEFAULT_MODEL,
     }
+
+    # Setelan kecepatan pipeline. Kalau form tidak mengirim field, nilai saat
+    # ini yang dipertahankan (bukan default), jadi menyimpan dari Settings
+    # tidak diam-diam mengubah perilaku run berikutnya.
+    updates.update(
+        {
+            "TUTON_JOBS": _positive_int(data.get("jobs"), Config.TUTON_JOBS, maximum=8),
+            "TUTON_SOAL_MODE": _enum_value(
+                data.get("soal_mode"), ("url", "file"), Config.TUTON_SOAL_MODE
+            ),
+            "TUTON_TRANSCRIBE": _enum_value(
+                data.get("transcribe"), ("auto", "always", "never"), Config.TUTON_TRANSCRIBE
+            ),
+        }
+    )
     
     # Process existing lines
     new_lines = []
@@ -352,6 +445,7 @@ def get_status():
                 "finished_at": stamp_display(v.get("finished_at", "")),
                 "duration_sec": v.get("duration_sec"),
                 "reason": v.get("reason"),
+                "urls": v.get("urls", []),
                 "outputs": v.get("outputs", []),
             })
         
@@ -419,6 +513,7 @@ def get_results():
                         "kind": v.get("kind"),
                         "index": v.get("index"),
                         "sesi": v.get("sesi"),
+                        "urls": v.get("urls", []),
                     })
         
         # Convert to list
@@ -527,19 +622,150 @@ def run_agent():
     kind = str(data.get("kind") or "all").strip().lower()
     if kind not in ("all", "tugas", "diskusi"):
         kind = "all"
-    
+    # Pipel ini boleh paralel: tiap item = 1 proses opencode run, jumlah
+    # keseluruhan tetap dikendalikan --jobs.
+    try:
+        jobs = max(1, min(int(data.get("jobs") or 0) or Config.TUTON_JOBS, 8))
+    except (TypeError, ValueError):
+        jobs = max(1, Config.TUTON_JOBS)
+
     # Unbuffered stdout is required so main.py/OpenCode logs reach the UI live.
     cmd = [sys.executable, "-u", "main.py", "run"]
     if course_id:
         cmd.extend(["--course", str(course_id)])
     if sesi:
         cmd.extend(["--sesi", str(sesi)])
-    cmd.extend(["--kind", kind])
+    cmd.extend(["--kind", kind, "--jobs", str(jobs)])
     if force:
         cmd.append("--force")
     
     result = run_command_async(cmd)
     return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Reader Lokal: hasilkan & sajikan URL yang dibaca agent `tuton`.
+# Endpoint ini membuat UI bisa menampilkan "apa yang sebenarnya dilihat AI"
+# tanpa harus menjalankan pipeline.
+# ---------------------------------------------------------------------------
+@app.route("/api/reader/health")
+def reader_health():
+    """Status Reader Lokal + apakah ia sedang hidup."""
+    base = ensure_reader()
+    return jsonify({
+        "success": True,
+        "base_url": base,
+        "active": bool(base),
+        "note": (
+            "Reader hanya hidup selama proses main.py berjalan. Untuk pratinjau "
+            "on-demand, endpoint /api/reader/preview tetap bisa dipakai."
+        ),
+    })
+
+
+@app.route("/api/reader/preview")
+def reader_preview():
+    """Pratinjau persis isi yang akan dibaca AI dari satu URL Moodle."""
+    url = (request.args.get("u") or "").strip()
+    kind = (request.args.get("k") or "generic").strip()
+    if not url:
+        return jsonify({"success": False, "error": "Parameter u wajib diisi."}), 400
+    try:
+        Config.require()
+        status, ctype, body = handle_soal(url, kind)
+        return jsonify({
+            "success": status == 200,
+            "http_status": status,
+            "content_type": ctype,
+            "body": body,
+            "chars": len(body),
+        }), (200 if status == 200 else status)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/reader/urls")
+def reader_urls():
+    """Daftar URL sumber yang terverifikasi untuk satu course/sesi/jenis.
+
+    Dipakai UI untuk menampilkan tombol "lihat sumber" sebelum menjalankan
+    pipeline, sehingga user bisa memastikan soal-nya memang ketemu.
+    """
+    try:
+        course_id = request.args.get("course_id", type=int)
+        if not course_id:
+            return jsonify({"success": False, "error": "course_id wajib diisi."}), 400
+        sesi = request.args.get("sesi", type=int)
+        kind = (request.args.get("kind") or "all").strip().lower()
+        if kind not in ("all", "tugas", "diskusi"):
+            kind = "all"
+        Config.require()
+        session = MoodleSession()
+        session.check_login()
+        scraper = CourseScraper(session)
+        reader = MoodleReader()
+        base = ensure_reader()
+
+        courses = scraper.get_courses()
+        course = next((c for c in courses if c.id == course_id), None)
+        if course is None:
+            return jsonify({"success": False, "error": "Course not found"}), 404
+
+        discovery = SourceDiscovery(reader, make_url=soalu)
+        sections = scraper.get_available_sections(course_id)
+        out = []
+        for sec in sections:
+            if sesi and sec.number != sesi:
+                continue
+            diskusi, tugas, _ = scraper.split_assignable(sec.activities)
+            picks = []
+            if kind in ("all", "diskusi"):
+                picks += [(d, "diskusi") for d in diskusi]
+            if kind in ("all", "tugas"):
+                picks += [(t, "tugas") for t in tugas]
+            for activity, item_kind in picks:
+                source = discovery.discover(activity, item_kind)
+                out.append({
+                    "section": sec.number,
+                    "kind": item_kind,
+                    "title": activity.title,
+                    "summary": source.summary(),
+                    "note": source.note,
+                    "primary_url": source.primary_url,
+                    "reader_url": (
+                        source.reader_urls()[0] if source.reader_urls() else ""
+                    ),
+                    "links": [link.to_dict() for link in source.links],
+                })
+        return jsonify({
+            "success": True,
+            "course": course.name,
+            "reader_base": base,
+            "items": out,
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/reader/file")
+def reader_file():
+    """Unduh lampiran lewat Reader (bisa dibuka langsung di browser)."""
+    url = (request.args.get("u") or "").strip()
+    if not url:
+        return jsonify({"success": False, "error": "Parameter u wajib diisi."}), 400
+    try:
+        status, ctype, body = handle_file(url)
+        if status != 200:
+            return jsonify({
+                "success": False,
+                "http_status": status,
+                "error": body.decode("utf-8", "replace"),
+            }), status
+        resp = app.response_class(body, mimetype=ctype)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/solve", methods=["POST"])

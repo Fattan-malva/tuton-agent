@@ -6,6 +6,7 @@ import type {
   CourseSection,
   CoursesResponse,
   LoginResponse,
+  ModelsResponse,
   ResultCourse,
   ResultsResponse,
   RunOptions,
@@ -93,6 +94,11 @@ export const apiClient = {
 
   getConfig(): Promise<AppConfig> {
     return request<AppConfig>('/api/config');
+  },
+
+  getModels(options?: { refresh?: boolean }): Promise<ModelsResponse> {
+    const query = options?.refresh ? '?refresh=1' : '';
+    return request<ModelsResponse>(`/api/models${query}`);
   },
 
   saveConfig(config: Partial<AppConfig> & { moodle_session?: string }): Promise<ApiEnvelope<unknown>> {

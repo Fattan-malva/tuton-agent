@@ -5,12 +5,15 @@ from dataclasses import dataclass, field
 
 from bs4 import BeautifulSoup
 
+from config import Config
 from moodle.auth import MoodleSession
 
 _COURSE_RE = re.compile(r"/course/view\.php\?id=(\d+)")
-_ACTIVITY_RE = re.compile(
-    r"https://elearning\.ut\.ac\.id/mod/(\w+)/view\.php\?id=(\d+)"
-)
+# Host TIDAK ditulis di pola. Versi lama meng-hardcode
+# `https://elearning\.ut\.ac\.id`, sehingga kalau MOODLE_BASE_URL diganti,
+# scraper tidak menemukan satu pun aktivitas. Pola ini cukup aman: yang dicari
+# adalah path `mod/<tipe>/view.php?id=<angka>`.
+_ACTIVITY_RE = re.compile(r"/mod/(\w+)/view\.php\?id=(\d+)(?:&|$|[\"'#])")
 
 # Item global / sidebar yang bukan konten sesi.
 _GLOBAL_KEYWORDS = (
@@ -48,9 +51,14 @@ class Activity:
 
     @property
     def url(self) -> str:
-        return (
-            f"https://elearning.ut.ac.id/mod/{self.mod_type}/view.php?id={self.id}"
-        )
+        """URL absolut halaman aktivitas.
+
+        WAJIB mengikuti `Config.base_url()`. Versi lama meng-hardcode host
+        elearning.ut.ac.id; begitu MOODLE_BASE_URL diganti, setiap URL aktivitas
+        ditolak guard SSRF Reader dan satu-satunya sumber yang lolos adalah
+        halaman seksi -- lampiran ikut hilang.
+        """
+        return f"{Config.base_url()}/mod/{self.mod_type}/view.php?id={self.id}"
 
 
 @dataclass

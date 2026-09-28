@@ -3,7 +3,37 @@
 > Aplikasi: **Tuton-Agent**  
 > Path: `C:\FATTAN\AI\tuton-agent`  
 > Bahasa: Python 3.13+ (Windows)  
-> Tujuan: Otomatisasi pengerjaan tutorial/diskusi/tugas Universitas Terbuka (UT) via scraping Moodle LMS, transkripsi lampiran dengan AI, dan menghasilkan dokumen Word `.docx`.
+> Tujuan: Otomatisasi pengerjaan tutorial/diskusi/tugas Universitas Terbuka (UT) via scraping Moodle LMS, dan menghasilkan dokumen Word `.docx`.
+
+---
+
+## 0. Prinsip utama: URL-First
+
+AI **tidak** lagi menerima teks soal hasil scrape kita. AI menerima **URL**,
+lalu membacanya sendiri lewat tool `webfetch`. Agar itu mungkin, ada **Reader
+Lokal**: server HTTP kecil di `127.0.0.1` yang menyuntikkan `MoodleSession` lalu
+mengembalikan halaman sebagai Markdown.
+
+```
+URL di prompt  ──webfetch──►  Reader Lokal (127.0.0.1:8765)
+                                 │  suntik cookie Moodle
+                                 ▼
+                          Markdown bersih (instruksi tutor, rubrik, lampiran)
+```
+
+Alasannya praktis, bukan selera. Scrape kita pasti memotong bagian yang paling
+menentukan nilai:
+
+| Yang hilang saat teks ditempel statis | Akibatnya |
+|---|---|
+| Instruksi khusus tutor ("minimal 500 kata", "format PDF spasi 1.5") | Jawaban salah bentuk |
+| Pedoman penilaian / rubrik | Nilai turun karena butir rubrik terlewat |
+| Komposisi nilai & syarat kelulusan | Missed requirement |
+| Konteksi diskusi (post pembuka) | Menjawab pertanyaan yang salah |
+| Tampilan instruksi di halaman seksi | Nomor butir tidak sinkron dengan yang diminta dosen |
+
+Dengan AI membaca halaman aslinya, semua itu ikut terbaca dan
+`generator/prompt.py` tinggalятся di URL + aturan kejujuran.
 
 ---
 
@@ -14,13 +44,15 @@
 | Bahasa | Python 3.13+ |
 | CLI | `argparse` (stdlib) |
 | Web Scraping | `requests`, `beautifulsoup4` |
+| Reader Lokal | `http.server.ThreadingHTTPServer` (stdlib) |
 | AI Agent | OpenCode CLI (`opencode run`) |
-| Vision AI | `opencode/mimo-v2.5-free`, `opencode/muse-spark-1.3-contributor-free` |
+| Vision AI | auto-deteksi dari `opencode models` |
 | OCR Fallback | `easyocr`, `pymupdf` |
-| Dokumen Word | `python-docx` (OMML math), `pywin32` (COM, legacy .doc) |
+| Dokumen Word | `python-docx` (OMML math) |
 | Excel | `openpyxl` |
+| Web UI | Flask (`server.py`) + Next.js static export |
 | Konfigurasi | `python-dotenv` |
-| State | JSON file (`output/state.json`) |
+| State | JSON file (`output/state.json`) + lock thread |
 
 ---
 
@@ -28,49 +60,41 @@
 
 ```
 tuton-agent/
-├── main.py                        # CLI entry point
+├── main.py                        # CLI + orkestrasi pipeline
 ├── config.py                      # Konfigurasi & loader .env
-├── requirements.txt
-├── .env.example
+├── server.py                      # Web UI (Flask) + endpoint Reader
 │
 ├── moodle/
-│   ├── __init__.py
-│   ├── auth.py                    # Session Moodle (MoodleSession)
-│   ├── scraper.py                 # Scraping course/section/activity
-│   ├── parser.py                  # Parsing soal dari forum/assignment/generic
-│   ├── downloader.py              # Download attachment ke lampiran/
-│   ├── transcribe.py              # Transkripsi attachment → teks
+│   ├── auth.py                    # Session + retry/backoff
+│   ├── scraper.py                 # Course/section/activity
+│   ├── reader.py                  # HTML Moodle -> Markdown bersih  (BARU)
+│   ├── reader_server.py           # Server Reader 127.0.0.1         (BARU)
+│   ├── discovery.py               # Kumpulkan + verifikasi URL      (BARU)
+│   ├── parser.py                  # Parser lama (mode --soal-mode file)
+│   ├── downloader.py              # Unduh lampiran
+│   ├── transcribe.py              # Lampiran -> teks (+ cache hash)  (DIperbaiki)
 │   └── ocr.py                     # EasyOCR fallback
 │
 ├── generator/
-│   ├── __init__.py
-│   ├── state.py                   # State persistence (output/state.json)
-│   ├── prompt.py                  # Builder prompt untuk OpenCode
-│   ├── docx.py                    # Markdown → Word .docx (OMML math)
+│   ├── state.py                   # State persistence (thread-safe)
+│   ├── prompt.py                  # Prompt URL-only + mode file       (BARU)
+│   ├── docx.py                    # Markdown -> Word (OMML math)
 │   └── opencode_runner.py         # Wrapper subprocess OpenCode CLI
 │
-├── vendor/
-│   └── humanizer/                 # Skill humanizer (25 pola AI)
-│       ├── SKILL.md
-│       └── agents/openai.yaml
-│
-├── .opencode/
-│   ├── agent/
-│   │   ├── tuton.md               # Agent system prompt (jawaban)
-│   │   └── transcriber.md         # Agent system prompt (transkripsi)
-│   └── package.json
-│
-├── template/
-│   └── ContohFormatJawaban.doc    # Template referensi Word
-│
-└── output/                        # Hasil (gitignored)
+├── .opencode/agent/tuton.md        # System prompt agent (URL-first)
+├── vendor/humanizer/              # Skill humanizer
+├── template/                      # Template Word referensi
+└── output/
     ├── state.json
-    └── <NamaMatkul>/
-        └── sesi<N>/
-            ├── soal.md
-            ├── jawaban_<kind>_<index>.md
-            ├── <kind><index>.docx
-            └── lampiran/
+    ├── .cache/                    # Cache halaman + transkripsi     (BARU)
+    │   ├── pages/                 # HTML mentah per URL
+    │   ├── md/                    # Markdown hasil render
+    │   └── transkrip/             # Transkripsi keyed SHA-256 berkas
+    └── <NamaMatkul>/sesi<N>/
+        ├── soal.md                # hanya pada mode `file`
+        ├── jawaban_<kind>_<n>.md
+        ├── <kind><n>.docx
+        └── lampiran/
 ```
 
 ---
@@ -79,334 +103,193 @@ tuton-agent/
 
 | Command | Fungsi | Deskripsi |
 |---------|--------|-----------|
-| `python main.py run [--course ID] [--sesi N] [--force]` | `cmd_run` | Full pipeline: scrape → parse → transcribe → jawab → docx |
-| `python main.py scrape [--course ID]` | `cmd_scrape` | Inspect course/sesi/aktivitas tanpa proses |
-| `python main.py status` | `cmd_status` | Tampilkan progres dari `state.json` |
-| *(tanpa subcommand)* | `cmd_run` (default) | Jalankan full flow (item selesai dilewati) |
+| `python main.py run` | `cmd_run` | Pipeline penuh (default bila tanpa subcommand) |
+| `python main.py run --jobs 3` | `cmd_run` | 3 item dikerjakan bersamaan |
+| `python main.py run --soal-mode file` | `cmd_run` | Perilaku lama (A/B test) |
+| `python main.py scrape [--course N]` | `cmd_scrape` | Lihat course/sesi/aktivitas |
+| `python main.py probe --course N [--sesi S]` | `cmd_probe` | **Tampilkan persis yang dilihat AI** |
+| `python main.py vision-probe` | `cmd_vision_probe` | Cek model bisa melihat gambar? |
+| `python main.py solve ...` | `cmd_solve` | Soal dari form (teks/unggah) |
+| `python main.py status` | `cmd_status` | Progres + URL sumber tiap item |
+
+`probe` adalah alat paling berguna saat ada masalah: ia mencetak URL Reader,
+hasil HTTP, dan isi yang akan dibaca AI — tanpa menjalankan agent.
 
 ---
 
-## 4. Full Pipeline Flow
+## 4. Pipeline
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  USER                                                              │
-│  python main.py run [--course ID] [--sesi N] [--force]            │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  1. CONFIG LOAD (config.py)                                        │
-│     • Load .env → NAMA, NIM, PRODI, MOODLE_SESSION, OPENCODE_*   │
-│     • Validasi field wajib via Config.require()                    │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  2. MOODLE AUTH (moodle/auth.py)                                   │
-│     • MoodleSession = requests.Session + cookie                    │
-│     • check_login() → GET /my/courses.php, cek tidak redirect       │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  3. COURSE DISCOVERY (moodle/scraper.py)                           │
-│     • get_courses() → parse /my/courses.php                        │
-│     • Per course: get_available_sections(course_id)                │
-│     • split_assignable() → klasifikasi: diskusi / tugas / lain     │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  4. PER-ITEM PROCESSING (_process_item per activity)               │
-│     • Cek state.is_done() → skip jika sudah selesai (kec --force)  │
-│     • Tentukan display_index dari title/section                    │
-│     • Buat output dirs: output/<Course>/sesi<N>/lampiran/          │
-└──────┬────────────────────────┬──────────────────────┬──────────────┘
-       │                         │                      │
-       ▼                         ▼                      ▼
-┌──────────────┐     ┌──────────────────────┐  ┌──────────────────┐
-│ 5a. PARSE   │     │ 5b. DOWNLOAD         │  │ 5c. BUILD PROMPT │
-│  QUESTION   │     │  ATTACHMENTS         │  │                  │
-│ (parser.py) │     │ (downloader.py)      │  │ (prompt.py)      │
-│             │     │                      │  │                  │
-│ • forum     │     │ • download_all()     │  │ • Context + soal │
-│   → forum   │     │ • Simpan ke lampiran/│  │   path + rules   │
-│ • assign    │     │                      │  │                  │
-│   → assign  │     └──────────────────────┘  └──────────────────┘
-│ • generic   │
-│   → fallback│
-│             │
-│ Returns     │
-│ ParsedQuestion│
-│ (title,     │
-│ question,   │
-│ attach_urls)│
-└──────────────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  6. TRANSCRIBE ATTACHMENTS (moodle/transcribe.py)                  │
-│     Per file di lampiran/:                                         │
-│     • Image/PDF → Vision AI (mimo-v2.5 → muse-spark → easyocr)    │
-│     • Excel → openpyxl                                             │
-│     • Word → python-docx                                           │
-│     • Output: transkrip_<stem>.md                                  │
-│     • Append transkrip ke soal.md                                  │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  7. WRITE soal.md                                                  │
-│     • Title + question + transkripsi lampiran                      │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  8. RUN OPENCODE (generator/opencode_runner.py)                    │
-│     • Resolve binary: OPENCODE_BIN > npm > PATH                   │
-│     • Command:                                                     │
-│       opencode run - --agent tuton --title tuton-job              │
-│       --file <soal.md> [--model ...] [--variant ...]              │
-│     • Agent "tuton" baca soal.md, terapkan humanizer skill,       │
-│       tulis jawaban_<kind>_<index>.md                              │
-│     • Timeout default 900s, retry maks 2x                         │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  9. GENERATE .docx (generator/docx.py)                             │
-│     • Header: Nama, NIM, Prodi, Matkul                             │
-│     • Title: "<Kind> <Index> <Matkul>"                             │
-│     • Section Soal + Jawab                                        │
-│     • Daftar Pustaka (hanging indent)                              │
-│     • OMML math (matriks, superscript, sqrt)                       │
-│     • Bold/Italic/Markdown tables                                  │
-│     • Catatan: konversi .doc via Word COM di-skip (OMML butuh .docx)│
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ 10. UPDATE STATE (generator/state.py)                              │
-│     • set_item(key, {status: "done", outputs: [paths]})           │
-│     • Flush ke output/state.json                                   │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│ 1. CONFIG + AUTH                                                    │
+│    Config.require() -> cek identitas & sesi                          │
+│    MoodleSession.check_login()                                      │
+│    retry 3x + backoff untuk timeout/5xx (auth.py)                   │
+└───────────────────────────┬──────────────────────────────────────────┘
+                            ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│ 2. COURSE & SECTION DISCOVERY (scraper.py)                          │
+│    get_courses() -> get_available_sections() -> split_assignable()   │
+│    Lewati item yang statusnya sudah `done` (state.json)              │
+└───────────────────────────┬──────────────────────────────────────────┘
+                            ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│ 3. PREFETCH — paralel (TUTON_PREFETCH_WORKERS, default 6)           │
+│    SourceDiscovery.discover(activity, kind):                        │
+│      a. kumpulkan URL kandidat:                                     │
+│         halaman aktivitas | halaman seksi | thread diskusi | lampiran│
+│      b. VERIFIKASI tiap URL (reader.verify_url):                    │
+│         HTTP 200, bukan halaman login, isi >= 40 karakter           │
+│         atau lampiran >= 200 byte                                   │
+│      c. gagal semua -> putar ulang tanpa cache (2x)                 │
+│      d. unduh lampiran ke output/<Course>/sesi<N>/lampiran/          │
+│    Semua bisa paralel karena hanya menyentuh jaringan/disk.         │
+└───────────────────────────┬──────────────────────────────────────────┘
+                            ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│ 4. KERJA — paralel (TUTON_JOBS, default 2)                          │
+│    Satu item = satu proses `opencode run` (agent `tuton`)            │
+│      - prompt berisi URL Reader (bukan teks soal)                   │
+│      - AI: webfetch URL -> pahami rubrik/instruksi -> kerjakan      │
+│      - retry sampai TUTON_RETRIES bila quality gate gagal            │
+│      - quality gate: answer_quality_issues()                        │
+│      - docx + state.json                                            │
+│    Item gagal TIDAK lagi memblokir sisa item seksi yang sama.       │
+│    Log tiap item dibUFFER per-thread lalu dicetak utuh ber-prefix,   │
+│    jadi dua item paralel tidak saling mengacak barisnya.            │
+└───────────────────────────┬──────────────────────────────────────────┘
+                            ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│ 5. DOKUMEN & STATE                                                  │
+│    save_doc(soal_text=reader.markdown, jawaban_md, meta)             │
+│    state.set_item({... "urls": [sumber yang terverifikasi]})         │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. Feature Flow: Transcription Sub-Flow
+## 5. Reader Lokal
+
+### Endpoint
+
+| Endpoint | Fungsi |
+|---|---|
+| `GET /healthz` | status + jumlah permintaan |
+| `GET /soal?u=<url>&k=<role>&t=<token>` | Markdown halaman / teks PDF |
+| `GET /file?u=<url>&t=<token>` | bytes asli (gambar/PDF/dokumen) |
+
+### Keamanan
+
+| Ancaman | PenANGAN |
+|---|---|
+| Akses dari proses lain di mesin | token acak per-proses, tanpa token -> 403 |
+| SSRF ke host internal | hanya host `MOODLE_BASE_URL` yang boleh diambil |
+| Server terekspos jaringan | bind `127.0.0.1` saja |
+| Lampiran besar melahap memori | batas 25 MB, timeout 60s |
+| `docx` gagal karena karakter kontrol | kontrol & biner dibuang saat render |
+
+### Pembersihan HTML (3 tahap, urutannya penting)
+
+1. `_clean_document` — buang yang tidak ambigu (`nav`, `header`, `footer`,
+   `form`, `script`, tombol, `data-region=header/footer`, ...).
+2. `_pick_content` — pilih container terluas dari kandidat yang saling lepas
+   (`[role=main]`, `#region-main`, `#intro`, `[id^=post-content-]`, ...).
+3. `_strip_chrome_tokens` — buang menu/dropdown **di dalam** container.
+
+Tahap 2 dan 3 tidak boleh digabung. Percobaan menggabungkannya menghapus
+seluruh halaman, karena `<body>` Moodle membawa class tata letak seperti
+`sidebar-one` dan `header-light`.这种事情 hanya ketahuan karena menguji
+terhadap HTML asli UT, bukan asumsi.
+
+Selector yang sengaja TIDAK dipakai:
+
+| Selector | Alasan |
+|---|---|
+| `[data-region]` | Moodle memakainya pada `data-region="content"` untuk card body post diskusi — menghapus itu berarti menghapus soal |
+| `.inline` | dipakai Moodle untuk membungkus isi post, bukan hanya tombol inline-edit |
+| token class `d-flex`, `block`, `toolbar` | utility class Bootstrap yang juga dipakai container konten |
+
+### Yang dibuang sebagai aset, bukan lampiran
+
+Logo, avatar, ikon tipe berkas: `/theme/`, `/theme_`, `/pix/`, `/user/icon/`,
+`logout.png`, `theme/image.php`. Tanpa filter ini, "lampiran" berisi logo UT.
+
+---
+
+## 6. Kecepatan
+
+| Teknik | Dampak |
+|---|---|
+| **Deteksi model vision diperbaiki** | `opencode models --verbose` sudah dihapus di opencode terbaru. Versi lama selalu gagal -> daftar model kosong -> semua transkripsi jatuh ke easyocr di CPU. Sekarang: coba `--verbose`, lalu output polos, lalu daftar statis. 430 model terdeteksi, 3 kandidat vision. |
+| **Cache transkripsi (SHA-256)** | Berkas yang tidak berubah tidak pernah ditranskripsi dua kali. `--force` tidak mengulang vision. |
+| **Teks layer PDF lebih dulu** | PDF non-scan diekstrak dengan pymupdf (instan) sebelum memanggil model vision. |
+| **Cache halaman (TTL)** | 1800 detik. Prefetch kedua dan `probe` berulang tidak memukul Moodle. |
+| **Prefetch paralel** | Verifikasi URL + unduh lampiran jaringan murni, 6 worker. |
+| **`--jobs` untuk item** | 2 item = 2 proses `opencode run` bersamaan. Ini pengatur utama. |
+| **Retry 2x, bukan 3x** | Percobaan ketiga mengulang kesalahan yang sama dengan biaya penuh. |
+| **Prompt ramping** | Tidak ada lagi teks soal + transkripsi yang ditempel di prompt. |
+
+### Batas biaya vision
+
+`OPENCODE_VISION_TRIES` (default 3) membatasi jumlah model yang dicoba per
+lampiran. Tanpa batas ini, daftar model yang tersedia (ratusan) akan dicoba satu
+per satu dan satu lampiran bisa menahan belasan menit.
+
+---
+
+## 7. Keandalan
+
+| Masalah nyata | Penangan |
+|---|---|
+| Satu selector gagal -> soal kosong | 4 sumber URL per item, tiap satu diverifikasi |
+| Sesi Moodle kedaluwarsa | Deteksi halaman login; pesan jelas "perbarui MoodleSession di Settings"; item lain tetap jalan |
+| 1 soal tidak ketemu | Item itu ditandai `failed`, **sisa item di seksi tetap dikerjakan** (perilaku lama: satu gagalan memblokir satu seksi penuh) |
+| URL thread diskusi 404 | `normalize_url()` Merrygabungkan segmen kembar: `/mod/forum/mod/forum/discuss.php` -> `/mod/forum/discuss.php` |
+| Jawaban korup / tanpa Daftar Pustaka | `answer_quality_issues()` + retry dengan instruksi perbaikan |
+| `state.json` korup saat paralel | Tulis ke `.tmp` lalu rename atomik; `RLock` protects read-modify-write |
+| Log antar item tercampur | stdout diroute per-thread, tiap item di-buffer lalu dicetak utuh ber-prefix |
+| Timeout jaringan sesaat | retry 3x + backoff di `MoodleSession._request` |
+
+---
+
+## 8. Mode `file` (A/B test)
+
+`--soal-mode file` menghidupkan perilaku lama: Python menyusun `soal.md` lalu
+menempelkannya ke prompt. Dipertahankan untuk membandingkan hasil
+`--soal-mode url` vs `file` pada soal yang sama tanpa mengubah kode lain.
+
+Perbedaan utama pada mode `file`: rubrik dan instruksi khusus tutor tetap bisa
+terpotong oleh parser, karena info itu memang tidak pernah ikut dalam
+`soal.md`.
+
+---
+
+## 9. Konfigurasi
+
+| Variabel | Default | Fungsi |
+|---|---|---|
+| `TUTON_JOBS` | `2` | Item dikerjakan bersamaan |
+| `TUTON_PREFETCH_WORKERS` | `6` | Worker pra-ambil (network-bound) |
+| `TUTON_TIMEOUT` | `600` | Batas waktu satu item (detik) |
+| `TUTON_RETRIES` | `2` | Percobaan menjawab per item |
+| `TUTON_SOAL_MODE` | `url` | `url` (AI ambil sendiri) atau `file` (lama) |
+| `TUTON_READER_PORT` | `8765` | Port Reader Lokal |
+| `TUTON_TRANSCRIBE` | `auto` | `auto` / `always` / `never` |
+| `TUTON_PDF_TEXT_FIRST` | `1` | Ekstrak teks layer PDF sebelum vision |
+| `TUTON_CACHE_TTL` | `1800` | Umur cache halaman (detik) |
+| `OPENCODE_VISION_TRIES` | `3` | Batas model vision per lampiran |
+| `OPENCODE_VISION_PREFER` | (kosong) | Prioritaskan model vision tertentu |
+
+---
+
+## 10. Verifikasi
+
+`python verify_reader.py` menjalankan 49 pemeriksaan tanpa menyentuh Moodle:
+render Markdown (rubrik, gambar, tautan, forum), guard keamanan, server Reader
+end-to-end, deteksi model vision, dan isi prompt.
+
+Untuk memastikan apa yang sebenarnya dilihat AI, gunakan:
 
 ```
-Attachment (image / PDF / xlsx / docx)
-         │
-         ▼
-┌────────────────────────────────────────┐
-│  process_attachment(path, work_dir)    │
-└────────────────────────────────────────┘
-         │
-    ┌────┴───────────────────────────────┐
-    │                                    │
-    ▼                                    ▼
-┌──────────────┐               ┌────────────────────┐
-│ Image / PDF  │               │ Excel / Word docx  │
-│ → Vision AI  │               │ → Python libs      │
-│   Primary:   │               │ • openpyxl         │
-│   mimo-v2.5  │               │ • python-docx      │
-│   Backup:    │               └────────────────────┘
-│   muse-spark │
-│   Fallback:  │
-│   easyocr    │
-│   (pymupdf   │
-│    for PDF)  │
-└──────────────┘
-         │
-         ▼
-  transkrip_<stem>.md (disimpan di lampiran/)
+python main.py probe --course 329012 --sesi 3
 ```
-
----
-
-## 6. Data Models
-
-### 6.1 Moodle Domain (`moodle/scraper.py`, `moodle/parser.py`)
-
-```python
-@dataclass
-class Course:
-    id: int
-    name: str
-    # Computed: folder_name = safe filename dari name
-
-@dataclass
-class Activity:
-    mod_type: str   # "forum" | "assign" | "lesson" | "resource" | "page" | "url" | "folder"
-    id: int
-    title: str
-    section: int = 0
-    # Computed: url = f"https://elearning.ut.ac.id/mod/{mod_type}/view.php?id={id}"
-
-@dataclass
-class SectionInfo:
-    number: int
-    title: str
-    activities: list[Activity]
-
-@dataclass
-class ParsedQuestion:
-    activity: Activity
-    title: str
-    question: str = ""
-    attachment_urls: list[str] = field(default_factory=list)
-    source_url: str = ""
-```
-
-### 6.2 State Schema (`generator/state.py`)
-
-```json
-{
-  "items": {
-    "<course_id>:<kind>:<index>": {
-      "status": "done" | "failed",
-      "matkul": "<course name>",
-      "sesi": <section number>,
-      "kind": "diskusi" | "tugas",
-      "index": <display index>,
-      "desc": "<activity title>",
-      "outputs": ["<docx_path>", "<md_path>"]
-    }
-  }
-}
-```
-
-### 6.3 Document Metadata (`generator/docx.py`)
-
-```python
-meta = {
-    "nama": str,        # Config.NAMA
-    "nim": str,         # Config.NIM
-    "prodi": str,       # Config.PRODI
-    "matkul": str,      # Course name
-    "kind_label": str,  # "Diskusi" atau "Tugas"
-    "display_index": int,
-    "file_base": str    # e.g. "diskusi1"
-}
-```
-
----
-
-## 7. Konfigurasi & Environment
-
-### 7.1 Environment Variables (`.env`)
-
-| Variable | Required | Default | Deskripsi |
-|----------|----------|---------|-----------|
-| `NAMA` | Ya | `""` | Nama mahasiswa untuk header dokumen |
-| `NIM` | Ya | `""` | NIM mahasiswa |
-| `PRODI` | Ya | `""` | Program studi |
-| `MOODLE_BASE_URL` | Tidak | `https://elearning.ut.ac.id` | URL instance Moodle |
-| `MOODLE_SESSION` | Ya | `""` | Session cookie Moodle |
-| `COOKIE_*` | Tidak | — | Tambahan cookie (format `name=value`) |
-| `OPENCODE_MODEL` | Tidak | `""` (default opencode) | Model untuk jawaban |
-| `OPENCODE_VISION_MODEL_IMAGE` | Tidak | `opencode/mimo-v2.5-free` | Vision model gambar |
-| `OPENCODE_VISION_MODEL_IMAGE_BACKUP` | Tidak | `opencode/muse-spark-1.3-contributor-free` | Backup vision model gambar |
-| `OPENCODE_VISION_MODEL_PDF` | Tidak | `opencode/muse-spark-1.3-contributor-free` | Vision model PDF |
-| `OPENCODE_VISION_VARIANT` | Tidak | `low` | Reasoning variant vision |
-| `TUTON_TIMEOUT_TRANSCRIBE` | Tidak | `300` | Timeout transkripsi (detik) |
-| `TUTON_TIMEOUT` | Tidak | `900` | Timeout opencode default (detik) |
-| `OPENCODE_BIN` | Tidak | auto-resolve | Path executable opencode |
-
-### 7.2 Secrets Handling
-
-- `.env` di-`gitignore`
-- `MOODLE_SESSION` dianggap secret (cookie browser-extracted)
-- Tidak ada API key lain; model AI dipilih via CLI args opencode
-
----
-
-## 8. Integrasi Eksternal
-
-| Integrasi | Tipe | Detail |
-|-----------|------|--------|
-| **Moodle LMS** | HTTP/Scraping | `https://elearning.ut.ac.id` — session cookie auth, HTML via BeautifulSoup |
-| **OpenCode CLI** | Subprocess | `opencode run -` — dijalankan dengan agent, model, variant, attachments |
-| **Vision Models** | AI API (via opencode) | `mimo-v2.5-free` (primary), `muse-spark-1.3-contributor-free` (backup) |
-| **EasyOCR** | Library | Fallback OCR untuk gambar |
-| **PyMuPDF** | Library | Fallback ekstraksi teks PDF |
-| **OpenPyXL** | Library | Ekstraksi teks Excel (.xlsx) |
-| **python-docx** | Library | Generate Word .docx |
-| **pywin32** | COM | Legacy `.doc` conversion (saat ini di-skip) |
-| **Google Scholar / Crossref** | Web (via agent) | Verifikasi referensi oleh agent opencode |
-
----
-
-## 9. State Management & Idempotency
-
-- **File state:** `output/state.json`
-- **Key format:** `f"{course_id}:{kind}:{index}"` (e.g. `328559:forum:39917565`)
-- **Load:** Sekali di module-level `_STATE`, di-mutate in-memory, flush ke disk via `save()` setelah setiap item
-- **Idempotency:**
-  - `state.is_done()` cek status `"done"` + keberadaan file output
-  - Flag `--force` bypass state untuk reprocess
-  - Output file di-overwrite saat re-run
-
----
-
-## 10. Output Directory Layout
-
-```
-output/
-├── state.json
-└── <NamaMatkul_Folder>/
-    └── sesi<N>/
-        ├── soal.md                    # Soal + transkripsi lampiran
-        ├── jawaban_<kind>_<index>.md  # Jawaban mentah dari AI
-        ├── <kind><index>.docx         # Dokumen Word final
-        └── lampiran/
-            ├── <file_asli>            # Attachment asli dari Moodle
-            ├── transkrip_<stem>.md    # Hasil transkripsi
-            └── ...
-```
-
----
-
-## 11. Error Handling
-
-| Kondisi | Penanganan |
-|---------|-----------|
-| HTTP error | `raise_for_status()` |
-| Login invalid | Redirect check di `check_login()` |
-| OpenCode timeout | Kill process, retry hingga 2x |
-| Item gagal | Tandai `status: "failed"` di `state.json` |
-| OCR/transcription gagal | Cascade fallback: vision model → easyocr/pymupdf |
-| Encoding Windows | Force UTF-8 stdout/stderr |
-
----
-
-## 12. Daftar Fitur Utama
-
-| # | Fitur | File Kunci |
-|---|-------|-----------|
-| 1 | CLI argparse (run / scrape / status) | `main.py` |
-| 2 | Autentikasi Moodle via session cookie | `moodle/auth.py` |
-| 3 | Scraping course, section, activity | `moodle/scraper.py` |
-| 4 | Parsing soal forum, assignment, generic | `moodle/parser.py` |
-| 5 | Download attachment (pluginfile.php) | `moodle/downloader.py` |
-| 6 | Transkripsi attachment dengan AI + fallback | `moodle/transcribe.py`, `moodle/ocr.py` |
-| 7 | Pembuatan prompt untuk OpenCode | `generator/prompt.py` |
-| 8 | Eksekusi OpenCode CLI (subprocess) | `generator/opencode_runner.py` |
-| 9 | Humanizer skill (25 pola AI) | `vendor/humanizer/SKILL.md` |
-| 10 | Generate Word .docx dengan OMML math | `generator/docx.py` |
-| 11 | State management (idempotent) | `generator/state.py` |
-| 12 | Agent system prompt (tuton.md) | `.opencode/agent/tuton.md` |
-| 13 | Agent system prompt (transcriber.md) | `.opencode/agent/transcriber.md` |
-| 14 | Verifikasi referensi (agent) | `.opencode/agent/tuton.md` |
-
----
-
-## 13. Catatan Khusus
-
-- **OMML Equation:** Konversi `.doc` via Word COM di-skip karena OMML math butuh format `.docx` native.
-- **Windows Compatibility:** Path dan encoding di-handle khusus untuk win32.
-- **OpenCode Binary:** Di-resolve dari `OPENCODE_BIN` env, lalu `%APPDATA%\npm`, lalu PATH.
-- **Display Index:** Diekstrak dari judul activity (pola `diskusi N` / `tugas N`), fallback ke section number.

@@ -103,14 +103,45 @@ export interface ResultsResponse {
   error?: string;
 }
 
+export interface RuntimeConfig {
+  jobs: number;
+  soal_mode: string;
+  timeout: number;
+  retries: number;
+  transcribe: string;
+  vision_tries: number;
+}
+
 export interface AppConfig {
   nama: string;
   nim: string;
   prodi: string;
   model: string;
+  default_model?: string;
   base_url: string;
   has_session: boolean;
   output_dir: string;
+  runtime?: RuntimeConfig;
+}
+
+export interface ModelOption {
+  id: string;
+  name: string;
+  current: boolean;
+}
+
+export interface ModelGroup {
+  provider: string;
+  models: ModelOption[];
+}
+
+export interface ModelsResponse {
+  success: boolean;
+  current: string;
+  default: string;
+  total: number;
+  groups: ModelGroup[];
+  error?: string;
 }
 
 export type RunKindFilter = 'all' | 'tugas' | 'diskusi';

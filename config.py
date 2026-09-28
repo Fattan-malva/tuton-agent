@@ -94,6 +94,43 @@ class Config:
     ]
     OPENCODE_VISION_VARIANT = _env("OPENCODE_VISION_VARIANT", "low")
     TUTON_TIMEOUT_TRANSCRIBE = int(_env("TUTON_TIMEOUT_TRANSCRIBE", "300"))
+    # Berapa model vision yang boleh dicoba untuk satu lampiran sebelum menyerah.
+    # Tiap percobaan = 1 proses opencode, jadi ini batas biaya.
+    OPENCODE_VISION_TRIES = int(_env("OPENCODE_VISION_TRIES", "3"))
+    # PDF ber-teks-layer diekstrak langsung (instan) sebelum panggil model vision.
+    TUTON_PDF_TEXT_FIRST = _env("TUTON_PDF_TEXT_FIRST", "1") not in ("0", "false", "no")
+
+    # --- Kecepatan & keandalan pipeline -----------------------------------
+    # Batas waktu satu job menjawab (detik). Turun dari 900 ke 600 supaya satu
+    # item macet tidak menahan batch selama 15 menit.
+    TUTON_TIMEOUT = int(_env("TUTON_TIMEOUT", "600"))
+    # Jumlah percobaan menjawab per item. Maks 3; default 2 sudah cukup karena
+    # retry ketiga hanya mengulang kesalahan yang sama dengan biaya penuh.
+    TUTON_RETRIES = int(_env("TUTON_RETRIES", "2"))
+    # Berapa item yang dikerjakan bersamaan (masing-masing = 1 proses
+    # `opencode run` independen). Naikkan kalau kuota model masih lega.
+    TUTON_JOBS = int(_env("TUTON_JOBS", "2"))
+    # Worker untuk tahap pra-ambil (verifikasi URL + unduh lampiran) yang
+    # network-bound saja, jadi jauh boleh lebih banyak dari TUTON_JOBS.
+    TUTON_PREFETCH_WORKERS = int(_env("TUTON_PREFETCH_WORKERS", "6"))
+    # Worker khusus transkripsi lampiran. Tiap transkripsi = satu panggilan
+    # model vision, jadi dijaga terpisah dari TUTON_JOBS supaya tidak ikut kena
+    # rate limit. Transkripsi berjalan otomatis, tanpa perlu memilih model.
+    TUTON_TRANSCRIBE_WORKERS = int(_env("TUTON_TRANSCRIBE_WORKERS", "2"))
+    # Port Reader Lokal (server yang menyuntikkan cookie Moodle ke URL yang
+    # dibaca agent). 0 = port otomatis.
+    TUTON_READER_PORT = int(_env("TUTON_READER_PORT", "8765"))
+    # "url" = prompt hanya berisi URL, AI yang ambil soalnya sendiri.
+    # "file" = perilaku lama, soal.md statis ditempel ke prompt.
+    TUTON_SOAL_MODE = _env("TUTON_SOAL_MODE", "url")
+    # "auto" = pakai transkripsi hanya bila model agent tak bisa melihat
+    # gambar/PDF; "always" = selalu transkripsi; "never" = serahkan file
+    # ke agent (ia membacanya sendiri lewat tool read).
+    TUTON_TRANSCRIBE = _env("TUTON_TRANSCRIBE", "auto")
+    # Cache halaman & transkripsi. Simpan hasil fetch supaya `--force` tidak
+    # memukul Moodle lagi dan transkripsi vision tidak diulang.
+    TUTON_CACHE_DIR = BASE_DIR / "output" / ".cache"
+    TUTON_CACHE_TTL = int(_env("TUTON_CACHE_TTL", "1800"))
 
     MOODLE_BASE_URL = normalize_base_url(
         _env("MOODLE_BASE_URL", DEFAULT_MOODLE_BASE_URL)
