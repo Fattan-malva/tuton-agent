@@ -99,6 +99,10 @@ class Config:
     OPENCODE_VISION_TRIES = int(_env("OPENCODE_VISION_TRIES", "3"))
     # PDF ber-teks-layer diekstrak langsung (instan) sebelum panggil model vision.
     TUTON_PDF_TEXT_FIRST = _env("TUTON_PDF_TEXT_FIRST", "1") not in ("0", "false", "no")
+    # Minimal karakter teks layer PDF agar dianggap sah. Nilai kecil disengaja:
+    # PDF soal UT biasanya hanya beberapa baris, dan teks layer selalu lebih
+    # otoritatif daripada OCR (yang sering salah baca 1NF jadi INF).
+    TUTON_PDF_TEXT_MIN_CHARS = int(_env("TUTON_PDF_TEXT_MIN_CHARS", "40"))
 
     # --- Kecepatan & keandalan pipeline -----------------------------------
     # Batas waktu satu job menjawab (detik). Turun dari 900 ke 600 supaya satu

@@ -248,6 +248,24 @@ Entitas: Mahasiswa, MataKuliah, Enrollment, Absensi.
 """
 
 
+def _stub_transcribe_opencode(prompt: str, **_kwargs):
+    """Stub agent transcriber: menulis transkrip dengan isi PDF tiruan."""
+    for line in prompt.splitlines():
+        if "{OUT}" in line or "transkrip_" in line:
+            for token in line.replace("{", "").replace("}", "").split():
+                if token.endswith(".md") and ("transkrip_" in token):
+                    out = Path(token)
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_text(
+                        "Tugas Praktikum 1 - Basis Data\n"
+                        "1. Jelaskan perbedaan model relasi 1NF, 2NF, dan 3NF.\n"
+                        "2. Buat rancangan database untuk sistem informasi "
+                        "absensi mahasiswa.\n",
+                        encoding="utf-8",
+                    )
+    return type("R", (), {"returncode": 0, "stdout": "SELESAI", "stderr": ""})()
+
+
 def _stub_run_opencode(prompt: str, **_kwargs):
     """Meniru `run_opencode`: catat prompt, tulis jawaban ke path yang diminta."""
     PROMPTS.append(prompt)
@@ -307,6 +325,11 @@ def main() -> int:
     main_mod.ensure_reader = rs.ensure_reader
     main_mod.soalu = rs.soalu
     main_mod.run_opencode = _stub_run_opencode
+    # `moodle.transcribe` mengimpor run_opencode secara langsung, jadi harus
+    # di-stub juga. Tanpa ini test memanggil opencode sungguhan.
+    import moodle.transcribe as transcribe_mod
+
+    transcribe_mod.run_opencode = _stub_transcribe_opencode
     # `state.STATE_FILE` dihitung saat import dari config.OUTPUT_DIR. Kalau tidak
     # dipatch, test menulis ke output/state.json milik user sungguhan.
     state_mod.STATE_FILE = fixtures / "out" / "state.json"
@@ -390,15 +413,18 @@ def main() -> int:
         check("2 file .docx dibuat", len(docs) == 2, str([d.name for d in docs]))
 
         print("\n[4] Transkripsi otomatis")
-        transcripts = sorted(out_root.rglob("transkrip.md"))
+        transcripts = sorted(out_root.rglob("transkrip_*.md"))
         check("transkrip.md dibuat per item", len(transcripts) == 2,
               str([t.name for t in transcripts]))
         if transcripts:
             isi = transcripts[0].read_text(encoding="utf-8")
             check("transkrip memuat isi PDF (teks layer)",
                   "1NF" in isi and "absensi" in isi, isi[:140])
-        check("tidak ada transkrip_*.md hasil vision (PDF punya teks layer)",
-              not list(out_root.rglob("transkrip_*.md")))
+        # Nama lama "transkrip_<stem>.md" (satu per berkas) sudah tidak dipakai.
+        # Yang dipakai sekarang: satu file gabungan per item.
+        check("tidak ada transkrip_<stem>.md per-berkas (nama lama)",
+              not list(out_root.rglob("transkrip_tugas1.md"))
+              and not list(out_root.rglob("transkrip_soal_diskusi.pdf.md")))
 
         print("\n[5] Prompt yang diterima AI")
         if PROMPTS:
@@ -407,7 +433,7 @@ def main() -> int:
             check("prompt menyuruh webfetch", "webfetch" in p)
             check("prompt TIDAK menempel soal.md", "soal.md" not in p)
             check("prompt menyebut rubrik", "Rubrik" in p or "rubrik" in p)
-            check("prompt menunjuk transkrip.md", "transkrip.md" in p)
+            check("prompt menunjuk file transkrip", "transkrip_" in p)
             check("prompt tidak menumpuk transkripsi inline",
                   "Topik Diskusi Ke 1</strong>" not in p)
             check("prompt punya Daftar Pustaka", "Daftar Pustaka" in p)

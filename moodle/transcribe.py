@@ -312,7 +312,11 @@ def _transcribe_with_model(
 _TRANSKRIP_DIR = OUTPUT_DIR / ".cache" / "transkrip"
 _MIN_TEXT = 10  # di bawah ini dianggap model tidak bisa membaca
 _MAX_VISION_TRIES = int((Config.OPENCODE_VISION_TRIES or 3))
-_MIN_PDF_TEXT_CHARS = 200  # teks layer PDF dianggap sah bila >= ini
+# Teks layer PDF dianggap sah bila >= ini karakter. Sengaja RENDAH: PDF soal
+# di UT sering cuma 2-3 baris, dan teks layer selalu lebih otoritatif
+# daripada OCR. Ambang 200 pernah membuat PDF valid ditolak, lalu fallback
+# easyocr mengubah "1NF" jadi "INF" -- AI menjawab tentang simbol yang salah.
+_MIN_PDF_TEXT_CHARS = int(Config.TUTON_PDF_TEXT_MIN_CHARS)
 
 
 def _sha256(path: Path) -> str:
