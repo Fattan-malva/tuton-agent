@@ -14,6 +14,7 @@ biasanya hilang saat teks soal dipotong oleh parser.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import threading
 import time
@@ -201,41 +202,52 @@ class ReaderCache:
         except OSError:
             return None
 
+    @staticmethod
+    def _encode_meta(fetched: Fetched) -> bytes:
+        """Header cache sebagai satu baris JSON.
+
+        Dipakai JSON, bukan string berisi `|`, karena pemisah baris pada file
+        cache adalah `\n`. Body PDF/DOCX pasti mengandung newline, jadi header
+        harus bisa dibaca tanpa ambigu -- dan hanya baris PERTAMA yang boleh
+        diperlakukan sebagai header.
+        """
+        meta = {
+            "u": fetched.final_url or fetched.url,
+            "s": fetched.status,
+            "c": fetched.content_type or "application/octet-stream",
+        }
+        return json.dumps(meta, ensure_ascii=False).encode("utf-8", "replace")
+
     def get_page(self, url: str) -> Fetched | None:
         path = self.root / "pages" / self._key(url, ".bin")
         blob = self._read_fresh(path)
         if blob is None:
             return None
-        parts = blob.split(b"\n", 3)
-        if len(parts) < 4:
+        # Hanya baris pertama yang adalah header. Sisa blob adalah body mentah
+        # dan TIDAK boleh dipecah -- PDF/DOCX/XML banyak mengandung newline.
+        header, sep, body = blob.partition(b"\n")
+        if not sep:
             return None
         try:
-            meta = parts[0].decode("utf-8", "replace").split("|")
+            meta = json.loads(header.decode("utf-8", "replace"))
             return Fetched(
                 url=url,
-                final_url=meta[0],
-                status=int(meta[1]),
-                content_type=meta[2],
-                body=parts[3],
+                final_url=str(meta.get("u") or url),
+                status=int(meta.get("s") or 0),
+                content_type=str(meta.get("c") or ""),
+                body=body,
                 from_cache=True,
             )
-        except (ValueError, IndexError):
+        except (ValueError, TypeError, AttributeError):
             return None
 
     def put_page(self, fetched: Fetched) -> None:
         if not fetched.ok:
             return
         path = self.root / "pages" / self._key(fetched.url, ".bin")
-        header = "|".join(
-            [
-                fetched.final_url or fetched.url,
-                str(fetched.status),
-                fetched.content_type or "application/octet-stream",
-            ]
-        ).encode("utf-8", "replace")
         with self._lock:
             try:
-                path.write_bytes(header + b"\n" + fetched.body)
+                path.write_bytes(self._encode_meta(fetched) + b"\n" + fetched.body)
             except OSError:
                 pass
 
@@ -982,9 +994,22 @@ def _attachment_lines(scope: Tag, page_url: str, url_for) -> str:
 # Verifikasi URL (dipakai discovery)
 # ---------------------------------------------------------------------------
 def verify_url(
-    reader: MoodleReader, url: str, *, kind: str, use_cache: bool = True
+    reader: MoodleReader,
+    url: str,
+    *,
+    kind: str,
+    use_cache: bool = True,
+    work_kind: str = "",
 ) -> tuple[bool, str, Fetched]:
-    """Cek satu URL benar-benar berisi konten yang bisa dipakai AI."""
+    """Cek satu URL benar-benar berisi konten yang bisa dipakai AI.
+
+    `kind` = peran link (halaman/seksi/diskusi/lampiran).
+    `work_kind` = jenis pekerjaan (diskusi/tugas). Keduanya sengaja dibedakan:
+    renderer butuh yang kedua, karena halaman forum harus dirender sebagai
+    forum -- hanya post pembuka -- bukan sebagai halaman biasa yang ikut memuat
+    balasan mahasiswa lain.
+    """
+    render_kind = work_kind or kind
     fetched = reader.fetch(url, use_cache=use_cache)
     if fetched.error:
         return False, fetched.error, fetched
@@ -998,7 +1023,7 @@ def verify_url(
         if len(fetched.body) < 200:
             return False, f"lampiran terlalu kecil ({len(fetched.body)}B)", fetched
         return True, f"lampiran {fetched.content_type or 'biner'}", fetched
-    md, _ = reader.render(url, kind=kind, use_cache=use_cache)
+    md, _ = reader.render(url, kind=render_kind, use_cache=use_cache)
     useful = _meaningful_length(md)
     if useful < _MIN_USEFUL_CHARS:
         return False, f"halaman kosong ({useful} karakter)", fetched

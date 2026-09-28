@@ -275,7 +275,10 @@ def _write_transcript_file(record: Prefetched, lamp_dir: Path) -> Path | None:
     parts: list[str] = []
     for name, text in record.transcripts.items():
         parts.append(f"## {name}\n\n{text}")
-    path = lamp_dir / "transkrip.md"
+    # Nama WAJIB per-item. Folder lampiran dipakai bersama oleh semua item dalam
+    # satu sesi, jadi nama tetap "transkrip.md" berarti dua item yang jalan
+    # paralel menulis berkas yang sama dan salah satunya hilang tanpa jejak.
+    path = lamp_dir / f"transkrip_{record.kind}{record.index}.md"
     header = (
         "# Transkripsi Lampiran\n\n"
         "Isi di bawah ini DIEKSTRAK OTOMATIS dari lampiran soal "

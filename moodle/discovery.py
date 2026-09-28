@@ -221,10 +221,12 @@ class SourceDiscovery:
         return list(dict.fromkeys(found))[:12]
 
     # -- verifikasi --------------------------------------------------------
-    def _verify(self, url: str, role: str, *, use_cache: bool = True) -> SourceLink:
+    def _verify(
+        self, url: str, role: str, *, use_cache: bool = True, work_kind: str = ""
+    ) -> SourceLink:
         link = SourceLink(url=url, role=role)
         ok, note, fetched = verify_url(
-            self.reader, url, kind=role, use_cache=use_cache
+            self.reader, url, kind=role, use_cache=use_cache, work_kind=work_kind
         )
         link.ok = ok
         link.note = note
@@ -242,12 +244,12 @@ class SourceDiscovery:
 
         # Verifikasi kandidat utama.
         for role, url in candidates:
-            source.links.append(self._verify(url, role))
+            source.links.append(self._verify(url, role, work_kind=kind))
 
         # Thread diskusi (hanya relevan untuk forum/Diskusi).
         if activity.mod_type == "forum" or "diskus" in activity.title.lower():
             for thread in self._thread_urls(activity):
-                source.links.append(self._verify(thread, ROLE_DISCUSSION))
+                source.links.append(self._verify(thread, ROLE_DISCUSSION, work_kind=kind))
 
         # Lampiran tetap dikumpulkan walau gagal diverifikasi sebagai halaman:
         # agent butuh tahu file apa yang tersedia.
@@ -255,7 +257,7 @@ class SourceDiscovery:
         for url in source.attachments:
             if any(link.url == url for link in source.links):
                 continue
-            source.links.append(self._verify(url, ROLE_ATTACHMENT))
+            source.links.append(self._verify(url, ROLE_ATTACHMENT, work_kind=kind))
 
         # Retry: jika tak ada satu pun yang lolos, putar ulang TANPA cache
         # supaya perubahan halaman Moodle benar-benar diambil, bukan hasil lama.
@@ -264,19 +266,26 @@ class SourceDiscovery:
                 break
             source.attempts += 1
             refreshed = [
-                self._verify(url, role, use_cache=False) for role, url in candidates
+                self._verify(url, role, use_cache=False, work_kind=kind)
+                for role, url in candidates
             ]
             known = {url for _, url in candidates}
             for thread_url in [
                 link.url for link in source.links if link.role == ROLE_DISCUSSION
             ]:
                 refreshed.append(
-                    self._verify(thread_url, ROLE_DISCUSSION, use_cache=False)
+                    self._verify(
+                    thread_url, ROLE_DISCUSSION,
+                    use_cache=False, work_kind=kind,
+                )
                 )
                 known.add(thread_url)
             for att_url in source.attachments:
                 refreshed.append(
-                    self._verify(att_url, ROLE_ATTACHMENT, use_cache=False)
+                    self._verify(
+                    att_url, ROLE_ATTACHMENT,
+                    use_cache=False, work_kind=kind,
+                )
                 )
                 known.add(att_url)
             source.links = refreshed + [
@@ -293,7 +302,7 @@ class SourceDiscovery:
         ok = source.ok_links
         if ok:
             source.primary_url = ok[0].url
-            md, _ = self.reader.render(ok[0].url, kind=ok[0].role)
+            md, _ = self.reader.render(ok[0].url, kind=source.kind)
             source.soal_text = md
             source.note = source.summary()
         else:
@@ -311,7 +320,7 @@ class SourceDiscovery:
             if link.url in seen:
                 continue
             seen.add(link.url)
-            md, _ = self.reader.render(link.url, kind=link.role)
+            md, _ = self.reader.render(link.url, kind=source.kind)
             if md.strip():
                 parts.append(md)
         if not parts and source.soal_text:
