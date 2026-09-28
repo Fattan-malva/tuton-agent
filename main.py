@@ -7,6 +7,21 @@ import sys
 import time
 from pathlib import Path
 
+# Character kontrol yang tidak sah di XML 1.0 (bikin docx gagal dibuat).
+_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# Skrip non-Latin (CJK/Hangul/Kana/Cyrillic/Arab/Hebrew) tidak pernah muncul di
+# jawaban akademik berbahasa Indonesia. Kehadirannya jadi sinyal teks korup —
+# contoh nyata: jawaban Basis Data sempat memuat karakter CJK di tengah kata
+# "Entitas" dan kata cacat seperti "bluesis".
+_FOREIGN_SCRIPT_RE = re.compile(
+    r"[\u2e80-\u9fff\uac00-\ud7af\u3040-\u30ff\u0400-\u04ff\u0600-\u06ff"
+    r"\u0590-\u05ff]"
+)
+# Coretan penanda edit yang bocor ke teks (mis. "1:1_changed", "underpid").
+_EDIT_ARTIFACT_RE = re.compile(
+    r"(?:^|\s)\d+:\d+_(?:changed|removed|added)\b", re.IGNORECASE
+)
+
 # Console Windows/cp1252 tidak selalu mendukung karakter UTF-8 (→, ✓, huruf
 # beraksen). Paksa stdout/stderr ke UTF-8 supaya cukup `python main.py run`.
 for _stream in (sys.stdout, sys.stderr):
@@ -16,7 +31,7 @@ for _stream in (sys.stdout, sys.stderr):
         except Exception:  # noqa: BLE001
             pass
 
-from config import Config, OUTPUT_DIR
+from config import Config, OUTPUT_DIR, now_stamp
 from generator import state
 from generator.docx import save_doc
 from generator.opencode_runner import run_opencode
@@ -99,6 +114,7 @@ def _process_course(
     *,
     sesi_filter: int | None,
     force: bool,
+    kind_filter: str = "all",
 ):
     courses = scraper.get_courses()
     course = next((c for c in courses if c.id == course_id), None)
@@ -113,11 +129,23 @@ def _process_course(
         if sesi_filter is not None and sec.number != sesi_filter:
             continue
         diskusi, tugas, _ = scraper.split_assignable(sec.activities)
-        all_work.extend((d, "diskusi", sec.number) for d in diskusi)
-        all_work.extend((t, "tugas", sec.number) for t in tugas)
+        if kind_filter in ("all", "diskusi"):
+            all_work.extend((d, "diskusi", sec.number) for d in diskusi)
+        if kind_filter in ("all", "tugas"):
+            all_work.extend((t, "tugas", sec.number) for t in tugas)
 
     total = len(all_work)
-    print(f"  · TOTAL: {total} item")
+    if total == 0:
+        label = {"all": "tugas dan diskusi", "tugas": "tugas", "diskusi": "diskusi"}[
+            kind_filter
+        ]
+        print(
+            f"  · TOTAL: 0 item (filter: {label}"
+            + (f", sesi {sesi_filter}" if sesi_filter is not None else "")
+            + ")"
+        )
+        return
+    print(f"  · TOTAL: {total} item (filter: {kind_filter})")
     worked = 0
     blocked_section: int | None = None
     for pos, (item, kind, section_num) in enumerate(all_work, 1):
@@ -154,6 +182,48 @@ def _custom_index(title: str, kind: str) -> int:
     return int(m.group(1)) if m else 1
 
 
+def answer_quality_issues(text: str) -> list[str]:
+    """Deteksi jawaban yang korup/tidak lengkap sebelum masuk ke docx.
+
+    Mengembalikan daftar masalah (kosong = jawaban lolos). Ini pagar terhadap
+    dua kegagalan yang pernah terjadi: agent menulis jawaban berisi fragmen
+    karakter acak setelah beberapa kali edit, dan jawaban tanpa Daftar Pustaka
+    padahal sitasi adalah bagian wajib.
+    """
+    issues: list[str] = []
+    body = (text or "").strip()
+    if not body:
+        return ["jawaban kosong"]
+
+    if _CTRL_RE.search(body):
+        issues.append("mengandung karakter kontrol")
+    if _FOREIGN_SCRIPT_RE.search(body):
+        issues.append("mengandung script non-Latin (teks korup)")
+    if _EDIT_ARTIFACT_RE.search(body):
+        issues.append("mengandung coretan edit (mis. '1:1_changed')")
+
+    if not re.search(r"^#+\s*daftar\s+pustaka", body, re.IGNORECASE | re.MULTILINE):
+        issues.append("tidak ada bagian 'Daftar Pustaka'")
+    else:
+        tail = re.split(
+            r"^#+\s*daftar\s+pustaka", body, maxsplit=1,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )[-1]
+        refs = [
+            ln for ln in tail.splitlines()
+            if re.match(r"\s*(?:\[?\d+\]?[-.)]?|\*)\s+\S", ln)
+            and not re.match(r"\s*#+\s", ln)
+        ]
+        if not refs:
+            issues.append("Daftar Pustaka kosong (tidak ada entri)")
+
+    jawab = re.search(r"^#+\s*jawab", body, re.IGNORECASE | re.MULTILINE)
+    isi = body[jawab.end():] if jawab else body
+    if len(isi.strip()) < 120:
+        issues.append("isi jawaban terlalu pendek (<120 karakter)")
+    return issues
+
+
 def _finish_work(
     *,
     course,
@@ -170,6 +240,8 @@ def _finish_work(
 ) -> int:
     """Lanjutan setelah soal.md siap: opencode → jawaban.md → docx → state."""
     jawaban_path = out_dir / f"jawaban_{kind}_{index}.md"
+    started_at = now_stamp()
+    started_mono = time.monotonic()
     prompt = build_prompt(
         work_kind=kind,
         index=index,
@@ -181,8 +253,13 @@ def _finish_work(
         jawaban_path=jawaban_path,
     )
 
+    # Jawaban lama dari percobaan sebelumnya dihapus supaya check "sudah
+    # ditulis" di bawah tidak meniru file basi.
+    jawaban_path.unlink(missing_ok=True)
+
     result = None
-    for attempt in (1, 2):
+    issues: list[str] = []
+    for attempt in (1, 2, 3):
         try:
             print(f"  · {progress_flag}[{kind}] {item_title} → opencode run ...")
             result = run_opencode(prompt)
@@ -192,12 +269,43 @@ def _finish_work(
         if result.returncode != 0:
             tail = (result.stderr or result.stdout or "")[-1200:]
             print(f"  ! opencode exit {result.returncode}\n{tail}")
-        if jawaban_path.exists() and jawaban_path.stat().st_size > 100:
+        if not (jawaban_path.exists() and jawaban_path.stat().st_size > 100):
+            print("  ! jawaban belum tertulis, percobaan ulang...")
+            continue
+
+        issues = answer_quality_issues(
+            jawaban_path.read_text(encoding="utf-8", errors="replace")
+        )
+        if not issues:
             break
-        print("  ! jawaban belum tertulis, percobaan ulang...")
+        print(f"  ! kualitas jawaban belum memenuhi ({'; '.join(issues)})")
+        print("  ! percobaan ulang dengan instruksi perbaikan...")
+        if attempt < 3:
+            # Beri tahu agent apa yang salah supaya tidak mengulang kesalahan.
+            try:
+                jawaban_path.write_text(
+                f"> PERHATIAN: versi sebelumnya bermasalah ({'; '.join(issues)}). "
+                "Tulis ulang seluruh jawaban dari awal; jangan melakukan edit "
+                "parsial pada teks yang sudah rusak.\n\n"
+                    + jawaban_path.read_text(encoding="utf-8", errors="replace"),
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
+            jawaban_path.unlink(missing_ok=True)
     else:
-        print("  ✗ Gagal menghasilkan jawaban.")
-        state.set_item(key, {"status": "failed", "matkul": course.name, "desc": item_title})
+        print(f"  ✗ Gagal menghasilkan jawaban yang layak: {'; '.join(issues)}")
+        state.set_item(key, {
+            "status": "failed",
+            "matkul": course.name,
+            "sesi": section_num,
+            "kind": kind,
+            "index": index,
+            "desc": item_title,
+            "created_at": started_at,
+            "finished_at": now_stamp(),
+            "reason": "; ".join(issues) or "jawaban tidak lengkap",
+        })
         return 0
 
     if result.returncode == 0:
@@ -210,6 +318,7 @@ def _finish_work(
     jawaban_md = jawaban_path.read_text(encoding="utf-8")
     # Jangan baca ulang soal.md dari disk: agent opencode bisa menghapus/memindahnya
     # saat bekerja. Pakai konten yang sudah kita susun di memori.
+    finished_at = now_stamp()
     meta = {
         "nama": Config.NAMA,
         "nim": Config.NIM,
@@ -235,8 +344,12 @@ def _finish_work(
         "kind": kind,
         "index": index,
         "desc": item_title,
+        "created_at": started_at,
+        "finished_at": finished_at,
+        "duration_sec": round(time.monotonic() - started_mono, 1),
         "outputs": [str(doc_path), str(jawaban_path)],
     })
+    print(f"  ⏱ {started_at} → {finished_at}")
     return 1
 
 
@@ -465,16 +578,19 @@ def cmd_run(args):
     parser = QuestionParser(session)
 
     sesi_filter = int(args.sesi) if args.sesi else None
+    kind_filter = getattr(args, "kind", None) or "all"
     if args.course:
         _process_course(
             session, scraper, downloader, parser,
             int(args.course), sesi_filter=sesi_filter, force=args.force,
+            kind_filter=kind_filter,
         )
     else:
         for c in scraper.get_courses():
             _process_course(
                 session, scraper, downloader, parser,
                 c.id, sesi_filter=sesi_filter, force=args.force,
+                kind_filter=kind_filter,
             )
 
 
@@ -485,6 +601,12 @@ def main():
     p_run = sub.add_parser("run", help="Scrape + kerjakan + buat .doc")
     p_run.add_argument("--course", help="ID mata kuliah (default: semua)")
     p_run.add_argument("--sesi", help="Hanya sesi tertentu")
+    p_run.add_argument(
+        "--kind",
+        choices=["all", "tugas", "diskusi"],
+        default="all",
+        help="Jenis pekerjaan yang diproses: all (default), tugas, atau diskusi",
+    )
     p_run.add_argument("--force", action="store_true", help="Ulangi meski sudah selesai")
     p_run.set_defaults(fn=cmd_run)
 
@@ -516,7 +638,7 @@ def main():
     if not args.cmd:
         # Tanpa sub-perintah = full flow (run): kerjakan yang belum selesai,
         # item yang sudah selesai otomatis dilewati (state.json).
-        cmd_run(argparse.Namespace(course=None, sesi=None, force=False))
+        cmd_run(argparse.Namespace(course=None, sesi=None, force=False, kind="all"))
         return
     try:
         args.fn(args)

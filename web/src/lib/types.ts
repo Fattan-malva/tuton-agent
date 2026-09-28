@@ -19,6 +19,10 @@ export interface StatusItem {
   kind?: string;
   index?: number;
   desc: string;
+  created_at?: string;
+  finished_at?: string;
+  duration_sec?: number | null;
+  reason?: string;
   outputs: string[];
 }
 
@@ -81,6 +85,9 @@ export interface ResultFile {
   kind?: string;
   index?: number;
   sesi?: number | string | null;
+  created_at?: string;
+  finished_at?: string;
+  duration_sec?: number | null;
 }
 
 export interface ResultCourse {
@@ -106,10 +113,13 @@ export interface AppConfig {
   output_dir: string;
 }
 
+export type RunKindFilter = 'all' | 'tugas' | 'diskusi';
+
 export interface RunOptions {
   course_id?: number;
   sesi?: number;
   force?: boolean;
+  kind?: RunKindFilter;
 }
 
 export interface RunStartResponse {

@@ -25,6 +25,16 @@ function StatusBadge({ status }: { status: StatusItem['status'] }) {
   return <span className={`pixel-badge ${config[status]?.className ?? config.unknown.className}`}>{config[status]?.label ?? status}</span>;
 }
 
+function formatDuration(seconds?: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '';
+  const total = Math.round(seconds);
+  if (total < 60) return `${total} dtk`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m < 60) return s ? `${m} mnt ${s} dtk` : `${m} mnt`;
+  return `${Math.floor(m / 60)} jam ${m % 60} mnt`;
+}
+
 export default function Status({ stats: currentStats, items, loading, onRefresh }: StatusProps) {
   return (
     <section aria-labelledby="status-heading">
@@ -84,13 +94,14 @@ export default function Status({ stats: currentStats, items, loading, onRefresh 
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] border-collapse">
+            <table className="w-full min-w-[820px] border-collapse">
               <thead>
                 <tr className="border-b-2 border-border bg-panel-strong text-left font-terminal text-[9px] uppercase tracking-[0.12em] text-muted">
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Mata Kuliah</th>
                   <th className="px-4 py-3">Sesi</th>
                   <th className="px-4 py-3">Deskripsi</th>
+                  <th className="px-4 py-3">Waktu (WIB)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -103,7 +114,22 @@ export default function Status({ stats: currentStats, items, loading, onRefresh 
                     <td className="px-4 py-3 font-terminal text-[11px] text-muted">
                       {item.sesi ? `SESI ${item.sesi}` : '-'}
                     </td>
-                    <td className="max-w-[32rem] px-4 py-3 text-xs leading-relaxed text-muted">{item.desc || '-'}</td>
+                    <td className="max-w-[28rem] px-4 py-3 text-xs leading-relaxed text-muted">
+                      {item.desc || '-'}
+                      {item.status === 'failed' && item.reason && (
+                        <span className="mt-1 block font-terminal text-[9px] uppercase tracking-[0.08em] text-danger">
+                          {item.reason}
+                        </span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 font-terminal text-[10px] tracking-[0.04em] text-muted">
+                      {item.finished_at || item.created_at || '-'}
+                      {formatDuration(item.duration_sec) && (
+                        <span className="mt-0.5 block text-[9px] text-muted/80">
+                          {formatDuration(item.duration_sec)}
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

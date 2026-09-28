@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,6 +12,34 @@ PROJECT_ROOT = BASE_DIR
 OUTPUT_DIR = BASE_DIR / "output"
 TEMPLATE_DIR = BASE_DIR / "template"
 HUMANIZER_DIR = BASE_DIR / "vendor" / "humanizer"
+
+# Zona waktu untuk stempel waktu hasil pekerjaan. UT operates on WIB (UTC+7).
+WIB = timezone(timedelta(hours=7))
+
+
+def now_wib() -> datetime:
+    """Waktu sekarang dalam zona WIB (UTC+7)."""
+    return datetime.now(WIB)
+
+
+def now_stamp() -> str:
+    """Stempel waktu presisi detik, mis. '2026-09-28 15:04:37'."""
+    return now_wib().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def stamp_display(value: str) -> str:
+    """Normalisasi stempel waktu ISO/state ke 'YYYY-MM-DD HH:MM:SS'."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=WIB)
+    return dt.astimezone(WIB).strftime("%Y-%m-%d %H:%M:%S")
+
 
 # Kredensial Moodle (MOODLE_COOKIE/MoodleSession) disimpan di file JSON
 # terpisah (bukan .env) supaya bisa di-update terus dari menu Settings.

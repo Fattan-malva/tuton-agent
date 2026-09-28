@@ -49,6 +49,40 @@ _LABEL_ONLY_RE = re.compile(
 )
 
 
+# Character kontrol yang TIDAK sah di XML 1.0. lxml/docx melempar
+# "ValueError: All strings must be XML compatible" kalau string memuat salah
+# satunya. Some Moodle "File"/resource activity served raw binary (byte PDF/
+# DOCX) di dalam HTML, jadi teks hasil scraping bisa memuat NUL..0x1f.
+_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def strip_control_chars(text: str) -> str:
+    """Buang karakter kontrol XML-illegal, sisakan newline/tab."""
+    if not text:
+        return ""
+    return _CTRL_RE.sub("", text)
+
+
+def _is_binary_blob(text: str) -> bool:
+    """True kalau teks hasil scraping sebenarnya binary mentah, bukan soal.
+
+    Halaman `resource`/File di Moodle kadang mengirim byte dokumen apa adanya
+    di dalam <pre>/<object>, sehingga get_text() menghasilkan ribuan karakter
+    tak cetak. Teks seperti itu tidak berguna sebagai soal dan hanya merusak
+    soal.md (opencode membaca file itu sebagai biner) serta docx.
+    """
+    if not text:
+        return False
+    suspicious = sum(
+        1
+        for ch in text
+        if ord(ch) < 32 and ch not in "\n\t"
+        or ord(ch) == 127
+        or 0x80 <= ord(ch) <= 0x9F
+    )
+    return suspicious > 8 and suspicious / len(text) > 0.02
+
+
 def _is_noise_line(line: str) -> bool:
     """True kalau baris hanyalah metadata (Due:/tanggal/jam) atau kosong."""
     ln = line.strip()
@@ -75,6 +109,7 @@ def question_body(question: str) -> str:
     """Teks soal yang benar-benar isi, tanpa baris metadata/Due/tanggal."""
     if not question:
         return ""
+    question = strip_control_chars(question)
     kept = [ln for ln in question.splitlines() if not _is_noise_line(ln)]
     return "\n".join(kept).strip()
 
@@ -279,6 +314,11 @@ class QuestionParser:
         soup = BeautifulSoup(resp.text, "html.parser")
         main = soup.select_one("[role=main]") or soup
         text, atts = self._extract(main, activity.url)
+        # Halaman resource/File yang hanya berisi binary mentah tidak punya
+        # teks soal sama sekali; membiarkan teks itu masuk ke soal.md
+        # membuat file dianggap binary dan docx gagal dibuat.
+        if _is_binary_blob(text):
+            text = ""
         q.question = self._clean(text)
         q.attachment_urls.extend(atts)
 
@@ -363,6 +403,13 @@ class QuestionParser:
 
     @staticmethod
     def _clean(text: str) -> str:
+        # Karakter kontrol XML-illegal (NUL, 0x01.., 0x7f) yang datang dari
+        # binary mentah pada halaman resource/File Moodle dibuang. Tanpa ini
+        # docx gagal dengan "All strings must be XML compatible" dan soal.md
+        # dibaca opencode sebagai file biner.
+        text = strip_control_chars(text)
+        if _is_binary_blob(text):
+            return ""
         # buang artefak UI forum yang ikut tersalin
         drop = {"permalink", "reply", "unread", "subscribe", "mark as read"}
         kept = []

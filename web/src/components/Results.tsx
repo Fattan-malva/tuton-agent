@@ -1,6 +1,6 @@
 import { BookOpen, Download, Eye, FileText, Inbox, RefreshCw, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import type { ResultCourse } from '../lib/types';
+import type { ResultCourse, ResultFile } from '../lib/types';
 import apiClient from '../lib/api-client';
 import type { ToastType } from '../lib/types';
 
@@ -16,6 +16,21 @@ function formatSize(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB'];
   const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
   return `${(bytes / 1024 ** index).toFixed(1)} ${units[index]}`;
+}
+
+function formatDuration(seconds?: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '';
+  const total = Math.round(seconds);
+  if (total < 60) return `${total} dtk`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m < 60) return s ? `${m} mnt ${s} dtk` : `${m} mnt`;
+  const h = Math.floor(m / 60);
+  return `${h} jam ${m % 60} mnt`;
+}
+
+function stampFor(file: ResultFile): string {
+  return file.finished_at || file.created_at || '';
 }
 
 export default function Results({ courses, loading, onRefresh, onNotify }: ResultsProps) {
@@ -143,6 +158,14 @@ export default function Results({ courses, loading, onRefresh, onNotify }: Resul
                             <div className="mt-0.5 font-terminal text-[9px] uppercase tracking-[0.08em] text-muted">
                               {file.sesi ? `Sesi ${file.sesi} · ` : ''}{formatSize(file.size)}
                             </div>
+                            {stampFor(file) && (
+                              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 font-terminal text-[9px] tracking-[0.04em] text-accent">
+                                <span title="Waktu selesai pengerjaan (WIB)">{stampFor(file)}</span>
+                                {formatDuration(file.duration_sec) && (
+                                  <span className="text-muted">· {formatDuration(file.duration_sec)}</span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-1">

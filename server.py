@@ -22,7 +22,7 @@ from flask_cors import CORS
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import Config, OUTPUT_DIR
+from config import Config, OUTPUT_DIR, stamp_display
 from generator import state
 from moodle.auth import MoodleSession
 from moodle.downloader import AttachmentDownloader
@@ -348,6 +348,10 @@ def get_status():
                 "kind": v.get("kind"),
                 "index": v.get("index"),
                 "desc": v.get("desc", "?"),
+                "created_at": stamp_display(v.get("created_at", "")),
+                "finished_at": stamp_display(v.get("finished_at", "")),
+                "duration_sec": v.get("duration_sec"),
+                "reason": v.get("reason"),
                 "outputs": v.get("outputs", []),
             })
         
@@ -409,6 +413,9 @@ def get_results():
                         "path": rel_path,
                         "size": stat.st_size,
                         "modified": stat.st_mtime,
+                        "created_at": stamp_display(v.get("created_at", "")),
+                        "finished_at": stamp_display(v.get("finished_at", "")),
+                        "duration_sec": v.get("duration_sec"),
                         "kind": v.get("kind"),
                         "index": v.get("index"),
                         "sesi": v.get("sesi"),
@@ -517,6 +524,9 @@ def run_agent():
     course_id = data.get("course_id")
     sesi = data.get("sesi")
     force = data.get("force", False)
+    kind = str(data.get("kind") or "all").strip().lower()
+    if kind not in ("all", "tugas", "diskusi"):
+        kind = "all"
     
     # Unbuffered stdout is required so main.py/OpenCode logs reach the UI live.
     cmd = [sys.executable, "-u", "main.py", "run"]
@@ -524,6 +534,7 @@ def run_agent():
         cmd.extend(["--course", str(course_id)])
     if sesi:
         cmd.extend(["--sesi", str(sesi)])
+    cmd.extend(["--kind", kind])
     if force:
         cmd.append("--force")
     

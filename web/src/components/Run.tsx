@@ -1,7 +1,7 @@
 import { Play, Terminal as TerminalIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import apiClient from '../lib/api-client';
-import type { Course, ToastType } from '../lib/types';
+import type { Course, RunKindFilter, ToastType } from '../lib/types';
 import Terminal, { type TerminalController } from './Terminal';
 
 interface RunProps {
@@ -14,6 +14,7 @@ interface RunProps {
 export default function Run({ courses, onRefresh, onNotify, terminal }: RunProps) {
   const [courseId, setCourseId] = useState('');
   const [sesi, setSesi] = useState('');
+  const [kind, setKind] = useState<RunKindFilter>('all');
   const [force, setForce] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [launched, setLaunched] = useState(false);
@@ -35,6 +36,7 @@ export default function Run({ courses, onRefresh, onNotify, terminal }: RunProps
       'python main.py run',
       selectedCourse ? `--course ${selectedCourse}` : '',
       selectedSesi ? `--sesi ${selectedSesi}` : '',
+      `--kind ${kind}`,
       force ? '--force' : '',
     ].filter(Boolean).join(' ');
 
@@ -47,6 +49,7 @@ export default function Run({ courses, onRefresh, onNotify, terminal }: RunProps
       const response = await apiClient.startRun({
         course_id: selectedCourse,
         sesi: selectedSesi,
+        kind,
         force,
       });
 
@@ -103,6 +106,18 @@ export default function Run({ courses, onRefresh, onNotify, terminal }: RunProps
             <label className="pixel-field">
               <span className="pixel-label">Filter Sesi</span>
               <input className="pixel-input" type="number" min="1" value={sesi} onChange={(event) => setSesi(event.target.value)} placeholder="Contoh: 3" disabled={busy} />
+            </label>
+
+            <label className="pixel-field">
+              <span className="pixel-label">Jenis Pekerjaan</span>
+              <select className="pixel-input" value={kind} onChange={(event) => setKind(event.target.value as RunKindFilter)} disabled={busy}>
+                <option value="all">Tugas &amp; Diskusi</option>
+                <option value="tugas">Tugas saja</option>
+                <option value="diskusi">Diskusi saja</option>
+              </select>
+              <span className="mt-1 block font-terminal text-[9px] uppercase tracking-[0.08em] text-muted">
+                Dipakai bersama filter sesi di atas
+              </span>
             </label>
 
             <label className="pixel-check">

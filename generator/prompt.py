@@ -60,6 +60,64 @@ def build_prompt(
             "  Notasi yang didukung untuk dikonversi jadi equation Word: matriks [[a, b], [c, d]], "
             "pangkat x^2, akar sqrt(...), operator + - × = .",
             "",
+            "## Aturan kejujuran (WAJIB)",
+            "- JANGAN mengarang sumber, tautan, nomor halaman, ISBN, DOI, atau nama penulis. "
+            "Referensi yang tidak dapat diverifikasi HARUS dibuang, bukan ditebak.",
+            "- JANGAN mengklaim sudah membaca dokumen yang tidak kamu akses. Kalau memang tidak "
+            "bisa diakses, nyatakan apa yang tidak diketahui secara eksplisit di bagian Catatan/Asumsi.",
+            "- Jangan menulis placeholder, TODO, 'dst.', atau contoh angka yang tidak berasal dari soal.",
+            "- Jika satu butir benar-benar mustahil dijawab dari bahan yang ada, tulis jawaban "
+            "separtial yang jujur beserta alasannya — jangan mengarang angka.",
+            "",
+            "## Cara kerja (WAJIB, ikuti berurutan)",
+            "LANGKAH 1 — PETA SOAL. Baca file soal dari atas sampai bawah, lalu buat daftar "
+            "internal semua pertanyaan/butir yang harus dijawab (nomor butir, mis. 1, 2, a, b, c, "
+            "i-iv). Jangan tulis peta ini ke file jawaban; ini hanya catatan internal kamu.",
+            "",
+            "LANGKAH 2 — RISET SUMBER. Sebelum menjawab, kumpulkan sumber nyata yang kredibel "
+            "dan bisa diakses publik untuk topik ini. Gunakan tool websearch untuk mencari, lalu "
+            "webfetch untuk MEMERIKSA setiap kandidat satu per satu. Utamakan sumber berikut, "
+            "berurutan dari yang paling tepercaya:",
+            "  1. Buku teks: cari edisi yang benar via Google Books atau Open Library, "
+            "verifikasi judul + penulis + tahun + penerbit + ISBN.",
+            "  2. Artikel jurnal peer-reviewed: verifikasi lewat Crossref "
+            "(webfetch `https://api.crossref.org/works/<DOI>`) atau OpenAlex "
+            "(webfetch `https://api.openalex.org/works?search=...`). Hanya DOI yang benar-benar "
+            "mengembalikan metadata yang boleh dipakai.",
+            "  3. Standar/norma resmi yang gratis: ISO, IEEE, IETF, W3C, WHO, NIST, "
+            "dokumentasi resmi (python.org, docs.python.org, nodejs.org, postgresql.org, "
+            "w3.org, developer.mozilla.org).",
+            "  4. Jurnal open access: DOAJ, PubMed/PMC, arXiv (periksa lewat "
+            "webfetch `https://arxiv.org/abs/<id>`), dan repository institusi "
+            "(mis. ETD UT, repositori.kemdikbud.go.id).",
+            "  5. Sumber sekunder (blog, Stack Overflow, YouTube) HANYA sebagai konteks tambahan, "
+            "dan kalau dipakai harus tetap diberi label sumber tidak resmi.",
+            "Untuk SETIAP referensi yang mau dipakai, kamu WAJIB sudah menjalankan webfetch dan "
+            "melihat responsnya. Referensi yang webfetch-nya gagal/404 TIDAK boleh masuk Daftar "
+            "Pustaka. Kalau verifikasi gagal, cari yang lain; jangan menaksir.",
+            "",
+            "LANGKAH 3 — JAWAB. Jawab SETIAP butir dari peta langkah 1, tidak ada yang dilewati. "
+            "Untuk setiap butir: (a) kerjakan langkahnya, (b) cek ulang hasil hitungannya secara "
+            "independen (hitung ulang dengan cara lain, cek satuan, cek masuk akal terhadap "
+            "besaran soal), (c) tulis jawaban akhirnya di bawah sub-bagian dengan label butir "
+            "yang sama dengan soal (a/b/c atau 1/2/3).",
+            "",
+            "LANGKAH 4 — AUDIT SEBELUM MENULIS. Periksa daftar berikut satu per satu, dan perbaiki "
+            "sebelum menulis file:",
+            "  [ ] Semua butir soal punya bagian jawaban dengan label yang sama.",
+            "  [ ] Tidak ada butir yang dijawab 'seperti di atas' atau 'dapat ditafsirkan begitu saja'.",
+            "  [ ] Semua angka hasil hitung sudah dicek ulang; tidak ada yang bertentangan antar bagian.",
+            "  [ ] Tidak ada kalimat yang setengah jadi atau terpotong.",
+            "  [ ] Semua referensi di Daftar Pustaka sudah pernah diverifikasi via webfetch, "
+            "dan tautan/DOI-nya benar-benar hidup.",
+            "  [ ] Tidak ada karakter aneh (mis. huruf CJK/Cyrillic) yang nyasar di dalam kata "
+            "Indonesia. Tulis ulang dari nol bila perlu — JANGAN melakukan edit kecil-kecil pada "
+            "teks yang sudah rusak, karena itu menyisakan fragmen aneh.",
+            "",
+            "LANGKAH 5 — TULIS. Tulis jawaban final ke file dengan struktur di bawah. Tulis file "
+            "sekali secara utuh. Jangan mengedit file berulang kali untuk 'memperbaiki' satu "
+            "kata — itu pernah merusak jawaban (menyisakan fragmen acak).",
+            "",
             "## Instruksi",
             f"1. Pahami soal yang tertulis di file `{soal_path}`. Kerjakan dengan benar dan LENGKAP, tidak melewatkan butir soal.",
             "2. JANGAN menjalankan perintah shell/bash apa pun. JANGAN membaca, memproses, atau meng-OCR file "
@@ -72,27 +130,33 @@ def build_prompt(
             "   Jika teks soal ada tetapi sebagian '[tidak terbaca]', kerjakan dengan asumsi yang wajar dan "
             "cantumkan asumsinya di akhir jawaban.",
             "4. Jangan menulis ulang isi soal di jawaban. Cukup jawabannya.",
-            "5. Sertakan 'Daftar Pustaka' di akhir jawaban yang BERISI HANYA referensi NYATA dan dapat diverifikasi:",
-            "   - Pakai tool websearch/webfetch untuk memverifikasi setiap referensi benar-benar ada "
-            "   (buku, jurnal, artikel; cek di Google Scholar / penerbit / DOI Crossref).",
-            "   - JANGAN membuat referensi palsu atau halusinasi. Referensi yang tidak bisa dipastikan aslinya dibuang.",
+            "5. Sertakan 'Daftar Pustaka' di akhir jawaban yang BERISI HANYA referensi NYATA dan "
+            "sudah diverifikasi lewat webfetch (lihat LANGKAH 2):",
+            "   - Setiap entri harus bisa dibuka pembaca lain: sertakan tautan stabil (DOI resolver "
+            "https://doi.org/..., URL penerbit/arxiv/repositori, atau ISBN untuk buku).",
+            "   - Kalau sebuah buku tidak punya URL gratis, tetap tulis ISBN-nya agar bisa dicari "
+            "pembaca; utamakan edisi yang kutipannya paling sering dipakai dan benar-benar Anda "
+            "konfirmasi judul/penulis/tahunnya.",
+            "   - Pilih 3-8 entri yang paling relevan dengan butir soal, bukan daftar panjang "
+            "yang isinya cuma mengulang satu sama lain.",
             "   - Format APA edisi ke-7:",
-            "     Buku  : Penulis, A. A., & Penulis, B. B. (Tahun). *Judul Buku* (edisi). Penerbit.",
+            "     Buku  : Penulis, A. A., & Penulis, B. B. (Tahun). *Judul Buku* (edisi). Penerbit. ISBN xxx.",
             "     Jurnal: Penulis, A. A. (Tahun). Judul artikel. *Nama Jurnal, Vol*(No), hlm–hlm. https://doi.org/...",
-"6. Gunakan skill `humanizer` (load via tool skill) untuk menulis ulang jawaban agar terdengar "
-        "seperti ditulis manusia: hilangkan pola AI (bahasa kaku, kata seperti 'delve', 'landscape', "
+            "     Standar/Web: Organisasi. (Tahun). *Judul*. URL",
+            "6. Gunakan skill `humanizer` (load via tool skill) untuk menulis ulang jawaban agar terdengar "
+            "seperti ditulis manusia: hilangkan pola AI (bahasa kaku, kata seperti 'delve', 'landscape', "
         "kalimat berimbuhan berlebihan, dashes, not-X-but-Y, dan sejenisnya). Mode embedded: hasil langsung teks final.",
-        "   - Pertahankan semua fakta, rumus, istilah teknis, dan sitasi.",
-        "   - Untuk jawaban matematika: berikan langkah penyelesaian sebagai teks + notasi matematika teks yang jelas.",
-        f"7. Tulis jawaban final dalam format Markdown ke `{jawaban_path}`. Struktur wajib:",
-        "```",
-        "## Jawab",
-        "(jawaban untuk setiap butir soal, gunakan subheading/penomoran sesuai soal: a, b, c, ...)",
-        "",
-        "## Daftar Pustaka",
-        "1. ...",
-        "2. ...",
-        "```",
+            "   - Pertahankan semua fakta, rumus, istilah teknis, dan sitasi.",
+            "   - Untuk jawaban matematika: berikan langkah penyelesaian sebagai teks + notasi matematika teks yang jelas.",
+            f"7. Tulis jawaban final dalam format Markdown ke `{jawaban_path}`. Struktur wajib:",
+            "```",
+            "## Jawab",
+            "(jawaban untuk setiap butir soal, gunakan subheading/penomoran sesuai soal: a, b, c, ...)",
+            "",
+            "## Daftar Pustaka",
+            "1. ...",
+            "2. ...",
+            "```",
         ]
     )
     if work_kind == "diskusi":
@@ -116,7 +180,8 @@ def build_prompt(
         [
             "9. Kembalikan di output terminal hanya satu kalimat status singkat (misal: 'Selesai').",
             "",
-            "Penting: ACCURACY > kecepatan. Periksa kembali jawaban sebelum menulis file.",
+            "Penting: ACCURACY > kecepatan. Kerjakan langkah 1-5 sesuai urutan, dan pastikan "
+            "jawaban menjawab SEMUA butir dengan Daftar Pustaka yang benar-benar terverifikasi.",
         ]
     )
     return "\n".join(lines)
