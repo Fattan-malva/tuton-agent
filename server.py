@@ -715,4 +715,7 @@ if __name__ == "__main__":
     # use_reloader=False: watchdog reloader di Windows mematikan proses run
     # yang sedang berjalan (state process ada di memori). Dev tetap dapat
     # traceback (debug), hanya saja tidak auto-restart di tengah run.
-    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
+    # PORT dari env dipakai launcher (run-server.bat) supaya bisa tes/port lain
+    # tanpa mengubah kode.
+    port = int(os.environ.get("PORT") or 5000)
+    app.run(host="0.0.0.0", port=port, debug=True, use_reloader=False)
