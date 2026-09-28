@@ -1,5 +1,5 @@
-import { Square, Trash2 } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { ArrowDown, Square, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TerminalSnapshot } from '../hooks/useTerminalMonitor';
 
 export interface TerminalViewProps {
@@ -21,6 +21,9 @@ export interface TerminalController {
   onClearTerminal: () => void;
 }
 
+/** Jarak (px) dari bawah yang masih dianggap "menempel" ke log terbaru. */
+const STICKY_THRESHOLD = 28;
+
 function formatElapsed(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
   const hours = Math.floor(total / 3600);
@@ -40,11 +43,33 @@ function lineTone(line: string): string {
 
 export default function Terminal({ output, snapshot, command, onStop, onClear, busy }: TerminalViewProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
+  // Auto-scroll HANYA jalan saat user sedang menempel di bawah. Kalau log
+  // dipaksa turun tiap baris baru masuk, user tidak akan pernah bisa
+  // menggulir ke atas untuk membaca output lama.
+  const stickRef = useRef(true);
+  const [stuck, setStuck] = useState(true);
+
+  const handleScroll = useCallback(() => {
+    const el = terminalRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distance <= STICKY_THRESHOLD;
+    stickRef.current = atBottom;
+    setStuck(atBottom);
+  }, []);
 
   useEffect(() => {
-    const terminal = terminalRef.current;
-    if (terminal) terminal.scrollTop = terminal.scrollHeight;
+    const el = terminalRef.current;
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [output]);
+
+  const jumpToBottom = useCallback(() => {
+    const el = terminalRef.current;
+    if (!el) return;
+    stickRef.current = true;
+    setStuck(true);
+    el.scrollTop = el.scrollHeight;
+  }, []);
 
   const isRunning = snapshot.running;
   const progress = snapshot.progress;
@@ -85,16 +110,35 @@ export default function Terminal({ output, snapshot, command, onStop, onClear, b
         </div>
       )}
 
-      <div ref={terminalRef} className="pixel-terminal-scroll" aria-live="polite">
-        {command && <div className="pixel-terminal-line pixel-terminal-cmd">{command}</div>}
-        {output.length === 0 && !command ? (
-          <div className="pixel-terminal-empty">
-            <span className="text-success">$</span>
-            <span>Sistem siap menerima perintah.</span>
-          </div>
-        ) : output.map((line, index) => (
-          <div key={`${index}-${line}`} className={`pixel-terminal-line pixel-terminal-${lineTone(line)}`}>{line || ' '}</div>
-        ))}
+      <div className="relative">
+        <div
+          ref={terminalRef}
+          onScroll={handleScroll}
+          className="pixel-terminal-scroll"
+          aria-live="polite"
+          tabIndex={0}
+        >
+          {command && <div className="pixel-terminal-line pixel-terminal-cmd">{command}</div>}
+          {output.length === 0 && !command ? (
+            <div className="pixel-terminal-empty">
+              <span className="text-success">$</span>
+              <span>Sistem siap menerima perintah.</span>
+            </div>
+          ) : output.map((line, index) => (
+            <div key={`${index}-${line}`} className={`pixel-terminal-line pixel-terminal-${lineTone(line)}`}>{line || ' '}</div>
+          ))}
+        </div>
+
+        {!stuck && (
+          <button
+            type="button"
+            onClick={jumpToBottom}
+            className="pixel-terminal-jump"
+            aria-label="Gulir ke log terbaru"
+          >
+            <ArrowDown size={12} aria-hidden="true" /> terbaru
+          </button>
+        )}
       </div>
     </div>
   );

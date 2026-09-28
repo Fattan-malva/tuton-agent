@@ -105,12 +105,14 @@ export default function Home() {
 
   // Terminal dipantau di level aplikasi: polling tetap jalan saat user
   // berpindah menu, sehingga proses run agent / form soal tidak "hilang".
-  const { output, snapshot, reset } = useTerminalMonitor(true, handleTerminalComplete);
+  const { output, snapshot, reset, clear } = useTerminalMonitor(true, handleTerminalComplete);
 
+  // `clear` (bukan `reset`) supaya isi log yang sudah tampil disembunyikan tanpa
+  // memicu polling ulang yang akan mengembalikan log dari server.
   const clearTerminal = useCallback(() => {
-    reset();
+    clear();
     setCommand('');
-  }, [reset]);
+  }, [clear]);
 
   const handleAuthenticated = useCallback(
     async (nextConfig: AppConfig) => {

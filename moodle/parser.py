@@ -32,11 +32,29 @@ _MONTH_RE = re.compile(
 )
 _TIME_RE = re.compile(r"\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}\s*(?:am|pm)\b", re.I)
 
+# Label tanggal/status yang berdiri sendiri, mis. "Opened:", "Due:",
+# "Attempt due:", "Grading status". Baris seperti ini BUKAN isi soal dan harus
+# dibuang, kalau tidak `question_body` selalu mengembalikan sesuatu (mis. "Opened:")
+# sehingga agent menganggap soal "ditemukan" padahal yang ada cuma metadata.
+_LABEL_ONLY_RE = re.compile(
+    r"^(?:opened?|closed?|due|closes?|available|available\s+from|available\s+until|"
+    r"from|until|to|start(?:s|ed)?|end(?:s|ed)?|begin(?:s|ning)?|"
+    r"late\s+submissions?|late\s+submission|attempt\s+due|"
+    r"feedback\s+released|feedback\s+from|manually\s+marked|reminder|"
+    r"submission\s+status|grading\s+status|time\s+remaining|last\s+modified|"
+    r"group\s+submission|peer\s+assessment|attempt\s+number|"
+    r"number\s+of\s+attempts|files\s+attached|assigned|published|"
+    r"nilai|status\s+pengumpulan|status\s+penilaian)\s*:?$",
+    re.I,
+)
+
 
 def _is_noise_line(line: str) -> bool:
-    """True kalau baris hanyalah metadata (Due:, tanggal, jam) atau kosong."""
+    """True kalau baris hanyalah metadata (Due:/tanggal/jam) atau kosong."""
     ln = line.strip()
     if not ln:
+        return True
+    if _LABEL_ONLY_RE.match(ln):
         return True
     low = ln.lower()
     if _NOISE_RE.search(low):
@@ -197,25 +215,62 @@ class QuestionParser:
         q.attachment_urls.extend(atts)
 
     # ---- Tugas (assignment) ----------------------------------------------
+    # Deskripsi blok yang berisi instruksi/deskripsi tugas (BUKAN blok tanggal).
+    _ASSIGN_DESC_SELECTORS = (
+        "#intro",
+        ".activity-description",
+        ".modintro",
+        ".box.generalbox .no-overflow",
+        ".activity-altcontent .description-inner",
+    )
+    # Wadah lampiran resmi (intro attachment). Di UT PDF soal tugas sering
+    # HANYA ada di sini, bukan di body halaman maupun halaman course.
+    _ASSIGN_ATTACH_SELECTORS = (
+        "#introattachments",
+        "[id^='assign_files_tree']",
+        ".assign_files_tree",
+        ".fileuploadsubmission",
+        ".box.generalbox",
+        ".activity-description",
+        "#intro",
+    )
+
     def _parse_assign(self, activity: Activity) -> ParsedQuestion:
         q = ParsedQuestion(activity=activity, title=activity.title, source_url=activity.url)
         resp = self.session.get(activity.url)
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        container = soup.select_one(
-            "#intro, .no-overflow, .activity-information, [role=main]"
-        ) or soup
-        text, atts = self._extract(container, activity.url)
-        q.question = self._clean(text)
-        q.attachment_urls.extend(atts)
+        # 1) Teks instruksi/deskripsi tugas.
+        for selector in self._ASSIGN_DESC_SELECTORS:
+            desc = soup.select_one(selector)
+            if desc is None:
+                continue
+            text, atts = self._extract(desc, activity.url)
+            if text.strip() or atts:
+                if text.strip():
+                    q.question = f"{q.question.strip()}\n\n{text}".strip()
+                q.attachment_urls.extend(atts)
+                break
 
-        if not q.question.strip() and not q.attachment_urls:
+        # 2) Lampiran resmi. Dicek terpisah karena `#intro`/`.no-overflow`
+        #    sering membungkus hanya instruksi, sementara file PDF ada di
+        #    elemen saudara (#assign_files_tree / .fileuploadsubmission) yang
+        #    jadi terlewat kalau hanya satu container yang diambil.
+        for selector in self._ASSIGN_ATTACH_SELECTORS:
+            for el in soup.select(selector):
+                q.attachment_urls.extend(self._collect_attachments(el, activity.url))
+
+        q.question = self._clean(q.question)
+        q.attachment_urls = list(dict.fromkeys(q.attachment_urls))
+
+        # 3) Halaman course section: instruksi tambahan + fallback saat halaman
+        #    tugas benar-benar kosong (hanya metadata tanggal).
+        if not question_body(q.question) and not q.attachment_urls:
+            self._parse_section_activity(q, activity)
             self._parse_section_context(q, activity)
             q.question = self._clean(q.question)
+            q.attachment_urls = list(dict.fromkeys(q.attachment_urls))
 
-        # Instruksi bisa tersembunyi di popup submission
-        for a in soup.select("a[href*='submission']"):
-            pass
         return q
 
     def _parse_generic(self, activity: Activity) -> ParsedQuestion:
@@ -274,17 +329,16 @@ class QuestionParser:
                 q.source_url = section_url
                 break
 
-    def _extract(self, el, base_url: str = "") -> tuple[str, list[str]]:
-        text = el.get_text("\n", strip=True) if el else ""
+    def _collect_attachments(self, el, base_url: str = "") -> list[str]:
+        """Kumpulkan URL lampiran (gambar/pluginfile/file dokumen) di dalam `el`."""
+        if el is None:
+            return []
         atts: list[str] = []
-        if el is not None:
-            candidates: list[str] = []
-            for tag in el.select("a[href], img[src], source[src], [data-src], [data-original]"):
-                for attr in ("href", "src", "data-src", "data-original"):
-                    raw = (tag.get(attr) or "").strip()
-                    if raw:
-                        candidates.append(raw)
-            for raw in candidates:
+        for tag in el.select("a[href], img[src], source[src], [data-src], [data-original]"):
+            for attr in ("href", "src", "data-src", "data-original"):
+                raw = (tag.get(attr) or "").strip()
+                if not raw:
+                    continue
                 if raw.startswith("data:image/") and ";base64," in raw:
                     absolute = raw
                 elif raw.startswith(("data:", "javascript:", "#")):
@@ -301,8 +355,11 @@ class QuestionParser:
                     or absolute.startswith("data:image/")
                 ):
                     atts.append(absolute)
-            atts = list(dict.fromkeys(atts))
-        return text, atts
+        return list(dict.fromkeys(atts))
+
+    def _extract(self, el, base_url: str = "") -> tuple[str, list[str]]:
+        text = el.get_text("\n", strip=True) if el else ""
+        return text, self._collect_attachments(el, base_url)
 
     @staticmethod
     def _clean(text: str) -> str:

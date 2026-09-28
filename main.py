@@ -138,6 +138,15 @@ def _process_course(
     print(f"\nSelesai. {worked} item diproses untuk {course.name}.")
 
 
+def _as_list(value) -> list[str]:
+    """Normalisasi argumen yang bisa berupa string tunggal atau list."""
+    if not value:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value if str(v).strip()]
+    return [value] if str(value).strip() else []
+
+
 def _custom_index(title: str, kind: str) -> int:
     """Nomor display untuk soal form: ambil angka dari judul (mis. 'Diskusi 2'),
     fallback ke 1 bila tidak ada nomor."""
@@ -349,6 +358,9 @@ def cmd_solve(args):
     out_dir = OUTPUT_DIR / course.folder_name / f"sesi{sesi}"
     lamp_dir = out_dir / "lampiran"
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Wajib: file upload dipindahkan ke lampiran. Tanpa mkdir, shutil.move gagal
+    # dengan FileNotFoundError sehingga tidak ada lampiran yang bisa ditranskripsi.
+    lamp_dir.mkdir(parents=True, exist_ok=True)
 
     progress_flag = "[1/1] "
     print(f"\n=== {course.name} (form soal) ===")
@@ -367,14 +379,21 @@ def cmd_solve(args):
             text_path.unlink(missing_ok=True)
 
     saved: list[Path] = []
-    if getattr(args, "file", ""):
-        upload_path = Path(args.file)
-        if upload_path.exists():
-            dest = lamp_dir / upload_path.name
-            if dest.exists():
-                dest = lamp_dir / f"custom_{int(time.time() * 1000)}_{upload_path.name}"
+    for raw_file in _as_list(getattr(args, "file", "")):
+        upload_path = Path(raw_file)
+        if not upload_path.exists():
+            print(f"  ! file lampiran tidak ditemukan: {upload_path}")
+            continue
+        dest = lamp_dir / upload_path.name
+        if dest.exists() and not dest.samefile(upload_path):
+            dest = lamp_dir / f"custom_{int(time.time() * 1000)}_{upload_path.name}"
+        try:
             shutil.move(str(upload_path), str(dest))
-            saved.append(dest)
+        except OSError as exc:
+            print(f"  ! gagal menyimpan lampiran {upload_path.name}: {exc}")
+            continue
+        saved.append(dest)
+        print(f"  · Lampiran disimpan: {dest.name}")
 
     from moodle.transcribe import process_attachment
 
@@ -382,8 +401,14 @@ def cmd_solve(args):
     for p in saved:
         print(f"  · Transkripsi {p.name} ...")
         text = process_attachment(p, lamp_dir)
-        if text:
+        if text.strip():
             print(f"    -> {len(text)} karakter")
+        else:
+            print(
+                f"    ! GAGAL membaca {p.name}. Format mungkin tidak didukung "
+                f"atau isinya kosong. Unggah PDF/gambar/DOCX/XLSX/PPTX, atau "
+                f"tulis soal langsung di kolom teks."
+            )
         transcribed.append(text or "")
         soal_md_lines.append("")
         soal_md_lines.append(f"## Isi lampiran: {p.name} (transkripsi)")
@@ -476,7 +501,12 @@ def main():
     p_solve.add_argument("--kind", required=True, choices=["tugas", "diskusi"], help="Jenis pekerjaan")
     p_solve.add_argument("--title", default="", help="Judul aktivitas (contoh: 'Diskusi 1')")
     p_solve.add_argument("--text", default="", help="Path file teks berisi soal (opsional bila --file ada)")
-    p_solve.add_argument("--file", default="", help="Path file lampiran soal yang di-upload (opsional)")
+    p_solve.add_argument(
+        "--file",
+        action="append",
+        default=[],
+        help="Path file lampiran yang di-upload; boleh diulang untuk beberapa file",
+    )
     p_solve.set_defaults(fn=cmd_solve)
 
     p_status = sub.add_parser("status", help="Lihat progres")

@@ -148,6 +148,7 @@ export const apiClient = {
     title: string;
     soal_text: string;
     file?: File | null;
+    files?: File[];
   }): Promise<RunStartResponse> {
     const form = new FormData();
     form.append('course_id', String(payload.course_id));
@@ -157,6 +158,9 @@ export const apiClient = {
     form.append('soal_text', payload.soal_text);
     if (payload.file) {
       form.append('file', payload.file);
+    }
+    for (const extra of payload.files ?? []) {
+      form.append('files', extra);
     }
     return envelope('/api/solve', { method: 'POST', body: form });
   },

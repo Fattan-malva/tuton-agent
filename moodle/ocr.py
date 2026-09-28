@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff"}
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff"}
+
+_IMAGE_EXT = IMAGE_EXT  # alias lama, dipakai modul lain
 
 _reader = None
 
@@ -17,7 +19,7 @@ def _get_reader():
 
 
 def is_image(path: Path) -> bool:
-    return path.suffix.lower() in _IMAGE_EXT
+    return path.suffix.lower() in IMAGE_EXT
 
 
 def ocr_image(path: Path) -> str:

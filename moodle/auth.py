@@ -21,20 +21,28 @@ class MoodleSession:
         )
         self.session.cookies.update(Config.cookies())
 
+    def absolute(self, path: str) -> str:
+        """Jadikan `path` URL absolut. Path relatif tanpa skema akan ditolak
+        requests dengan MissingSchema, jadi base URL wajib ada di sini."""
+        path = str(path or "")
+        if path.startswith(("http://", "https://")):
+            return path
+        return Config.base_url() + "/" + path.lstrip("/")
+
     def get(self, path: str, params: dict | None = None) -> requests.Response:
-        url = path if path.startswith("http") else Config.MOODLE_BASE_URL + path
+        url = self.absolute(path)
         resp = self.session.get(url, params=params, timeout=_TIMEOUT)
         resp.raise_for_status()
         return resp
 
     def download(self, url: str) -> bytes:
-        resp = self.session.get(url, timeout=_TIMEOUT)
+        resp = self.session.get(self.absolute(url), timeout=_TIMEOUT)
         resp.raise_for_status()
         return resp.content
 
     def check_login(self) -> None:
         resp = self.get("/my/courses.php")
-        if resp.status_code == 200 and "login/index.php" in resp.url:
+        if "login/index.php" in resp.url:
             raise RuntimeError(
                 "Sesi Moodle tidak valid / login gagal. "
                 "Perbarui MOODLE_COOKIE (MoodleSession) di Settings"

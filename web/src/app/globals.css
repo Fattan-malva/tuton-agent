@@ -683,6 +683,40 @@ select.pixel-input {
   font-family: var(--font-terminal);
   font-size: 10px;
   line-height: 1.7;
+  /* scroll-behavior smooth here would fight the sticky-scroll logic in
+     Terminal.tsx (onScroll keeps firing while animating). */
+  scroll-behavior: auto;
+  overscroll-behavior: contain;
+}
+
+.pixel-terminal-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Tombol "terbaru" muncul saat log tidak lagi menempel di bawah. */
+.pixel-terminal-jump {
+  position: absolute;
+  right: 14px;
+  bottom: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  background: var(--panel-strong);
+  color: var(--accent);
+  font-family: var(--font-terminal);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.pixel-terminal-jump:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 .pixel-terminal-line,

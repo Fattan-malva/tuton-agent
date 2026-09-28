@@ -19,10 +19,12 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
   const [kind, setKind] = useState<WorkKind>('tugas');
   const [title, setTitle] = useState('');
   const [soalText, setSoalText] = useState('');
-  const [fileName, setFileName] = useState('');
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [isStarting, setIsStarting] = useState(false);
   const [launched, setLaunched] = useState(false);
+
+  const fileName = files.map((f) => f.name).join(', ');
+  const hasFile = files.length > 0;
 
   const isRunning = terminal.snapshot.running;
   const busy = isRunning || isStarting || launched;
@@ -60,9 +62,8 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
   }, [courseId, onNotify]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = event.target.files?.[0] ?? null;
-    setFile(selected);
-    setFileName(selected ? selected.name : '');
+    const selected = Array.from(event.target.files ?? []);
+    setFiles(selected);
   };
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -72,7 +73,7 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
       onNotify('Pilih mata kuliah dan sesi terlebih dahulu.', 'warning');
       return;
     }
-    if (!soalText.trim() && !file) {
+    if (!soalText.trim() && !hasFile) {
       onNotify('Isi teks soal atau unggah file soal terlebih dahulu.', 'warning');
       return;
     }
@@ -83,7 +84,7 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
       `--sesi ${sesi}`,
       `--kind ${kind}`,
       title ? `--title "${title}"` : '',
-      file ? `--file "${fileName}"` : '',
+      hasFile ? `--file "${files.map((f) => f.name).join('", "')}"` : '',
     ].filter(Boolean).join(' ');
 
     terminal.setCommand(`user@tuton:~$ ${commandLine}`);
@@ -98,7 +99,8 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
         kind,
         title,
         soal_text: soalText,
-        file,
+        file: files[0] ?? null,
+        files: files.slice(1),
       });
 
       if (!response.success) throw new Error(response.error || 'Gagal memulai pengerjaan soal.');
@@ -192,11 +194,29 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
             </label>
 
             <div className="pixel-field">
-              <span className="pixel-label">Atau unggah file soal</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="pixel-label">Atau unggah file soal</span>
+                {hasFile && (
+                  <button
+                    type="button"
+                    onClick={() => setFiles([])}
+                    disabled={busy}
+                    className="font-terminal text-[10px] uppercase tracking-[0.1em] text-accent hover:underline disabled:opacity-50"
+                  >
+                    Hapus
+                  </button>
+                )}
+              </div>
               <label className={`pixel-file-drop ${busy ? 'opacity-50' : 'cursor-pointer'}`}>
                 <FileUp size={20} className="text-accent" aria-hidden="true" />
-                {fileName ? <span className="truncate text-xs font-semibold text-text">{fileName}</span> : <span className="font-terminal text-[10px] uppercase tracking-[0.1em] text-muted">Klik untuk memilih file (PDF, gambar, DOCX, XLSX, TXT)</span>}
-                <input type="file" onChange={handleFileChange} disabled={busy} className="sr-only" />
+                {hasFile ? (
+                  <span className="truncate text-xs font-semibold text-text" title={fileName}>{fileName}</span>
+                ) : (
+                  <span className="font-terminal text-[10px] uppercase tracking-[0.1em] text-muted">
+                    Klik untuk memilih file (PDF, gambar, DOCX, XLSX, PPTX, TXT) — bisa pilih beberapa
+                  </span>
+                )}
+                <input type="file" multiple onChange={handleFileChange} disabled={busy} className="sr-only" />
               </label>
             </div>
 

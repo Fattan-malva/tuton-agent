@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import apiClient from '../lib/api-client';
 
 export interface TerminalSnapshot {
@@ -123,13 +123,21 @@ function parseProgress(lines: string[]): Omit<TerminalSnapshot, 'output' | 'runn
  * hanya dipanggil bila sebuah proses benar-benar sempat terlihat berjalan,
  * lalu selesai (tidak langsung dipanggil saat idle). `reset()` dipanggil
  * setiap akan memulai run baru dan meng-aktifkan ulang deteksi selesai.
+ *
+ * `clear()` menyembunyikan log yang sudah tampil (posisi `hiddenCount`), bukan
+ * menghapus log di server: kalau log dihapus dari server, polling 1 detik
+ * kemudian akan mengembalikannya lagi sehingga tombol clear tidak pernah
+ * terlihat bekerja.
  */
 export function useTerminalMonitor(active = true, onComplete?: (returncode: number) => void) {
   const [output, setOutput] = useState<string[]>([]);
+  const [hiddenCount, setHiddenCount] = useState(0);
   const [snapshot, setSnapshot] = useState<TerminalSnapshot>(initialSnapshot);
   const [token, setToken] = useState(0);
   const onCompleteRef = useRef(onComplete);
   const completedRef = useRef(false);
+  const outputRef = useRef<string[]>([]);
+  outputRef.current = output;
   onCompleteRef.current = onComplete;
 
   useEffect(() => {
@@ -188,9 +196,24 @@ export function useTerminalMonitor(active = true, onComplete?: (returncode: numb
 
   const reset = useCallback(() => {
     setOutput([]);
+    setHiddenCount(0);
     setSnapshot(initialSnapshot);
     setToken((current) => current + 1);
   }, []);
 
-  return { output, snapshot, reset };
+  const clear = useCallback(() => {
+    // Sembunyikan semua baris yang sudah tampil; baris baru tetap muncul.
+    setHiddenCount((current) => Math.max(current, outputRef.current.length));
+  }, []);
+
+  const visible = useMemo(
+    () => output.slice(Math.min(hiddenCount, output.length)),
+    [hiddenCount, output],
+  );
+  const visibleSnapshot = useMemo(
+    () => (snapshot.output === visible ? snapshot : { ...snapshot, output: visible }),
+    [snapshot, visible],
+  );
+
+  return { output: visible, snapshot: visibleSnapshot, reset, clear };
 }

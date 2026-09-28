@@ -8,11 +8,16 @@ import zipfile
 
 from config import Config, PROJECT_ROOT
 from generator.opencode_runner import run_opencode
+from moodle.ocr import IMAGE_EXT as _IMAGE_EXT
 from moodle.ocr import is_image, ocr_image
 
 _PDF_EXT = {".pdf"}
 _XLSX_EXT = {".xlsx", ".xlsm", ".xls"}
 _DOCX_EXT = {".docx"}
+_PPTX_EXT = {".pptx", ".pptm"}
+_OOXML_EXT = _DOCX_EXT | _PPTX_EXT
+# Format Office lama (biner OLE, bukan zip) tidak bisa dibaca tanpa LibreOffice.
+_LEGACY_OFFICE_EXT = {".doc", ".ppt", ".pps", ".xls", ".odt", ".odp", ".rtf"}
 
 _TRANSCRIBE_PROMPT = """Kamu adalah agen transkripsi soal. Sebuah {TYPE} soal matematika terlampir pada pesan ini dan kamu bisa melihatnya langsung (modelmu mendukung vision).
 
@@ -286,32 +291,114 @@ def _extract_text_file(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace").strip()
 
 
-def _extract_docx_images(path: Path, work_dir: Path) -> list[str]:
-    """Transcribe images embedded inside a DOCX attachment."""
-    results: list[str] = []
+def _ooxml_slide_text(archive: zipfile.ZipFile, prefix: str) -> list[str]:
+    """Kumpulkan teks dari XML OOXML (slide/notes) sesuai urutan nomor."""
+    import xml.etree.ElementTree as ET
+
+    a_ns = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+    def _number(name: str) -> tuple[int, str]:
+        stem = name.rsplit("/", 1)[-1].removesuffix(".xml")
+        digits = "".join(ch for ch in stem if ch.isdigit())
+        return (int(digits) if digits else 0, stem)
+
+    names = sorted(
+        (n for n in archive.namelist() if n.startswith(prefix) and n.endswith(".xml")),
+        key=_number,
+    )
+    slides: list[str] = []
+    for name in names:
+        try:
+            root = ET.fromstring(archive.read(name))
+        except ET.ParseError:
+            continue
+        lines: list[str] = []
+        # <a:p> = satu paragraf; <a:t> = run teks di dalamnya.
+        for para in root.iter(f"{a_ns}p"):
+            text = "".join(node.text or "" for node in para.iter(f"{a_ns}t")).strip()
+            if text:
+                lines.append(text)
+        if lines:
+            label = name.rsplit("/", 1)[-1].removesuffix(".xml")
+            slides.append(f"[{label}]\n" + "\n".join(lines))
+    return slides
+
+
+def _extract_pptx(path: Path) -> str:
+    """Teks slide + catatan pembicara dari file .pptx (zip + XML, tanpa library)."""
+    blocks: list[str] = []
     with zipfile.ZipFile(path) as archive:
-        for name in archive.namelist():
-            if not name.startswith("word/media/"):
+        blocks.extend(_ooxml_slide_text(archive, "ppt/slides/slide"))
+        blocks.extend(_ooxml_slide_text(archive, "ppt/notesSlides/notesSlide"))
+    return "\n\n".join(blocks)
+
+
+def _extract_embedded_images(path: Path, work_dir: Path) -> list[str]:
+    """Transcribe gambar yang tertanam di dokumen OOXML (docx/pptx).
+
+    Gambar kecil (logo/asap ikon) dilewati: transkripsi vision mahal (~20-60s per
+    gambar) tapi isinya tidak pernah berupa soal. Jumlahnya juga dibatasi supaya
+    satu lampiran tidak menahan proses belasan menit.
+    """
+    min_bytes = 12_000
+    max_images = 12
+    results: list[str] = []
+    skipped_small = 0
+    with zipfile.ZipFile(path) as archive:
+        media = sorted(
+            n for n in archive.namelist()
+            if n.startswith(("word/media/", "ppt/media/"))
+            and not n.endswith("/")
+            and Path(n).suffix.lower() in _IMAGE_EXT
+        )
+        index = 0
+        for name in media:
+            payload = archive.read(name)
+            if len(payload) < min_bytes:
+                skipped_small += 1
                 continue
-            image_path = work_dir / f".embedded_{Path(name).name}"
-            image_path.write_bytes(archive.read(name))
+            if index >= max_images:
+                break
+            index += 1
+            base = name.rsplit("/", 1)[-1]
+            image_path = work_dir / f".embedded_{path.stem}_{index}{Path(base).suffix.lower()}"
+            image_path.write_bytes(payload)
             try:
                 text = _transcribe_image(image_path, work_dir / f"transkrip_{image_path.stem}.md")
                 if text:
-                    results.append(text)
+                    results.append(f"[gambar #{index} di dalam dokumen: {base}]\n{text}")
             finally:
                 image_path.unlink(missing_ok=True)
+    if skipped_small:
+        print(f"    · {skipped_small} gambar kecil (logo) diabaikan.")
     return results
+
+
+def _extract_docx_images(path: Path, work_dir: Path) -> list[str]:
+    """Transcribe images embedded inside a DOCX attachment."""
+    return _extract_embedded_images(path, work_dir)
 
 
 def _extract_text(path: Path) -> str:
     ext = path.suffix.lower()
     if ext in _XLSX_EXT:
         return _extract_xlsx(path)
+    if ext in _PPTX_EXT:
+        return _extract_pptx(path)
     if ext in _DOCX_EXT:
         return _extract_docx(path)
-    if ext in {".txt", ".csv", ".tsv", ".md", ".rtf"}:
+    if ext in {".txt", ".csv", ".tsv", ".md"}:
         return _extract_text_file(path)
+    if ext in _LEGACY_OFFICE_EXT:
+        print(
+            f"    ! {path.name}: format lama '{ext}' belum didukung. "
+            "Simpan ulang sebagai PDF/PPTX/DOCX, atau unggah gambarnya."
+        )
+        return ""
+    print(
+        f"    ! {path.name}: ekstensi '{ext or '(tanpa ekstensi)'}' tidak dikenali. "
+        "Gunakan PDF, gambar (png/jpg), DOCX, XLSX, PPTX, atau TXT."
+    )
     return ""
 
 
@@ -320,21 +407,22 @@ def process_attachment(path: Path, work_dir: Path) -> str:
 
     - Gambar/PDF: salin via agent transcriber (model vision), lalu fallback
       easyocr / pymupdf.
-    - Excel/docx: ekstrak lewat Python.
+    - Excel/docx/pptx: ekstrak lewat Python (teks + gambar tertanam).
     Kembalikan teks; string kosong bila tidak bisa (perlu cek manual).
     """
     ext = path.suffix.lower()
+    if not path.is_file():
+        print(f"    ! lampiran tidak ditemukan: {path}")
+        return ""
     if is_image(path) or ext in _PDF_EXT:
-        if not path.is_file():
-            return ""
         out_file = work_dir / f"transkrip_{path.stem}.md"
         if ext in _PDF_EXT:
             return _transcribe_pdf(path, out_file)
         return _transcribe_image(path, out_file)
     try:
         text = _extract_text(path).strip()
-        if ext in _DOCX_EXT:
-            embedded = _extract_docx_images(path, work_dir)
+        if ext in _OOXML_EXT:
+            embedded = _extract_embedded_images(path, work_dir)
             if embedded:
                 text = "\n\n".join(part for part in (text, *embedded) if part)
         return text

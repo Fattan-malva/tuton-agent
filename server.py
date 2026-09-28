@@ -32,6 +32,11 @@ from moodle.scraper import CourseScraper
 app = Flask(__name__, static_folder="frontend", static_url_path="")
 CORS(app)
 
+# Soal sering dilampirkan sebagai PDF/gambar besar. Batas default Flask tak ada,
+# tapi nginx di depannya membatasi 1MB -> unggah besar ditolak 413.
+MAX_UPLOAD_BYTES = 64 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
 # Global state for running processes
@@ -136,6 +141,15 @@ def run_command_async(cmd: list[str], cwd: Path | None = None) -> dict:
     return {"success": True, "message": "Process started"}
 
 
+@app.errorhandler(413)
+def upload_too_large(_exc):
+    limit_mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+    return jsonify({
+        "success": False,
+        "error": f"Ukuran unggahan melebihi {limit_mb} MB. Kompres file atau tulis soal di kolom teks.",
+    }), 413
+
+
 @app.route("/")
 def index():
     return send_from_directory("frontend", "index.html")
@@ -194,11 +208,14 @@ def save_config():
         env_lines = env_path.read_text(encoding="utf-8").splitlines()
 
     # Update or add keys (MOODLE_SESSION sengaja tidak dimasukkan ke .env)
+    # Base URL: field kosong TIDAK boleh menimpa nilai yang sekarang, kalau tidak
+    # .env bisa tersimpan dengan MOODLE_BASE_URL= dan semua request jadi URL relatif.
+    moodle_url = str(data.get("moodle_url") or "").strip() or Config.MOODLE_BASE_URL
     updates = {
         "NAMA": data.get("nama", ""),
         "NIM": data.get("nim", ""),
         "PRODI": data.get("prodi", ""),
-        "MOODLE_BASE_URL": data.get("moodle_url", ""),
+        "MOODLE_BASE_URL": moodle_url,
         "OPENCODE_MODEL": data.get("opencode_model") or Config.OPENCODE_MODEL,
     }
     
@@ -535,19 +552,23 @@ def solve_soal():
     jobs_dir = OUTPUT_DIR / ".jobs"
     jobs_dir.mkdir(parents=True, exist_ok=True)
 
+    stamp = int(time.time() * 1000)
     text_path = None
     if soal_text:
-        text_path = jobs_dir / f"solve_{int(time.time() * 1000)}.md"
+        text_path = jobs_dir / f"solve_{stamp}.md"
         text_path.write_text(soal_text, encoding="utf-8")
 
-    file_path = None
-    upload = request.files.get("file")
-    if upload and upload.filename:
-        fname = os.path.basename(upload.filename) or "upload"
-        file_path = jobs_dir / f"solve_{int(time.time() * 1000)}_{fname}"
-        upload.save(str(file_path))
+    file_paths: list[str] = []
+    # `file` (tunggal, backward-compatible) + `files` (multi dari form baru).
+    uploads = [f for f in request.files.getlist("file") if f and f.filename]
+    uploads += [f for f in request.files.getlist("files") if f and f.filename]
+    for idx, upload in enumerate(uploads):
+        fname = os.path.basename(upload.filename or "") or f"lampiran{idx}"
+        dest = jobs_dir / (f"solve_{stamp}_{fname}" if idx == 0 else f"solve_{stamp}_{idx}_{fname}")
+        upload.save(str(dest))
+        file_paths.append(str(dest))
 
-    if text_path is None and file_path is None:
+    if text_path is None and not file_paths:
         return jsonify({
             "success": False,
             "error": "Isi teks soal atau unggah file soal terlebih dahulu.",
@@ -562,16 +583,16 @@ def solve_soal():
     ]
     if text_path is not None:
         cmd += ["--text", str(text_path)]
-    if file_path is not None:
-        cmd += ["--file", str(file_path)]
+    for path in file_paths:
+        cmd += ["--file", path]
 
     result = run_command_async(cmd)
     if not result.get("success"):
         # Proses tidak jalan (mis. masih ada proses lain) → bersihkan file temp.
         if text_path is not None:
             text_path.unlink(missing_ok=True)
-        if file_path is not None:
-            file_path.unlink(missing_ok=True)
+        for path in file_paths:
+            Path(path).unlink(missing_ok=True)
     return jsonify(result)
 
 
@@ -651,12 +672,35 @@ def stop_run():
         return jsonify({"success": False, "error": "No process running"})
 
 
+def _cleanup_stale_jobs(max_age_hours: float = 24.0) -> int:
+    """Hapus file temporary form soal yang tertinggal (mis. run crash/berhenti).
+
+    Tanpa ini upload menggantung menumpuk di output/.jobs selamanya karena file
+    hanya dihapus setelah `main.py solve` memindahkannya ke folder lampiran."""
+    jobs_dir = OUTPUT_DIR / ".jobs"
+    if not jobs_dir.is_dir():
+        return 0
+    cutoff = time.time() - max_age_hours * 3600
+    removed = 0
+    for path in jobs_dir.glob("solve_*"):
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 if __name__ == "__main__":
     # Ensure output directory exists
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Starting Tuton Agent Web Server...")
     print(f"Output directory: {OUTPUT_DIR}")
+    stale = _cleanup_stale_jobs()
+    if stale:
+        print(f"Cleaned {stale} stale file(s) in {OUTPUT_DIR / '.jobs'}")
     # use_reloader=False: watchdog reloader di Windows mematikan proses run
     # yang sedang berjalan (state process ada di memori). Dev tetap dapat
     # traceback (debug), hanya saja tidak auto-restart di tengah run.
