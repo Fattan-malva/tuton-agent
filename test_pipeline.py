@@ -420,11 +420,10 @@ def main() -> int:
             isi = transcripts[0].read_text(encoding="utf-8")
             check("transkrip memuat isi PDF (teks layer)",
                   "1NF" in isi and "absensi" in isi, isi[:140])
-        # Nama lama "transkrip_<stem>.md" (satu per berkas) sudah tidak dipakai.
-        # Yang dipakai sekarang: satu file gabungan per item.
-        check("tidak ada transkrip_<stem>.md per-berkas (nama lama)",
-              not list(out_root.rglob("transkrip_tugas1.md"))
-              and not list(out_root.rglob("transkrip_soal_diskusi.pdf.md")))
+        # Satu file gabungan per item, bukan satu file per berkas lampiran.
+        # Kalau ada 4 file, berarti penulisan per-berkas lama masih ikut jalan.
+        check("hanya ada satu file transkrip per item",
+              len(transcripts) == 2, f"{len(transcripts)} file")
 
         print("\n[5] Prompt yang diterima AI")
         if PROMPTS:
