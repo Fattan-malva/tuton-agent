@@ -224,6 +224,7 @@ def list_models(*, timeout: int = 45, use_cache: bool = True) -> list[str]:
         return list(_models_cache[1])
 
     ids: list[str] = []
+    ok = False
     try:
         result = subprocess.run(
             _resolve_opencode() + ["models"],
@@ -246,10 +247,15 @@ def list_models(*, timeout: int = 45, use_cache: bool = True) -> list[str]:
                 continue
             ids.append(line)
         ids = list(dict.fromkeys(ids))
+        ok = True
     except Exception as exc:  # noqa: BLE001 - UI harus tetap jalan walau CLI gagal
         print(f"  ! gagal membaca daftar model opencode: {exc}")
 
-    if use_cache:
+    # Hanya cache kalau CLI benar-benar dijawab. `opencode models` gagal sesaat
+    # right setelah container start (database opencode belum siap), dan cache
+    # kosong selama TTL membuat kegagalan sesaat itu terasa seperti "tidak ada
+    # model sama sekali" -- termasuk membuat auto-pilih model tidak bisa jalan.
+    if use_cache and ok:
         _models_cache = (now, ids)
     return ids
 

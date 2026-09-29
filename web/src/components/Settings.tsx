@@ -18,6 +18,8 @@ interface SettingsForm {
   moodle_session: string;
   moodle_url: string;
   opencode_model: string;
+  /** Model agen pembantu. Kosong = auto-pilih + uji dulu (lihat generator/models.py). */
+  opencode_model_helper: string;
   output_dir: string;
   jobs: string;
   max_pustaka: string;
@@ -36,6 +38,7 @@ const emptyForm: SettingsForm = {
   moodle_session: '',
   moodle_url: '',
   opencode_model: '',
+  opencode_model_helper: '',
   output_dir: './output',
   jobs: '2',
   max_pustaka: String(DEFAULT_MAX_PUSTAKA),
@@ -49,6 +52,16 @@ interface ModelPickerProps {
   defaultModel: string;
   onChange: (value: string) => void;
   onRefresh: () => void;
+  /** Label di atas input. Bawaan = model penulis. */
+  label?: string;
+  /** `name` input + suffix `id` listbox, supaya dua picker tidak bentrok. */
+  idSuffix?: string;
+  /** Teks tombol "Bawaan opencode"; null menyembunyikannya. */
+  defaultOptionLabel?: string | null;
+  /** Nilai saat opsi bawaan dipilih. Default = `defaultModel`. */
+  defaultOptionValue?: string;
+  /** Placeholder saat nilai kosong. */
+  emptyHint?: string;
 }
 
 /**
@@ -66,6 +79,11 @@ function ModelPicker({
   defaultModel,
   onChange,
   onRefresh,
+  label = 'Model OpenCode untuk Mengerjakan',
+  idSuffix = 'writer',
+  defaultOptionLabel = 'Bawaan opencode',
+  defaultOptionValue,
+  emptyHint,
 }: ModelPickerProps) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -138,10 +156,11 @@ function ModelPicker({
   };
 
   const matched = flat.length;
+  const listboxId = `model-listbox-${idSuffix}`;
 
   return (
     <div className="md:col-span-2">
-      <span className="pixel-label">Model OpenCode untuk Mengerjakan</span>
+      <span className="pixel-label">{label}</span>
 
       <div ref={wrapRef} className="relative mt-1">
         <div className="flex gap-2">
@@ -159,13 +178,13 @@ function ModelPicker({
               // dan teks menabrak ikon. `pixel-input-icon` yang mengaturnya
               // (38px), jadi ada ruang lega untuk ikon 16px di `left-3`.
               className="pixel-input pixel-input-icon font-terminal"
-              name="opencode_model"
+              name={`opencode_model_${idSuffix}`}
               value={open ? query : value}
-              placeholder={value || defaultModel}
+              placeholder={value || emptyHint || defaultModel}
               autoComplete="off"
               role="combobox"
               aria-expanded={open}
-              aria-controls="model-listbox"
+              aria-controls={listboxId}
               aria-autocomplete="list"
               onFocus={() => setOpen(true)}
               onChange={(event) => {
@@ -193,20 +212,24 @@ function ModelPicker({
 
         {open && (
           <div
-            id="model-listbox"
+            id={listboxId}
             role="listbox"
             className="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto border-2 border-border bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.35)]"
           >
-            <button
-              type="button"
-              role="option"
-              aria-selected={value === defaultModel}
-              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left font-terminal text-xs hover:bg-accent/15"
-              onClick={() => pick(defaultModel)}
-            >
-              <span>Bawaan opencode</span>
-              <span className="text-muted">{defaultModel}</span>
-            </button>
+            {defaultOptionLabel !== null && (
+              <button
+                type="button"
+                role="option"
+                aria-selected={value === (defaultOptionValue ?? defaultModel)}
+                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left font-terminal text-xs hover:bg-accent/15"
+                onClick={() => pick(defaultOptionValue ?? defaultModel)}
+              >
+                <span>{defaultOptionLabel}</span>
+                <span className="text-muted">
+                  {defaultOptionValue === '' ? '—' : defaultModel}
+                </span>
+              </button>
+            )}
             <div className="border-t-2 border-border" />
 
             {loading && matched === 0 && (
@@ -304,6 +327,12 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
       moodle_session: '',
       moodle_url: config?.base_url ?? '',
       opencode_model: config?.model && config.model !== '(default)' ? config.model : '',
+      // WAJIB `helper_model_configured` (nilai yang tersimpan di .env), bukan
+      // `runtime.helper_model` (hasil auto-pilih). Kalau yang latter dipakai,
+      // model auto-pilih ikut tersimpan begitu form dikirim -- jadi model yang
+      // tadinya "otomatis" terkunci jadi manual tanpa pernah disentuh user.
+      // Kosong = otomatis, dan itu yang harus tampil saat field di .env kosong.
+      opencode_model_helper: config?.helper_model_configured ?? '',
       output_dir: config?.output_dir ?? './output',
       jobs: String(runtime?.jobs ?? 2),
       max_pustaka: String(runtime?.max_pustaka ?? DEFAULT_MAX_PUSTAKA),
@@ -437,6 +466,31 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
               onChange={(value) => updateField('opencode_model', value)}
               onRefresh={() => void loadModels(true)}
             />
+            <div className="md:col-span-2">
+              <ModelPicker
+                value={form.opencode_model_helper}
+                groups={modelGroups}
+                loading={modelLoading}
+                total={modelTotal}
+                defaultModel={defaultModel}
+                onChange={(value) => updateField('opencode_model_helper', value)}
+                onRefresh={() => void loadModels(true)}
+                label="Model OpenCode untuk Pembantu (peta soal & daftar pustaka)"
+                idSuffix="helper"
+                defaultOptionLabel="Pilih otomatis (diuji satu per satu)"
+                // Kosongkan field, bukan diisi model default penulis: "otomatis"
+                // berarti membiarkan generator/models.py memilih. Mengisi
+                // `defaultModel` di sini akan memaksa model penulis jadi model
+                // pembantu -- mahal, dan bukan yang jobless clicked.
+                defaultOptionValue=""
+                emptyHint="pilih otomatis"
+              />
+              <span className="pixel-helper">
+                Dipakai langsung setelah disimpan, untuk memetakan soal dan mencari
+                daftar pustaka. Kosongkan agar sistem memilih model opencode zen
+                termurah yang benar-benar merespons.
+              </span>
+            </div>
             <label className="pixel-field">
               <span className="pixel-label">Output Directory</span>
               <input className="pixel-input pixel-input-readonly font-terminal" name="output_dir" value={form.output_dir} readOnly />
@@ -473,16 +527,6 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
                 entri berarti satu kali verifikasi sumber. Bawaan {DEFAULT_MAX_PUSTAKA}.
               </span>
             </label>
-            <div className="pixel-field">
-              <span className="pixel-label">Model Pembantu</span>
-              <p className="pixel-input pixel-input-readonly font-terminal text-muted">
-                {config?.runtime?.helper_model || 'pilih otomatis'}
-              </p>
-              <span className="pixel-helper">
-                Model murah untuk memetakan soal dan mencari referensi. Kalau
-                belum diisi, sistem memilih sendiri yang termurah tersedia.
-              </span>
-            </div>
             <div className="pixel-field">
               <span className="pixel-label">Transkripsi Lampiran</span>
               <p className="pixel-input pixel-input-readonly font-terminal text-muted">

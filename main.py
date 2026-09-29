@@ -38,6 +38,12 @@ _FOREIGN_SCRIPT_RE = re.compile(
 _EDIT_ARTIFACT_RE = re.compile(
     r"(?:^|\s)\d+:\d+_(?:changed|removed|added)\b", re.IGNORECASE
 )
+# Placeholder resmi untuk "tidak ada sumber yang bisa diverifikasi". Ditulis
+# agen penulis ketika berkas referensi kosong (lihat generator/prompt.py), dan
+# sekarang dianggap hasil yang sah supaya item tetap jadi tanpa sitasi.
+_NO_REFERENSI_RE = re.compile(
+    r"tidak\s+ada\s+referensi\s+yang\s+terverifikasi", re.IGNORECASE
+)
 
 # Console Windows/cp1252 tidak selalu mendukung karakter UTF-8 (→, ✓, huruf
 # beraksen). Paksa stdout/stderr ke UTF-8 supaya cukup `python main.py run`.
@@ -311,9 +317,9 @@ def _prefetch_one(
 # Tahap 0: PETA SOAL  (satu kali per course + sesi, hasilnya di-cache)
 #
 # Kenapa tahap ini perlu: di UT, soal tidak selalu ada di halaman yang kebetulan
-# ditemukan. Kadang menu Diskusi memuat soal tambahan, kadang butir tertentu
+# ditemukan. Kadang menu Diskusi memuat soal tambahan, kadang soal tertentu
 # bergantung pada lampiran atau halaman materi lain, dan kadang rubrik ada di
-# halaman seksi sementara butirnya ada di halaman aktivitas (atau sebaliknya).
+# halaman seksi sementara soalnya ada di halaman aktivitas (atau sebaliknya).
 #
 # Yang dulunya terjadi: agen `tuton` membuka beberapa halaman untuk tiap item,
 # dan tiap item membayar harga penuh untuk halaman yang sama. Satu sesi berisi
@@ -321,14 +327,14 @@ def _prefetch_one(
 #
 # Sekarang: satu proses `pemetak-soal` membaca halaman-halaman itu SEKALI per
 # sesi dan menulis peta ringkas. Lima item berikutnya membaca peta yang sama,
-# yang isinya jauh lebih kecil karena sudah disaring: hanya butir soal, syarat
+# yang isinya jauh lebih kecil karena sudah disaring: hanya soal, syarat
 # format, rubrik, dan lampiran yang relevan.
 # ---------------------------------------------------------------------------
 _PETAK_AGENT = "pemetak-soal"
 
 # Peta yang terlalu pendek hampir pasti gagal (agen hanya menulis pengumuman
 # lalu berhenti), jadi dipakai sebagai ambang cache. 200 karakter setara satu
-# blok butir soal plus syarat format.
+# blok soal plus syarat format.
 _MIN_PETAK_CHARS = 200
 # Referensi sah minimal satu baris APA yang lengkap, kira-kira 80 karakter.
 # Entri tunggal yang pendek ("1. Tidak ada.") tetap diterima karena mungkin
@@ -482,7 +488,7 @@ def _petak_stage(
 
     log(
         f"  · memetakan soal {len(pending)} sesi dengan model kecil "
-        "(mencari sekaligus memahami butir, rubrik, dan lampiran)...",
+        "(mencari sekaligus memahami soal, rubrik, dan lampiran)...",
         prefix="  ",
     )
     model = helper_model()
@@ -493,9 +499,16 @@ def _petak_stage(
                 course_name=course.name,
                 section_num=sec.number,
                 section_title=sec.title,
-                section_url=(
+                # WAJIB lewat `soalu()`. Agen `pemetak-soal` tidak punya cookie
+                # MoodleSession, jadi URL Moodle mentah membawanya ke halaman
+                # login.(Itu yang membuat agent lama berputar-putar: mencoba
+                # browser, menggali source code, lalu menggali cache halaman --
+                # semua karena URL yang dikirimi tidak bisa dia buka sendiri.)
+                # `fresh=True` = abaikan cache, baca Moodle versi terbaru.
+                section_url=soalu(
                     f"{Config.base_url()}/course/view.php"
-                    f"?id={course.id}&section={sec.number}"
+                    f"?id={course.id}&section={sec.number}",
+                    fresh=True,
                 ),
                 out_path=path,
             )
@@ -591,7 +604,7 @@ def _pustaka_stage(
     """Cari referensi per item, sekali saja, memakai model pembantu.
 
     Dijalankan setelah `_petak_stage` selesai, bukan paralel dengannya: referensi
-    yang baik bergantung pada Understanding butir soalnya, dan dua tahap yang
+    yang baik bergantung pada pemahaman soalnya, dan dua tahap yang
     keduanya memanggil model secara bersamaan hanya memperpanjang waktu tunggu
     tanpa menambah hasil per menit.
     """
@@ -655,7 +668,7 @@ def _needs_transcription(record: Prefetched) -> bool:
 
     Ya, begitu ada lampiran: di UT PDF/gambar sering berisi soal
     yang tidak pernah ditulis di halaman. Melewatkannya berarti AI menjawab dari
-    instruksi saja tanpa butir soalnya -- itu penyebab paling umum jawaban
+    instruksi saja tanpa soalnya -- itu penyebab paling umum jawaban
     meleset dari nilai sebenarnya.
     """
     if not record.attachments:
@@ -850,8 +863,26 @@ def answer_quality_issues(text: str) -> list[str]:
             if re.match(r"\s*(?:\[?\d+\]?[-.)]?|\*)\s+\S", ln)
             and not re.match(r"\s*#+\s", ln)
         ]
-        if not refs:
+        # Placeholder "TIDAK ADA REFERENSI YANG TERVERIFIKASI" adalah jawaban
+        # yang jujur, bukan kegagalan. Prompt (generator/prompt.py) menyuruh
+        # agent menulis baris itu persis ketika tahap `pencari-pustaka` gagal
+        # atau memang tidak menemukan sumber. Sebelumnya baris ini tidak
+        # cocok pola entri di atas, jadi selalu dihitung "kosong" dan item
+        # ditolak -- padahal akan ditolak juga kalau kita memaksa agent
+        # mengarang referensi. Jadi: boleh lolos, tapi dicatat supaya
+        # docx bisa menandainya dan jangan dikira punya sitasi.
+        has_placeholder = any(
+            _NO_REFERENSI_RE.search(ln) for ln in tail.splitlines()
+        )
+        if not refs and not has_placeholder:
             issues.append("Daftar Pustaka kosong (tidak ada entri)")
+        elif refs and has_placeholder:
+            # Dua-duanya: berarti agent menulis placeholder padahal punya
+            # entri. Buang placeholder-nya, sisanya tetap dipakai.
+            issues.append(
+                "Daftar Pustaka memuat placeholder 'TIDAK ADA REFERENSI' "
+                "beberapa kali padahal sudah ada entri"
+            )
         elif len(refs) > Config.TUTON_MAX_PUSTAKA:
             # Batas jumlah entri adalah batas biaya, bukan selera. Setiap
             # entri tambahan berarti satu putaran webfetch pada tahap
@@ -1281,7 +1312,7 @@ def _process_course(
 
     # Tahap 0: peta soal per sesi. Harus selesai sebelum transkripsi dan
     # pencarian referensi, karena ketiganya membaca artefak yang saling
-    # bergantung: peta memberi butir, transkrip memberi isi lampiran, daftar
+    # bergantung: peta memberi soal, transkrip memberi isi lampiran, daftar
     # referensi memakai keduanya untuk memilih sumber.
     sections = [s for s in scraper.get_available_sections(course_id)
                 if s.number in {sec for _, sec, _, _ in pending}]

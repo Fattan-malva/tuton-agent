@@ -259,7 +259,7 @@ Halaman yang diperiksa: 2. Batas: 12.
 - Butir yang ditanyakan:
   1. Jelaskan perbedaan model relasi 1NF, 2NF, dan 3NF.
   2. Baitlah rancangan database untuk sistem informasi absensi mahasiswa.
-- Format jawaban: uraian singkat, maksimal 300 kata per butir.
+- Format jawaban: uraian singkat, maksimal 300 kata per soal.
 - Rubrik: ketepatan konsep 40, contoh 30, bahasa 30.
 - Lampiran: tugas1.pdf
 - Perlu lampiran lain: tidak
@@ -413,6 +413,16 @@ def main() -> int:
     import moodle.transcribe as transcribe_mod
 
     transcribe_mod.run_opencode = _stub_transcribe_opencode
+    # `generator.models` mencari model dengan memanggil opencode sungguhan:
+    # `list_models()` menjalankan `opencode models`, lalu `_probe_ok()` benar-benar
+    # mengirim satu prompt ke tiap kandidat. Keduanya harus dimatikan supaya test
+    # tetap offline, cepat, dan tidak menghabiskan kuota model.
+    from generator import models as models_mod
+
+    models_mod.reset_cache()
+    models_mod._available = lambda: ["opencode/test-helper", "opencode/test-writer"]
+    models_mod._probe_ok = lambda model_id: True
+    models_mod._auto_pick = lambda exclude=(): "opencode/test-helper"
     # `state.STATE_FILE` dihitung saat import dari config.OUTPUT_DIR. Kalau tidak
     # dipatch, test menulis ke output/state.json milik user sungguhan.
     state_mod.STATE_FILE = fixtures / "out" / "state.json"
@@ -465,7 +475,7 @@ def main() -> int:
         status, ctype, body = rs.handle_soal(src_a.primary_url, "halaman")
         check("handle_soal 200", status == 200, f"status={status}")
         check("isi markdown (bukan HTML mentah)", ctype.startswith("text/markdown"), ctype)
-        check("isi memuat butir soal", "1NF" in body)
+        check("isi memuat soal", "1NF" in body)
         status_f, ctype_f, raw = rs.handle_file(src_a.attachments[0])
         check("handle_file 200", status_f == 200, f"status={status_f}")
         check("handle_file mengembalikan PDF", ctype_f == "application/pdf", ctype_f)
@@ -571,7 +581,15 @@ def main() -> int:
             # sedangkan batasnya diuji dari definisi agen.
             check("prompt peta menunjuk file keluaran",
                   "Tulis peta soal ke:" in pp and ".md" in pp)
-            check("prompt peta menyebut halaman seksi", "/course/view.php?id=" in pp)
+            # URL seksi harus berupa URL READER (ada token + nc=1), bukan URL
+            # Moodle mentah. URL mentah membuat agen mendarat di halaman login
+            # lalu berputar-putar menggali cache/source code, karena ia tidak
+            # punya cookie MoodleSession. `nc=1` memaksa baca versi terbaru.
+            check("prompt peta memakai URL Reader bertoken", "127.0.0.1" in pp and "/soal?u=" in pp)
+            check("prompt peta menyertakan token Reader", "&t=" in pp)
+            check("prompt peta memaksa baca Moodle terbaru (nc=1)", "nc=1" in pp)
+            check("prompt peta memuat halaman seksi ter-encode",
+                  "course%2Fview.php" in pp or "course/view.php" in pp)
             check("prompt peta tidak menyuruh menjawab soal",
                   "Jangan menjawab soal" not in pp)
             check("prompt peta tidak melontarkan aturan yang panjang",
@@ -714,6 +732,97 @@ def main() -> int:
             state_mod._STATE = None
             state_mod._STATE_STAMP = None
             tmp_state.unlink(missing_ok=True)
+
+        # [10] Placeholder daftar pustaka = hasil sah.
+        #
+        # Saat tahap `pencari-pustaka` gagal, prompt menyuruh agen penulis
+        # menulis satu baris 'TIDAK ADA REFERENSI YANG TERVERIFIKASI'
+        # (generator/prompt.py). sebelum diperbaiki, `answer_quality_issues`
+        # menghitung baris itu bukan entri dan menolak jawabannya -- padahal
+        # menolak berarti 2 percobaan penulis dibuang tanpa chances. Item
+        # sekarang harus tetap jadi, hanya tanpa sitasi.
+        print("\n[10] Placeholder 'tidak ada referensi' dianggap hasil sah")
+        isi_panjang = (
+            "## Jawaban Mahasiswa\n"
+            "Isi jawaban yang cukup panjang untuk lolos ambang minimum "
+            "seratus dua puluh karakter agar tidak ditolak karena terlalu pendek. "
+        )
+        issues = main_mod.answer_quality_issues(
+            isi_panjang + "\n## Daftar Pustaka\nTIDAK ADA REFERENSI YANG TERVERIFIKASI"
+        )
+        check("placeholder TIDAK ADA REFERENSI lolos validasi", not issues,
+              str(issues))
+        issues = main_mod.answer_quality_issues(
+            isi_panjang + "\n## Daftar Pustaka\n1. Ben-Ari, M. (2012). Judul. Springer."
+        )
+        check("daftar pustaka dengan entri asli tetap lolos", not issues,
+              str(issues))
+        issues = main_mod.answer_quality_issues(isi_panjang + "\n## Daftar Pustaka\n")
+        check("Daftar Pustaka benar-benar kosong tetap ditolak",
+              any("kosong" in i for i in issues), str(issues))
+        issues = main_mod.answer_quality_issues(isi_panjang)
+        check("tanpa bagian Daftar Pustaka tetap ditolak",
+              any("Daftar Pustaka" in i for i in issues), str(issues))
+
+        # [11] Istilah "butir" tidak boleh bocor ke dokumen.
+        #
+        # Peta soal menulis field "Butir yang ditanyakan", dan agen penulis
+        # cenderung meniru terminologi peta itu ke jawabannya. Hasilnya kata
+        # "butir" bisa muncul di berkas yang dikumpulkan tutor, padahal istilah
+        # yang dipakai di UT adalah "soal".
+        from generator import docx as docx_mod
+        from generator.prompt import build_petak_prompt
+
+        check("prompt tidak lagi memakai kata 'butir'",
+              "butir" not in build_petak_prompt(
+                  course_name="X", section_num=1, section_title="",
+                  section_url="http://127.0.0.1:1/soal?u=x&t=y", out_path=Path("p.md"),
+              ).lower())
+        check("agen pemetak tidak lagi memakai kata 'butir'",
+              "butir" not in Path(".opencode/agent/pemetak-soal.md")
+              .read_text(encoding="utf-8").lower())
+        check("agen penulis tidak lagi memakai kata 'butir'",
+              "butir" not in Path(".opencode/agent/tuton.md")
+              .read_text(encoding="utf-8").lower())
+
+        # [12] Paragraf di bawah label harus rata dengan TEKS label, bukan
+        # dengan angkanya. Nomor yang diketik literal (bukan fitur List Number)
+        # tidak pernah membawa indentasi gantung ke paragraf berikutnya.
+        doc_dir = fixtures / "out" / "_indent"
+        doc_dir.mkdir(parents=True, exist_ok=True)
+        docx_path, _ = docx_mod.save_doc(
+            jawaban_md=(
+                "## Jawaban Mahasiswa\n\n"
+                "### 1. Soal Satu\n\n"
+                "Paragraf pembuka yang harus ikut bergeser.\n"
+            ),
+            soal_text="",
+            meta={"file_base": "indent", "nama": "Uji", "nim": "1"},
+            out_dir=doc_dir,
+        )
+        from docx import Document as _Doc
+
+        paras = [p for p in _Doc(str(docx_path)).paragraphs if p.text.strip()]
+        heading = next((p for p in paras if p.text.strip() == "1. Soal Satu"), None)
+        below = paras[paras.index(heading) + 1] if heading else None
+        check("ada heading berlabel untuk uji indentasi", heading is not None)
+        if below is not None:
+            got = below.paragraph_format.left_indent
+            got_pt = round(got.pt, 1) if got is not None else None
+            # "1. " = 3 karakter x 0.5em x 12pt = 18pt, sama dengan
+            # `w:ind left=360 hanging=360` di definisi List Number template.
+            check("paragraf di bawah label ikut ter-indent", got_pt == 18.0, f"left={got_pt}")
+
+        # [13] Junk metadata Moodle tidak boleh masuk ke dokumen.
+        junk_path, _ = docx_mod.save_doc(
+            jawaban_md="## Jawaban Mahasiswa\n\nNama: Uji\nNIM: 1\n\nIsi jawaban.",
+            soal_text="",
+            meta={"file_base": "junk", "nama": "Uji", "nim": "1"},
+            out_dir=doc_dir,
+        )
+        junk_text = "\n".join(p.text for p in _Doc(str(junk_path)).paragraphs)
+        check("identitas yang ditulis agen tidak dobel",
+              "NIM: 1" not in junk_text and "Nama: Uji" not in junk_text)
 
     finally:
         server.shutdown()

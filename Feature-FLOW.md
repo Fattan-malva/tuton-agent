@@ -27,10 +27,10 @@ menentukan nilai:
 | Yang hilang saat teks ditempel statis | Akibatnya |
 |---|---|
 | Instruksi khusus tutor ("minimal 500 kata", "format PDF spasi 1.5") | Jawaban salah bentuk |
-| Pedoman penilaian / rubrik | Nilai turun karena butir rubrik terlewat |
+| Pedoman penilaian / rubrik | Nilai turun karena aspek rubrik terlewat |
 | Komposisi nilai & syarat kelulusan | Missed requirement |
 | Konteksi diskusi (post pembuka) | Menjawab pertanyaan yang salah |
-| Tampilan instruksi di halaman seksi | Nomor butir tidak sinkron dengan yang diminta dosen |
+| Tampilan instruksi di halaman seksi | Nomor soal tidak sinkron dengan yang diminta dosen |
 
 Dengan AI membaca halaman aslinya, semua itu ikut terbaca dan
 `generator/prompt.py` tinggalятся di URL + aturan kejujuran.
@@ -164,7 +164,7 @@ yang sama, dua kali bayar.
  │ TAHAP 0 — PETA SOAL, satu kali per (mata kuliah, sesi)              │
  │   Agent pemetak-soal (model kecil) → output/_petak/sesi<N>.md       │
  │     a. buka halaman seksi, cari soal di MENU APA SAJA               │
- │     b. tulis butir, rubrik, format jawaban, lampiran                │
+ │     b. tulis soal, rubrik, format jawaban, lampiran                │
  │     c. batas keras 12 halaman; tidak menjawab, tidak riset          │
  │   Cache dipakai ulang di run berikutnya.                            │
  │   --remap memaksa buat ulang dari nol.                              │

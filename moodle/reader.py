@@ -1008,7 +1008,7 @@ def render_moodle_html(
         blocks.append(rubrics)
         blocks.append(
             "> Tabel di atas adalah pedoman penilaian resmi. Jawaban WAJIB "
-            "memenuhi setiap butir di dalamnya."
+            "memenuhi setiap butir penilaian di dalamnya."
         )
 
     if include_attachments:

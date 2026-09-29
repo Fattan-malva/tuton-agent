@@ -33,6 +33,13 @@ export type SettingsPayload = Partial<AppConfig> & {
   jobs?: number | string;
   max_pustaka?: number | string;
   transcribe?: string;
+  /**
+   * Model agen pembantu. Dikirim datar (bukan di `runtime`) karena server
+   * menyimpannya ke `.env` sebagai `OPENCODE_MODEL_HELPER`. String kosong
+   * berarti "pilih otomatis" -- server sengaja TIDAK mempertahankan nilai
+   * lama supaya mode otomatis bisa dipulihkan.
+   */
+  opencode_model_helper?: string;
 };
 
 export class ApiError extends Error {

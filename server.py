@@ -281,8 +281,15 @@ def get_config():
             "transcribe": Config.TUTON_TRANSCRIBE,
             "vision_tries": Config.OPENCODE_VISION_TRIES,
             "max_pustaka": Config.TUTON_MAX_PUSTAKA,
+            # Yang BENAR-BENAR dipakai run berikutnya (hasil auto-pilih bila
+            # `OPENCODE_MODEL_HELPER` kosong). Untuk log/display saja.
             "helper_model": helper,
         },
+        # Nilai yang TERSIMPAN di .env, dipisah dari `runtime.helper_model`
+        # supaya form Settings menampilkan pilihan manual yang sebenarnya --
+        # bukan model hasil auto-pilih yang akan ikut ter-save begitu form
+        # dikirim. Kosong = mode otomatis.
+        "helper_model_configured": (Config.OPENCODE_MODEL_HELPER or "").strip(),
     })
 
 
@@ -320,6 +327,15 @@ def save_config():
         "OPENCODE_MODEL": str(data.get("opencode_model") or "").strip()
         or Config.OPENCODE_MODEL
         or DEFAULT_MODEL,
+        # BEDA dengan OPENCODE_MODEL: nilai kosong di sini berarti "pilih
+        # otomatis", jadi TIDAK memakai pola "kalau kosong pertahankan nilai
+        # lama". Kalau tidak, begitu satu model pembantu pernah dipilih manual
+        # tidak ada jalan kembali ke mode otomatis dari Settings. Kosongkan
+        # field-nya untuk mengembalikan `generator.models` ke auto-pilih +
+        # probe satu per satu.
+        # Helper: field kosong berarti "pilih otomatis". Form UI dikirim apa
+        # adanya, jadi nilai auto-pick yang sedang aktif TIDAK ikut ter-save.
+        "OPENCODE_MODEL_HELPER": str(data.get("opencode_model_helper") or "").strip(),
     }
 
     # Setelan kecepatan pipeline. Kalau form tidak mengirim field, nilai saat

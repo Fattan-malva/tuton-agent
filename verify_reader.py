@@ -85,7 +85,7 @@ print(md[:400].replace("\n", "\n    | "))
 print("    ...")
 
 check("judul ikut terbaca", "# Tugas 1 - Entity Relationship" in md)
-check("butir soal terbaca", "1NF, 2NF, dan 3NF" in md)
+check("soal terbaca", "1NF, 2NF, dan 3NF" in md)
 check("instruksi khusus tutor terbaca", "minimal 500 kata" in md)
 check("syarat format terbaca", "Times New Roman 12" in md)
 check("tabel rubrik jadi markdown", "| Aspek | Bobot |" in md and "|---|---|" in md)

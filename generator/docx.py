@@ -11,6 +11,12 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 
+# Placeholder "tidak ada referensi yang terverifikasi" (lihat main.py). Bukan
+# entri daftar pustaka, jadi docx merendernya berbeda dari butir bersitasi.
+_NO_REFERENSI_RE = re.compile(
+    r"tidak\s+ada\s+referensi\s+yang\s+terverifikasi", re.IGNORECASE
+)
+
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
 _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
@@ -703,10 +709,43 @@ def _add_code_block(doc: Document, code: str):
             run.add_break()
 
 
+# Label enumerator di awal baris: "1.", "2)", "a.", "b)", "(1)", "iv)".
+# Dipakai untuk menggeser paragraf berikutnya agar rata dengan TEKS label,
+# bukan dengan angkanya -- hasil yang sama dengan yang you'd dapat di Word
+# saat mengetik daftar manual. Nomor yang diketik sebagai teks literal (bukan
+# fitur List Number) tidak pernah membawa indentasi gantung ke paragraf
+# berikutnya, sehingga jawaban mulai lurus di bawah angka.
+_LABEL_RE = re.compile(r"^\s*(\(?\d{1,2}[.)]|[a-zA-Z][.)]|\d{1,2}\s*[-–])\s+")
+
+
+def _label_indent_pt(prefix: str, font_pt: float) -> float:
+    """Lebar indentasi (pt) untuk menyamakan baris dengan teks sebuah label.
+
+    `prefix` harus menyertakan spasi setelah label, karena yang ingin disejajarkan
+    adalah teks SETELAH "1. " -- bukan karakter terakhir labelnya.
+
+    Perkiraan 0.5em per karakter. Untuk Times New Roman 12pt, "1. " (3 karakter)
+    jadi 18pt = 0.25 inci -- sama persis dengan `w:ind w:left="360"
+    w:hanging="360"` yang dipakai definisi List Number di template, jadi daftar
+    bertingkat tidak meleset dari contoh.
+    """
+    return 0.5 * font_pt * len(prefix)
+
+
 def _render_markdown(doc: Document, md: str):
     lines = md.splitlines()
     i = 0
     ordered_idx = 0
+    # Label baris terakhir (mis. "1. Soal Satu") + lebar indentasi yang harus
+    # dipakai paragraf-paragraf berikutnya sampai label/heading berikutnya.
+    pending_label_pt: float | None = None
+    body_font_pt = 12.0
+    try:
+        size = doc.styles["Normal"].font.size
+        if size is not None:
+            body_font_pt = size.pt
+    except KeyError:
+        pass
     # Setelah heading Daftar Pustaka, butir bernomor adalah referensi, bukan
     # butir jawaban -- dan harus dirender berbeda (lihat blok ordered list).
     in_references = False
@@ -824,6 +863,11 @@ def _render_markdown(doc: Document, md: str):
                     run.font.size = Pt(14)
                 elif level == 3:
                     run.font.size = Pt(12)
+            # Heading berlabel ("### 1. Soal Satu"): judulnya boleh di margin,
+            # tapi isi di bawahnya harus rata dengan teks setelah label, bukan
+            # dengan angkanya. Catat lebarnya untuk paragraf berikutnya.
+            lm = _LABEL_RE.match(heading_text)
+            pending_label_pt = _label_indent_pt(lm.group(0), body_font_pt) if lm else None
             i += 1
             continue
 
@@ -831,6 +875,8 @@ def _render_markdown(doc: Document, md: str):
         if re.match(r"^[-*]\s+", line):
             p = doc.add_paragraph(style="List Bullet")
             _add_runs(p, re.sub(r"^[-*]\s+", "", line))
+            if pending_label_pt:
+                p.paragraph_format.left_indent = Cm(0) + Pt(pending_label_pt)
             i += 1
             ordered_idx = 0
             continue
@@ -858,6 +904,10 @@ def _render_markdown(doc: Document, md: str):
                     p = doc.add_paragraph()
                     p.add_run(f"{num}. ")
                 _add_runs(p, mo.group(2))
+            if pending_label_pt:
+                p.paragraph_format.left_indent = Cm(0) + Pt(pending_label_pt)
+            # Butir bernomor itu sendiri jadi label untuk paragraf setelahnya.
+            pending_label_pt = _label_indent_pt(f"{num}. ", body_font_pt)
             ordered_idx = 1
             i += 1
             continue
@@ -874,6 +924,17 @@ def _render_markdown(doc: Document, md: str):
             continue
         p = doc.add_paragraph()
         _add_runs(p, line.strip())
+        # Paragraf ini bisa jadi label baru ("a. Poin ..." / "(1) Butir ...").
+        # Kalau iya, baris ini sendiri boleh di margin (atau di indent label
+        # sebelumnya), dan paragraf SESUDAHNYA yang harus rata dengan teksnya.
+        lm = _LABEL_RE.match(line.strip())
+        if lm:
+            p.paragraph_format.left_indent = (
+                Cm(0) + Pt(pending_label_pt) if pending_label_pt else None
+            )
+            pending_label_pt = _label_indent_pt(lm.group(0), body_font_pt)
+        elif pending_label_pt:
+            p.paragraph_format.left_indent = Cm(0) + Pt(pending_label_pt)
         i += 1
 
 
@@ -1065,6 +1126,13 @@ def build_docx(
     # Soal. Judul "Soal" hanya ditambah kalau teks soal tidak sudah punya
     # heading sendiri -- kalau ditambah tanpa syarat, hasilnya dua "Soal"
     # berturut-turut (satu dari kita, satu dari markdown).
+    #
+    # `include_soal` sengaja False untuk mode url. Teks hasil scraping
+    # bring metadata Moodle apa adanya -- "Lokasi: My courses > ...", "Opened:",
+    # "Due:", "Jenis konten: tugas" -- yang tidak ada di template dan tidak
+    # ada artinya di berkas yang dikumpulkan tutor. Judul soal dan seluruh
+    # butirnya sudah ditulis ulang sendiri oleh agen di markdown jawaban,
+    # jadi merender `soal_text` hanya menghasilkan duplikat.
     if include_soal and soal_text.strip():
         cleaned = _clean_soal(soal_text)
         if not re.match(r"^\s*#", cleaned):
@@ -1073,7 +1141,7 @@ def build_docx(
         _render_markdown(doc, cleaned)
 
     # Jawab (dari markdown opencode)
-    body = _answer_body(jawaban_md)
+    body = _drop_identity_echo(_answer_body(jawaban_md))
     if body.strip():
         _render_markdown(doc, body)
 
@@ -1120,6 +1188,44 @@ def _answer_body(jawaban_md: str) -> str:
     return jawaban_md
 
 
+# Baris identitas yang sering ditulis ulang agen di dalam "Jawaban Mahasiswa"
+# (Nama:, NIM:, Prodi:, Mata kuliah:). `_identitas_table` sudah menaruh data
+# yang sama di tabel kop, jadi lewatannya berduplikasi di dokumen -- dan
+# telegram-style ini tidak ada di template sama sekali.
+_IDENTITY_LINE_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?(?:\*\*)?"
+    r"(?:nama|nim|prodi|program\s+studi|mata\s+kuliah|semester|ut\s+daerah|fakultas)"
+    r"\s*(?:\*\*)?\s*:",
+    re.IGNORECASE,
+)
+
+
+def _drop_identity_echo(md: str) -> str:
+    """Buang blok identitas yang ditulis ulang agen.
+
+    Baris identitas muncul TEPAT SESUDAH heading pembungkus ("## Jawaban
+    Mahasiswa") dan SEBELUM sub-heading pertama ("### ..."), jadi penyaringannya
+    hanya berlaku di rentang itu. Setelah ada `###`, isi jawaban dimulai dan
+    tidak ada lagi yang boleh dipotong -- kalimat biasa yang kebetulan diawali
+    "Mata kuliah: ..." di tengah paragraf harus utuh.
+    """
+    out: list[str] = []
+    seen_subheading = False
+    for line in md.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            # `###` ke bawah = isi jawaban benar-benar dimulai. Setelah itu
+            # tidak ada lagi baris identitas yang boleh dipotong.
+            if stripped.startswith("###"):
+                seen_subheading = True
+            out.append(line)
+            continue
+        if not seen_subheading and _IDENTITY_LINE_RE.match(line):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def _neutralize_metadata(doc: Document, meta: dict) -> None:
     """Sembunyikan sidik jari generator di properti dokumen.
 
@@ -1163,6 +1269,16 @@ def _apply_hanging_indent_refs(doc: Document):
         txt = p.text.strip()
         if txt.lower().startswith("daftar pustaka"):
             found = True
+            continue
+        if found and not txt:
+            continue
+        if found and _NO_REFERENSI_RE.search(txt):
+            # Placeholder "tidak ada referensi" bukan entri, jadi jangan diberi
+            # hanging indent seperti daftar pustaka sungguhan. Dicetak miring
+            # dan rata tengah supaya terbaca sebagai catatan, bukan sitasi.
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in p.runs:
+                run.italic = True
             continue
         if found and txt:
             pf = p.paragraph_format
@@ -1216,6 +1332,11 @@ def save_doc(
         soal_text=soal_text,
         meta=meta,
         out_docx=docx_path,
+        # Mode url: markdown jawaban sudah memuat judul soal + butir-butirnya,
+        # jadi teks hasil scraping hanya menambah metadata Moodle yang tidak
+        # ada di template. Mode file (Form Soal) tetap merender soal karena
+        # di sana sumbernya memang berkas soal milik pengguna.
+        include_soal=False,
         template=template,
     )
     return docx_path, docx_path

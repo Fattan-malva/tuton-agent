@@ -53,11 +53,19 @@ def base_url() -> str:
     return f"http://127.0.0.1:{port}" if port else ""
 
 
-def soalu(url: str, kind: str = "generic") -> str:
-    """Bentuk URL Reader untuk sebuah URL Moodle (untuk disisipkan ke prompt)."""
+def soalu(url: str, kind: str = "generic", *, fresh: bool = False) -> str:
+    """Bentuk URL Reader untuk sebuah URL Moodle (untuk disisipkan ke prompt).
+
+    `fresh=True` menambahkan `&nc=1`, yang membuat `/soal` mengabaikan cache
+    halaman dan mengambil ulang dari Moodle memakai cookie yang tersimpan.
+    Dipakai agen `pemetak-soal`: tujuannya memetakan soal yang benar-benar
+    ada sekarang, bukan versi yang sudah 30 menit tersimpan. Tanpa ini, tutor
+    yang mengoreksi soal tidak pernah terlihat walau run memakai --force.
+    """
     quoted = urllib.parse.quote(url, safe="")
     kind_q = urllib.parse.quote(kind, safe="")
-    return f"{base_url()}/soal?u={quoted}&k={kind_q}&t={_TOKEN}"
+    fresh_q = "&nc=1" if fresh else ""
+    return f"{base_url()}/soal?u={quoted}&k={kind_q}&t={_TOKEN}{fresh_q}"
 
 
 def fileurl(url: str, kind: str = "file") -> str:
@@ -99,6 +107,9 @@ def handle_soal(
     `rewrite_links=True` (default) menulis ulang seluruh tautan di halaman
     menjadi URL Reader yang bisa dibuka agen. Setel `False` untuk memakai
     perilaku lama (tautan Moodle mentah), misalnya saat membandingkan output.
+
+    `use_cache=False` (dikirim sebagai `&nc=1`) memaksa pembacaan ulang dari
+    Moodle memakai cookie yang tersimpan.
     """
     if not url:
         return 400, "text/plain; charset=utf-8", "URL wajib diisi (parameter u)."
@@ -265,7 +276,12 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/soal":
-            status, ctype, body = handle_soal(q.get("u", ""), q.get("k", "generic"))
+            # `&nc=1` = abaikan cache, ambil ulang dari Moodle. Dipakai
+            # pemetak-soal supaya memetakan soal versi terbaru.
+            use_cache = q.get("nc") != "1"
+            status, ctype, body = handle_soal(
+                q.get("u", ""), q.get("k", "generic"), use_cache=use_cache
+            )
             self._send(status, ctype, body.encode("utf-8", "replace"))
             return
 

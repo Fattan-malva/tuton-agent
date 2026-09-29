@@ -23,7 +23,7 @@ _STYLE_RULES = [
     "Gaya jawaban yang diharapkan (menguji cara berpikir, bukan sekadar meniru kalimat dosen): "
     "langsung ke inti, kalimat jelas dan informal-academic. Untuk soal hitungan tulis "
     "langkah penyelesaian berurutan (Diketahui/ditanya -> penyelesaian -> kesimpulan), "
-    "pakai sub-bagian a/b/c sesuai butir soal, bahasa formal tapi natural.",
+    "pakai sub-bagian a/b/c sesuai soal, bahasa formal tapi natural.",
     "Semua perhitungan/rumus yang memuat simbol dan angka ditulis di baris tersendiri "
     "dibungkus $$ ... $$ (hanya satu persamaan per baris), misal:",
     "  $$ 2A = [[4, 2], [0, 6]] $$",
@@ -38,7 +38,7 @@ _HONESTY_RULES = [
     "JANGAN mengklaim sudah membaca dokumen yang tidak kamu akses. Kalau halaman benar-benar "
     "tidak bisa dibuka, nyatakan bagian mana yang tidak diketahui di bagian Catatan/Asumsi.",
     "Jangan menulis placeholder, TODO, 'dst.', atau contoh angka yang tidak berasal dari soal.",
-    "Jika satu butir mustahil dijawab dari sumber yang ada, tulis jawaban partial yang "
+    "Jika satu soal mustahil dijawab dari sumber yang ada, tulis jawaban partial yang "
     "jujur beserta alasannya -- jangan mengarang angka.",
 ]
 
@@ -64,13 +64,13 @@ _RESEARCH_RULES = [
 ]
 
 _AUDIT_RULES = [
-    "  [ ] Semua butir soal punya bagian jawaban dengan label yang sama.",
-    "  [ ] Tidak ada butir yang dijawab 'seperti di atas' atau 'dapat ditafsirkan begitu saja'.",
+    "  [ ] Semua soal punya bagian jawaban dengan label yang sama.",
+    "  [ ] Tidak ada soal yang dijawab 'seperti di atas' atau 'dapat ditafsirkan begitu saja'.",
     "  [ ] Semua angka hasil hitung sudah dicek ulang; tidak ada yang bertentangan antar bagian.",
     "  [ ] Tidak ada kalimat yang setengah jadi atau terpotong.",
     "  [ ] Daftar Pustaka di file jawaban identik dengan isi file referensi yang "
     "diberikan - tidak ditambah, tidak dikurangi, tidak diubah.",
-    "  [ ] Semua syarat format yang diminta tutor (batas kata, jumlah butir, bentuk "
+    "  [ ] Semua syarat format yang diminta tutor (batas kata, jumlah soal, bentuk "
     "tabel, jumlah desimal, spasi, dan sejenisnya) benar-benar dipenuhi.",
     "  [ ] Tidak ada karakter aneh (mis. huruf CJK/Cyrillic) yang nyasar di dalam kata "
     "Indonesia. Tulis ulang dari nol bila perlu - JANGAN melakukan edit kecil-kecil pada "
@@ -96,7 +96,7 @@ _NO_RESEARCH_RULES = [
 
 _OUTPUT_SKELETON = [
     "## Jawab",
-    "(jawaban untuk setiap butir soal, gunakan subheading/penomoran sesuai soal: a, b, c, ...)",
+    "(jawaban untuk setiap soal, gunakan subheading/penomoran sesuai soal: a, b, c, ...)",
     "",
     "## Daftar Pustaka",
     "1. ...",
@@ -113,7 +113,7 @@ _WRITER_SKELETON = [
     "",
     "## Jawaban Mahasiswa",
     "### <Sub-bagian pertama>",
-    "<isi jawaban butir pertama, dengan penomoran yang sama seperti di soal>",
+    "<isi jawaban soal pertama, dengan penomoran yang sama seperti di soal>",
     "### <Sub-bagian berikutnya>",
     "...",
     "### Kesimpulan",
@@ -212,7 +212,7 @@ def build_writer_prompt(
     Dua file lokal menggantikan pencarian yang sebelumnya agen ini lakukan sendiri:
 
     - `petak_path`   peta soal hasil agen `pemetak-soal` (satu kali per sesi,
-                     di-cache). Berisi butir soal, syarat format, rubrik, dan
+                     di-cache). Berisi soal, syarat format, rubrik, dan
                      lampiran yang relevan.
     - `pustaka_path` daftar referensi hasil agen `pencari-pustaka` (satu kali
                      per item, di-cache).
@@ -238,22 +238,22 @@ def build_writer_prompt(
                 "## Peta soal (WAJIB dibaca paling dulu)",
                 f"Baca file `{petak_path}` dengan tool `read` SEBELUM melakukan apa pun. "
                 "File itu hasil agen pemetaan yang sudah menelusuri halaman Moodle untuk "
-                "sesi ini, jadi isinya sudah gathered: butir soal, syarat format, rubrik, "
+                "sesi ini, jadi isinya sudah gathered: soal, syarat format, rubrik, "
                 "dan daftar lampiran yang relevan.",
                 "",
                 "Isi peta adalah rujukan utama kerjamu. Aturan memakainya:",
-                "  1. Kerjakan SETIAP butir yang tertulis di peta. Butir yang tidak "
+                "  1. Kerjakan SETIAP soal yang tertulis di peta. Soal yang tidak "
                 "dijawab berarti nilai hilang.",
                 "  2. Patuhi syarat format di peta SECARA HARFIAH (batas kata, jumlah "
-                "butir, bentuk tabel, jumlah desimal, dan sejenisnya). Pelanggaran "
+                "soal, bentuk tabel, jumlah desimal, dan sejenisnya). Pelanggaran "
                 "format adalah alasan paling sering jawaban dinyatakan salah bentuk.",
                 "  3. Kalau peta menyebut rubrik atau pedoman penilaian, pastikan setiap "
-                "butir rubrik itu kelihatan di jawabanmu.",
-                "  4. Kalau peta menandai ada butir yang bergantung lampiran atau materi "
+                "aspek rubrik itu kelihatan di jawabanmu.",
+                "  4. Kalau peta menandai ada soal yang bergantung lampiran atau materi "
                 "lain, WAJIB buka lampiran itu (lihat bagian Lampiran di bawah) sebelum "
-                "menjawab butir tersebut. Jangan menjawab dari asumsi.",
-                "  5. Cadangan saja: kalau peta ternyata tidak memuat butir soalmu secara "
-                "lengkap (butir hilang, atau ada judul tanpa pertanyaannya), boleh buka "
+                "menjawab soal tersebut. Jangan menjawab dari asumsi.",
+                "  5. Cadangan saja: kalau peta ternyata tidak memuat soalnya secara "
+                "lengkap (soal hilang, atau ada judul tanpa pertanyaannya), boleh buka "
                 "halaman aslinya dengan webfetch pada URL di bawah. Ini pengecualian, "
                 "bukan langkah wajib. Jangan lakukan bila peta sudah cukup.",
             ]
@@ -292,12 +292,12 @@ def build_writer_prompt(
                 [
                     f"- Isi lampiran sudah diekstrak otomatis ke `{transcript_path}` "
                     "(hasil OCR/vision atas gambar, PDF, dan dokumen).",
-                    "- Baca file transkrip itu dengan tool `read` bila butir "
+                    "- Baca file transkrip itu dengan tool `read` bila soalnya "
                     "pertanyaan ada di dalam lampiran dan tidak tertulis di halaman "
                     "soal. Di UT, PDF atau gambar lampiran sering justru zawarnya, "
                     "sedangkan halaman hanya berisi instruksi umum.",
                     "- Perlakukan isi transkrip sebagai bagian resmi soal, bukan "
-                    "sekadar catatan. Setiap butir yang ada di sana wajib dijawab.",
+                    "sekadar catatan. Setiap soal yang ada di sana wajib dijawab.",
                 ]
             )
         if agent_can_read_files:
@@ -344,14 +344,14 @@ def build_writer_prompt(
             "",
             "## Cara kerja (WAJIB, ikuti berurutan)",
             "LANGKAH 1 - PETA INTERNAL. Dari peta soal dan lampiran, buat daftar internal "
-            "semua butir yang harus dijawab, termasuk setiap persyaratan format. Jangan "
+            "semua soal yang harus dijawab, termasuk setiap persyaratan format. Jangan "
             "tulis daftar ini ke file jawaban; ini catatan internal kamu.",
             "",
-            "LANGKAH 2 - JAWAB. Jawab SETIAP butir dari langkah 1, tidak ada yang "
-            "dilewati. Untuk setiap butir: (a) kerjakan langkahnya, (b) cek ulang hasil "
+            "LANGKAH 2 - JAWAB. Jawab SETIAP soal dari langkah 1, tidak ada yang "
+            "dilewati. Untuk setiap soal: (a) kerjakan langkahnya, (b) cek ulang hasil "
             "hitungannya secara independen (hitung ulang dengan cara lain, cek satuan, "
             "cek masuk akal terhadap besaran soal), (c) tulis jawaban akhirnya di bawah "
-            "sub-bagian dengan label butir yang sama dengan soal.",
+            "sub-bagian dengan label soal yang sama dengan soal.",
             "",
             "LANGKAH 3 - AUDIT SEBELUM MENULIS. Periksa daftar berikut satu per satu, "
             "dan perbaiki sebelum menulis file:",
@@ -387,7 +387,7 @@ def build_writer_prompt(
         [
             "",
             "Penting: AKURASI lebih penting daripada kecepatan. Kerjakan langkah 1-4 "
-            "sesuai urutan, dan pastikan jawaban menjawab SEMUA butir dengan Daftar "
+            "sesuai urutan, dan pastikan jawaban menjawab SEMUA soal dengan Daftar "
             "Pustaka yang persis sama seperti berkas referensi.",
         ]
     )
@@ -481,15 +481,15 @@ def build_file_prompt(
             "",
             "## Cara kerja (WAJIB, ikuti berurutan)",
             "LANGKAH 1 - PETA SOAL. Baca file soal dari atas sampai bawah, lalu buat daftar "
-            "internal semua pertanyaan/butir yang harus dijawab. Jangan tulis peta ini ke "
+            "internal semua pertanyaan/soal yang harus dijawab. Jangan tulis peta ini ke "
             "file jawaban.",
             "",
             *_RESEARCH_RULES,
             "",
-            "LANGKAH 3 - JAWAB. Jawab SETIAP butir dari peta langkah 1, tidak ada yang "
-            "dilewati. Untuk setiap butir: (a) kerjakan langkahnya, (b) cek ulang hasil "
+            "LANGKAH 3 - JAWAB. Jawab SETIAP soal dari peta langkah 1, tidak ada yang "
+            "dilewati. Untuk setiap soal: (a) kerjakan langkahnya, (b) cek ulang hasil "
             "hitungannya secara independen, (c) tulis jawaban akhirnya di bawah "
-            "sub-bagian dengan label butir yang sama dengan soal.",
+            "sub-bagian dengan label soal yang sama dengan soal.",
             "",
             "LANGKAH 4 - AUDIT SEBELUM MENULIS. Periksa daftar berikut satu per satu:",
             *_AUDIT_RULES,
@@ -520,7 +520,7 @@ def build_file_prompt(
         [
             "",
             "Penting: ACCURACY > kecepatan. Kerjakan langkah 1-5 sesuai urutan, dan "
-            "pastikan jawaban menjawab SEMUA butir dengan Daftar Pustaka yang benar-benar "
+            "pastikan jawaban menjawab SEMUA soal dengan Daftar Pustaka yang benar-benar "
             "terverifikasi.",
         ]
     )
@@ -583,7 +583,7 @@ def build_referensi_prompt(
     """Prompt untuk agen `pencari-pustaka`: daftar referensi untuk satu item.
 
     `petak_digest` adalah potongan peta soal milik item ini. Potongan itu
-    penting: daftar referensi untuk satu soal tidak boleh ikut-butir soal lain,
+    penting: daftar referensi untuk satu soal tidak boleh ikut soal lain,
     karena hanya referensi yang benar-benar relevan yang membuat daftar ini
     berguna.
     """
@@ -610,7 +610,7 @@ def build_referensi_prompt(
     if transcript_path and Path(transcript_path).is_file():
         lines.append(
             f"- Isi lampiran sudah diekstrak ke `{transcript_path}`. **Baca dulu** "
-            "kalau kamu punya tool `read`, karena butir soal sering ada di dalam "
+            "kalau kamu punya tool `read`, karena soalnya sering ada di dalam "
             "lampiran dan bukan di halaman."
         )
     lines.extend(
