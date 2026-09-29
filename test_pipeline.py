@@ -824,6 +824,55 @@ def main() -> int:
         check("identitas yang ditulis agen tidak dobel",
               "NIM: 1" not in junk_text and "Nama: Uji" not in junk_text)
 
+        # [14] Rekonstruksi matriks dari text layer, tanpa OCR/AI.
+        #
+        # Karakter di text layer PDF sudah benar; yang hilang hanya tata letak
+        # 2D-nya. Modul `mathlayout` memulihkannya dari posisi karakter, jadi
+        # agen tidak perlu lagi menebak ukuran matriks.
+        from moodle import mathlayout as ml
+
+        def _rows(*texts: str) -> list[ml._Line]:
+            return [ml._Line(float(i * 20), t) for i, t in enumerate(texts)]
+
+        got = ml._matrix_rows(_rows("A = ( 2  1 )", "    ( 0  3 )"))
+        check("matriks 2x2 dipulihkan",
+              got == [["2", "1"], ["0", "3"]], str(got))
+
+        got = ml._matrix_rows(_rows("C = ( 1  5  2 )", "   ( 5  4  5 )"))
+        check("matriks 2x3 dipulihkan",
+              got == [["1", "5", "2"], ["5", "4", "5"]], str(got))
+
+        got = ml._matrix_rows(_rows("= ( 0  13 )", " (−6   15 )"))
+        check("minus Unicode (U+2212) dikenali",
+              got == [["0", "13"], ["-6", "15"]], str(got))
+
+        # Kasus yang TIDAK boleh diubah: jumlah kolom tidak konsisten. Ini
+        # persis ambiguitas 2x2-vs-1x4 yang sebelumnya ditebak agen.
+        got = ml._matrix_rows(_rows("A = ( 2 1 )", "  ( 0 3 4 )"))
+        check("kolom tidak konsisten DITOLAK, bukan ditebak", got is None, str(got))
+
+        # False positive yang ditemukan saat pengujian: prosa berlabel dengan
+        # angka di dalamnya. Kalau lolos, soal yang sudah benar jadi rusak.
+        got = ml._matrix_rows(_rows(
+            "Baris 1, Kolom 1: (2 4)", "Baris 1, Kolom 2: (0 1)"
+        ))
+        check("prosa berlabel tidak dianggap matriks", got is None, str(got))
+
+        got = ml._matrix_rows(_rows("• A= 2", "• AB= 0"))
+        check("baris ber-bullet tidak dianggap matriks", got is None, str(got))
+
+        got = ml._matrix_rows(_rows("Lihat halaman (Bab 1)", "dan bagian (Bab 2)"))
+        check("rujukan kurung bukan matriks", got is None, str(got))
+
+        got = ml._matrix_rows(_rows("Matriks (1 2 3 4 5 6 7 8 9 1 2 3 4 5 6 7 8 9 1 2 3 4)"))
+        check("satu baris tunggal bukan matriks", got is None, str(got))
+
+        rows_ok = ml._matrix_rows(_rows("A = ( 2 1 )", "  ( 0 3 )"))
+        check("format keluaran sesuai kontrak agen penulis",
+              rows_ok is not None
+              and ml._format_matrix(rows_ok) == "[[2, 1], [0, 3]]",
+              ml._format_matrix(rows_ok) if rows_ok else "None")
+
     finally:
         server.shutdown()
         server.server_close()

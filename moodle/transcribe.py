@@ -378,19 +378,36 @@ def _transcribe_image(path: Path, out_file: Path) -> str:
 
 def _pdf_text_layer(path: Path) -> str:
     """Teks yang sudah tercetak di PDF (bukan hasil scan). Murah, jadi selalu
-    dicoba lebih dulu -- ini yang memangkas sebagian besar waktu transkripsi."""
-    try:
-        import fitz
+    dicoba lebih dulu -- ini yang memangkas sebagian besar waktu transkripsi.
 
-        doc = fitz.open(str(path))
+    Lewat `mathlayout.render_pdf_text`, bukan `page.get_text()` biasa, supaya
+    matriks yang pecah jadi beberapa baris dipulihkan menjadi `[[a, b], [c, d]]`
+    dari posisi karakternya. Karakter di text layer sudah benar; yang hilang
+    hanya tata letak 2D. Tanpa langkah ini, agen sempat harus menebak
+    ("rekonstruksi urutan elemen") dan bisa salah menentukan ukuran matriks.
+    """
+    try:
+        from moodle.mathlayout import render_pdf_text
+
+        text = render_pdf_text(path)
+    except Exception as exc:  # noqa: BLE001 - gagal rekonstruksi != gagal PDF
+        print(f"    ! rekonstruksi matriks gagal untuk {path.name}: {exc}")
+        text = ""
+    if not text:
+        # Fallback ke bacaan polos: baris matriks yang masih pecah lebih baik
+        # daripada dokumen kosong.
         try:
-            parts = [page.get_text().strip() for page in doc]
-        finally:
-            doc.close()
-    except Exception as exc:  # noqa: BLE001
-        print(f"    ! pymupdf gagal untuk {path.name}: {exc}")
-        return ""
-    text = "\n\n".join(part for part in parts if part).strip()
+            import fitz
+
+            doc = fitz.open(str(path))
+            try:
+                parts = [page.get_text().strip() for page in doc]
+            finally:
+                doc.close()
+            text = "\n\n".join(part for part in parts if part).strip()
+        except Exception as exc:  # noqa: BLE001
+            print(f"    ! pymupdf gagal untuk {path.name}: {exc}")
+            return ""
     return text if len(re.sub(r"\s+", " ", text)) >= _MIN_PDF_TEXT_CHARS else ""
 
 
