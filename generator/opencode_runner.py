@@ -14,6 +14,103 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
 _WRAP_EXTS = {".cmd", ".bat"} if os.name == "nt" else set()
 
+# opencode >= 2.0 datang sebagai satu binary mandiri. Namanya tetap
+# `opencode.exe` bahkan di Linux/macOS (ELF, bukan PE), jadi kedua nama harus
+# dicoba di semua OS.
+_EXE_NAMES = ("opencode.exe", "opencode", "opencode.cmd", "opencode.bat")
+
+
+def _global_node_modules_dirs() -> list[Path]:
+    """Kandidat direktori `node_modules` global tempat opencode terpasang.
+
+    PENTING: di POSIX `npm root -g` sudah mengembalikan .../lib/node_modules,
+    sedangkan di Windows prefix npm adalah %APPDATA%\npm dan paketnya ada satu
+    level di bawahnya. Dictionaries harus memakai path yang SUDAH termasuk
+    `node_modules`; jangan pernah menambahkannya lagi di sini.
+    """
+    dirs: list[Path] = []
+
+    # Windows: prefix npm global = %APPDATA%\npm.
+    appdata = os.getenv("APPDATA", "").strip()
+    if appdata:
+        dirs.append(Path(appdata) / "npm" / "node_modules")
+
+    # Prefix npm yang dikonfigurasi manual (npm config set prefix ...).
+    for var in ("NPM_CONFIG_PREFIX", "npm_config_prefix"):
+        prefix = os.getenv(var, "").strip()
+        if prefix:
+            base = Path(prefix)
+            # Prefix bisa berupa ".../lib" (default) atau ".../npm" (Windows).
+            dirs.append(base / "lib" / "node_modules")
+            dirs.append(base / "node_modules")
+
+    # POSIX: lokasi standar prefix npm.
+    if os.name != "nt":
+        dirs += [
+            Path("/usr/lib/node_modules"),
+            Path("/usr/local/lib/node_modules"),
+            Path.home() / ".npm-global" / "lib" / "node_modules",
+            Path.home() / ".local" / "lib" / "node_modules",
+            Path.home() / ".bun" / "install" / "global" / "node_modules",
+        ]
+
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for d in dirs:
+        key = str(d)
+        if key not in seen:
+            seen.add(key)
+            unique.append(d)
+    return unique
+
+
+def _candidate_exes(modules: Path) -> list[Path]:
+    """Semua path opencode yang mungkin di dalam satu direktori node_modules."""
+    out: list[Path] = []
+    # opencode >= 2.0 dipaketkan sebagai `@opencode/cli`; versi lama
+    # `opencode-ai`. Keduanya dicoba, nama bin dari `_EXE_NAMES`.
+    for pkg in ("@opencode/cli", "opencode-ai"):
+        for name in _EXE_NAMES:
+            out.append(modules / pkg / "bin" / name)
+    # Fallback: nama paket/versi lain yang belum terdaftar di atas.
+    for pattern in ("*opencode*/bin/opencode*", "@*/*/bin/opencode*"):
+        out += sorted(modules.glob(pattern))
+    return out
+
+
+def _is_runnable(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    # Di POSIX bit+x wajib; di Windows tidak relevan (shim .cmd/.bat).
+    if os.name != "nt" and not os.access(path, os.X_OK):
+        return False
+    return True
+
+
+def _npm_root_g() -> Path | None:
+    """`npm root -g` sebagai sumber terakhir (lambat, jadi paling akhir)."""
+    npm = shutil.which("npm") or shutil.which("npm.cmd")
+    if not npm:
+        return None
+    try:
+        res = subprocess.run(
+            [npm, "root", "-g"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    out = (res.stdout or "").strip().splitlines()
+    for line in out:
+        line = line.strip()
+        # Buang pesan error/warning npm yang ikut tercetak ke stdout.
+        if line and Path(line).is_dir() and not line.startswith(("npm ", "npm error")):
+            return Path(line)
+    return None
+
 
 def _resolve_opencode() -> list[str]:
     """Kembalikan perintah yang valid untuk memanggil opencode lintas-OS."""
@@ -22,28 +119,31 @@ def _resolve_opencode() -> list[str]:
     if exe:
         return [exe]
 
-    # 2) Windows: prefer executable npm asli
-    if os.name == "nt":
-        appdata = os.getenv("APPDATA", "")
-        basis = Path(appdata) / "npm"
-        if basis.is_dir():
-            direct = basis / "node_modules" / "opencode-ai" / "bin" / "opencode.exe"
-            candidates = [direct, *(basis / "node_modules").glob("*opencode*/bin/opencode.exe")]
-            for cand in candidates:
-                if cand.is_file():
-                    return [str(cand)]
-            cmd = shutil.which("opencode")
-            if cmd:
-                return [cmd]
+    # 2) Cari di global npm dir (lihat catatan path di _global_node_modules_dirs)
+    for basis in _global_node_modules_dirs():
+        if not basis.is_dir():
+            continue
+        for cand in _candidate_exes(basis):
+            if _is_runnable(cand):
+                return [str(cand)]
 
-    # 3) tersedia di PATH
+    # 3) shim `opencode` di PATH
     which = shutil.which("opencode")
     if which:
-        # Windows: .cmd/.bat shim dibungkus cmd.exe /c saat dijalankan
         return [which]
+
+    # 4) `npm root -g`. Penting untuk container yang hanya me-mount paket
+    #    opencode tanpa symlink bin, dan untuk prefix npm yang non-standar.
+    root = _npm_root_g()
+    if root is not None:
+        for cand in _candidate_exes(root):
+            if _is_runnable(cand):
+                return [str(cand)]
+
     raise RuntimeError(
         "Tidak menemukan executable opencode. Set OPENCODE_BIN di .env jika perlu."
     )
+
 
 
 def _spawn_cmd(cmd: list[str], cwd: str, env: dict | None = None) -> subprocess.Popen:
@@ -224,15 +324,18 @@ def run_opencode(
 
     assert proc.stdout is not None
     buf = ""
-    # Windows: `pipe.read(n)` memblokir sampai EOF → output opencode tidak
-    # stream trus-menerus dan watchdog timeout tidak pernah jalan. Jadi
-    # set pipe non-blocking supaya tiap chunk yang sudah tersedia langsung
-    # dibaca, dan loop bisa dicek per iterasi.
-    if os.name == "nt":
-        try:
-            os.set_blocking(proc.stdout.fileno(), False)
-        except OSError:
-            pass
+    # `pipe.read(n)` di SEMUA OS memblokir sampai buffer penuh atau EOF, bukan
+    # sampai baris baru tersedia. Akibatnya output opencode tidak stream
+    # trus-menerus dan watchdog timeout tidak pernah sempat dicek.
+    # Set pipe non-blocking supaya tiap chunk yang sudah tersedia langsung
+    # dibaca, dan loop bisa dicek per iterasi. Linux/perlainan punya masalah
+    # yang sama seperti Windows, jadi ini sengaja tidak dibatasi ke `nt`.
+    try:
+        os.set_blocking(proc.stdout.fileno(), False)
+    except (OSError, ValueError):
+        # Kalau tidak bisa (mis. handle sudah ditutup), tetap jalan dengan
+        # perilaku blocking — lebih lambat, tapi tidak fatal.
+        pass
 
     try:
         while True:
