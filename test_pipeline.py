@@ -340,6 +340,7 @@ def main() -> int:
     # dipatch, test menulis ke output/state.json milik user sungguhan.
     state_mod.STATE_FILE = fixtures / "out" / "state.json"
     state_mod._STATE = None
+    state_mod._STATE_STAMP = None
 
     try:
         print("\n[1] Discovery: URL terverifikasi & konten benar")
@@ -513,6 +514,56 @@ def main() -> int:
         main_mod.cmd_status(None)
         main_mod.cmd_scrape(main_mod.argparse.Namespace(course=1))
         check("cmd_status & cmd_scrape tidak error", True)
+
+        print("\n[9] State: perubahan dari proses lain terlihat")
+        # Server Flask (server.py) dan pipeline (main.py) adalah dua proses
+        # berbeda yang menulis state.json yang sama. Kalau state.py memegang
+        # cache di memori selamanya, /api/status dan /api/results terus
+        # mengembalikan keadaan lama, sehingga file .docx yang baru selesai tidak
+        # pernah muncul di menu Hasil sampai server di-restart.
+        cached_state_file = state_mod.STATE_FILE
+        tmp_state = fixtures / "out" / "state_external.json"
+        state_mod.STATE_FILE = tmp_state
+        state_mod._STATE = None
+        state_mod._STATE_STAMP = None
+        try:
+            tmp_state.write_text(json.dumps({"items": {}}), encoding="utf-8")
+            check("state kosong terbaca", state_mod._load()["items"] == {})
+
+            # Simulasikan proses anak main.py yang menulis hasil (.docx selesai).
+            tmp_state.write_text(
+                json.dumps({"items": {"ext:1": {"status": "done"}}}),
+                encoding="utf-8",
+            )
+            check(
+                "perubahan file dari proses lain TERBACA (bukan cache basi)",
+                "ext:1" in state_mod._load()["items"],
+                str(list(state_mod._load()["items"])),
+            )
+
+            # set_item setelah load ulang harus menulis ke file dengan isi
+            # terbaru, bukan menimpa cache usang.
+            state_mod.set_item("ext:2", {"status": "running"})
+            on_disk = json.loads(tmp_state.read_text(encoding="utf-8"))["items"]
+            check(
+                "set_item setelah reload menulis ke disk",
+                on_disk.get("ext:1", {}).get("status") == "done"
+                and on_disk.get("ext:2", {}).get("status") == "running",
+                str(on_disk),
+            )
+
+            # File korup / hilang di luar proses: jangan sampai crash.
+            tmp_state.write_text("{bukan json", encoding="utf-8")
+            check("file korup -> state kosong, tidak crash",
+                  state_mod._load()["items"] == {})
+            tmp_state.unlink()
+            check("file hilang -> state kosong, tidak crash",
+                  state_mod._load()["items"] == {})
+        finally:
+            state_mod.STATE_FILE = cached_state_file
+            state_mod._STATE = None
+            state_mod._STATE_STAMP = None
+            tmp_state.unlink(missing_ok=True)
 
     finally:
         server.shutdown()
