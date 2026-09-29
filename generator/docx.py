@@ -707,6 +707,9 @@ def _render_markdown(doc: Document, md: str):
     lines = md.splitlines()
     i = 0
     ordered_idx = 0
+    # Setelah heading Daftar Pustaka, butir bernomor adalah referensi, bukan
+    # butir jawaban -- dan harus dirender berbeda (lihat blok ordered list).
+    in_references = False
     while i < len(lines):
         line = lines[i].rstrip()
 
@@ -799,17 +802,28 @@ def _render_markdown(doc: Document, md: str):
             i += 1
             continue
 
-        # Heading
+        # Heading -> style Heading 2/3 milik template, bukan ukuran font manual.
+        # Menyetel size manual di sini membuat definisi template (ukuran, warna,
+        # jarak) tidak berlaku dan hasil keluaran terlihat berbeda dari contoh.
         m = re.match(r"^(#{1,4})\s+(.*)$", line)
         if m:
             level = len(m.group(1))
+            heading_text = m.group(2).strip()
+            if heading_text.lower().startswith("daftar pustaka"):
+                in_references = True
+            style_name = _heading_style(doc, level)
             p = doc.add_paragraph()
-            run = p.add_run(m.group(2).strip())
+            run = p.add_run(heading_text)
             run.bold = True
-            if level == 2:
-                run.font.size = Pt(14)
-            elif level == 3:
-                run.font.size = Pt(12)
+            if style_name != "Normal":
+                p.style = doc.styles[style_name]
+            else:
+                # Tanpa style Heading (dokumen tanpa template), tetap beri
+                # pembedaan visual sesuai tingkatnya.
+                if level == 2:
+                    run.font.size = Pt(14)
+                elif level == 3:
+                    run.font.size = Pt(12)
             i += 1
             continue
 
@@ -821,13 +835,29 @@ def _render_markdown(doc: Document, md: str):
             ordered_idx = 0
             continue
 
-        # Ordered list
+        # Ordered list -> penomoran asli Word ("List Number"), bukan angka
+        # yang diketik manual. Versi lama menulis "1. " sebagai run biasa, jadi
+        # penomoran tidak pernah menyesuaikan saat butir disisipkan di tengah,
+        # dan style-nya tidak sama dengan template.
+        #
+        # Pengecualian: isi Daftar Pustaka tetap angka literal + hanging indent
+        # ala APA, sesuai template. Nomor otomatis dari Word akan menghitung
+        # butir jawaban yang mendahuluinya, sehingga referensinya bisa mulai
+        # dari angka 4 -- dan yang dirujuk di dalam teks jadi tidak cocok.
         mo = re.match(r"^(\d+)[.)]\s+(.*)$", line)
         if mo:
             num = mo.group(1).lstrip("0") or "0"
-            p = doc.add_paragraph()
-            p.add_run(f"{num}. ")
-            _add_runs(p, mo.group(2))
+            if in_references:
+                p = doc.add_paragraph()
+                p.add_run(f"{num}. ")
+                _add_runs(p, mo.group(2))
+            else:
+                try:
+                    p = doc.add_paragraph(style="List Number")
+                except KeyError:
+                    p = doc.add_paragraph()
+                    p.add_run(f"{num}. ")
+                _add_runs(p, mo.group(2))
             ordered_idx = 1
             i += 1
             continue
@@ -869,21 +899,33 @@ def _clean_soal(md: str) -> str:
     return "\n".join(out)
 
 
-def build_docx(
-    *,
-    jawaban_md: str,
-    soal_text: str,
-    meta: dict,
-    out_docx: Path,
-    include_soal: bool = True,
-) -> Path:
-    # Sanitasi di pintu masuk: meta, soal, dan jawaban bisa memuat karakter
-    # kontrol dari scraping Moodle. Run header/judul tidak lewat _normalize_text
-    # sehingga harus dibersihkan di sini juga.
-    soal_text = _strip_control_chars(soal_text)
-    jawaban_md = _strip_control_chars(jawaban_md)
-    meta = {k: _strip_control_chars(str(v)) for k, v in meta.items()}
+def _load_base_document(template_path: Path | None):
+    """Buka template sebagai dokumen dasar.
 
+    Template adalah sumber kebenaran format. Dengan memuat filenya, kita mewarisi
+    seluruh definisi yang tidak kita Listing-kan satu per satu: page setup
+    (ukuran kertas, margin), theme, numbering.xml (penomoran butir asli Word),
+    dan seluruh definisi style. Kalau nanti template diperbarui, hasil keluaran
+    ikut berubah tanpa menyentuh kode.
+
+    Kandungan teksnya dibuang; yang dipertahankan hanya kerangka. Kalau template
+    hilang atau rusak, jatuh ke dokumen kosong dengan tipografi bawaan supaya
+    pipeline tidak berhenti total hanya karena satu file.
+
+    Return (doc, dari_template, font_nama, font_ukuran).
+    """
+    if template_path and Path(template_path).is_file():
+        try:
+            doc = Document(str(template_path))
+            # PENTING: tipografi harus dibaca SEBELUM body dikosongkan. Setelah
+            # dihapus tidak ada satu pun run tersisa untuk disampel, sehingga
+            # font isi template tak akan pernah terdeteksi dan `Normal` akan
+            # kembali ke default-nya sendiri (Arial, bukan Times New Roman).
+            font_name, font_size = _template_body_font(doc)
+            _clear_body(doc)
+            return doc, True, font_name, font_size
+        except Exception as exc:  # noqa: BLE001 - template tidak boleh mematikan pipeline
+            print(f"  ! template tidak bisa dibaca ({Path(template_path).name}): {exc}")
     doc = Document()
     style = doc.styles["Normal"]
     style.font.name = "Times New Roman"
@@ -895,38 +937,145 @@ def build_docx(
         if q in rf.attrib:
             del rf.attrib[q]
     rf.set(qn("w:eastAsia"), "Times New Roman")
+    return doc, False, "Times New Roman", Pt(12)
 
-    # Header identitas
-    for label, key in (("Nama", "nama"), ("NIM", "nim"), ("Prodi", "prodi"), ("Matkul", "matkul")):
-        p = doc.add_paragraph()
-        r = p.add_run(f"{label} : ")
-        r.bold = True
-        p.add_run(str(meta.get(key, "")))
 
-    # Judul
-    title = f"{meta.get('kind_label', '')} {meta.get('display_index', '')} {meta.get('matkul', '')}".strip()
+def _clear_body(doc: Document) -> None:
+    """Kosongkan isi dokumen, pertahankan sectPr (page setup) di akhir body.
+
+    `sectPr` tidak boleh dihapus: itu yang membawa ukuran kertas, margin, dan
+    jarak header/footer. Tanpa itu, Letter/margin template hilang dan hasilnya
+    kembali ke default Word.
+    """
+    body = doc.element.body
+    for child in list(body):
+        if child.tag == qn("w:sectPr"):
+            continue
+        body.remove(child)
+
+
+def _template_body_font(doc: Document) -> tuple[str, Pt | None]:
+    """Ambil font yang BENAR-BENAR dipakai isi template.
+
+    Penting karena template bisa tidak konsisten: style `Normal` menunjuk satu
+    font, tapi tiap run di dalamnya membawa override sendiri. Kalau kita cuma
+    percaya style `Normal`, paragraf yang kita tambahkan akan tampil berbeda dari
+    paragraf contoh -- persis kesalahan "tidak sama persis" yang harus dihindari.
+    Jadi yang dicari adalah run yang paling sering muncul, bukan default style.
+    """
+    counts: dict[tuple[str, int], int] = {}
+    for para in doc.paragraphs:
+        for run in para.runs:
+            name = run.font.name
+            if not name:
+                continue
+            size = int(run.font.size.pt) if run.font.size is not None else 0
+            counts[(name, size)] = counts.get((name, size), 0) + len(run.text.strip()) or 1
+    if not counts:
+        return "", None
+    (name, size), _ = max(counts.items(), key=lambda kv: kv[1])
+    return name, Pt(size) if size else None
+
+
+def _apply_base_typography(doc: Document, font_name: str, font_size: Pt | None) -> None:
+    """Samakan style paragraf dasar dengan font isi template."""
+    if not font_name:
+        return
+    for style_name in ("Normal", "List Paragraph", "Body Text"):
+        try:
+            style = doc.styles[style_name]
+        except KeyError:
+            continue
+        style.font.name = font_name
+        if font_size is not None:
+            style.font.size = font_size
+        rpr = style.element.get_or_add_rPr()
+        rf = rpr.get_or_add_rFonts()
+        for attr in ("w:asciiTheme", "w:hAnsiTheme", "w:eastAsiaTheme", "w:cstheme"):
+            q = qn(attr)
+            if q in rf.attrib:
+                del rf.attrib[q]
+        rf.set(qn("w:eastAsia"), font_name)
+
+
+def _identitas_table(doc: Document, meta: dict) -> None:
+    """Tabel identitas 2 kolom: label | nilai.
+
+    Mengikuti template (yang memakai `Table Grid`), bukan paragraf
+    "Nama : ..." seperti versi lama. Baris yang nilainya kosong dilewati supaya
+    field yang belum diisi di .env tidak tercetak sebagai baris kosong.
+    """
+    rows = [
+        ("Nama", meta.get("nama", "")),
+        ("NIM", meta.get("nim", "")),
+        ("Semester", meta.get("semester", "")),
+        ("UT Daerah", meta.get("ut_daerah", "")),
+    ]
+    filled = [(label, str(val).strip()) for label, val in rows if str(val or "").strip()]
+    if not filled:
+        return
+    table = doc.add_table(rows=0, cols=2)
+    try:
+        table.style = "Table Grid"
+    except KeyError:
+        pass
+    for label, value in filled:
+        cells = table.add_row().cells
+        label_run = cells[0].paragraphs[0].add_run(label)
+        label_run.bold = True
+        cells[1].paragraphs[0].add_run(value)
+    doc.add_paragraph()
+
+
+def build_docx(
+    *,
+    jawaban_md: str,
+    soal_text: str,
+    meta: dict,
+    out_docx: Path,
+    include_soal: bool = True,
+    template: Path | None = None,
+) -> Path:
+    # Sanitasi di pintu masuk: meta, soal, dan jawaban bisa memuat karakter
+    # kontrol dari scraping Moodle. Run header/judul tidak lewat _normalize_text
+    # sehingga harus dibersihkan di sini juga.
+    soal_text = _strip_control_chars(soal_text)
+    jawaban_md = _strip_control_chars(jawaban_md)
+    meta = {k: _strip_control_chars(str(v)) for k, v in meta.items()}
+
+    if template is None:
+        template = _default_template_path()
+    doc, from_template, font_name, font_size = _load_base_document(
+        Path(template) if template else None
+    )
+    if from_template:
+        _apply_base_typography(doc, font_name, font_size)
+
+    # Judul: TNR 18 bold center, mengikuti template. Ukuran diambil dari style
+    # `Title` kalau ada supaya perubahan di template ikut terbawa.
+    title = f"{meta.get('kind_label', '')} {meta.get('display_index', '')}".strip()
     tp = doc.add_paragraph()
     tp.alignment = WD_ALIGN_PARAGRAPH.CENTER
     tr = tp.add_run(title)
     tr.bold = True
-    tr.font.size = Pt(13)
+    tr.font.size = Pt(18)
 
-    # Soal
+    _identitas_table(doc, meta)
+
+    # Soal. Judul "Soal" hanya ditambah kalau teks soal tidak sudah punya
+    # heading sendiri -- kalau ditambah tanpa syarat, hasilnya dua "Soal"
+    # berturut-turut (satu dari kita, satu dari markdown).
     if include_soal and soal_text.strip():
-        doc.add_paragraph()
-        sp = doc.add_paragraph()
-        sr = sp.add_run("Soal")
-        sr.bold = True
-        sr.font.size = Pt(14)
-        _render_markdown(doc, _clean_soal(soal_text))
+        cleaned = _clean_soal(soal_text)
+        if not re.match(r"^\s*#", cleaned):
+            sh = doc.add_paragraph(style=_heading_style(doc, 2))
+            sh.add_run("Soal")
+        _render_markdown(doc, cleaned)
 
     # Jawab (dari markdown opencode)
-    try:
-        jawab_idx = jawaban_md.lower().find("## jawab")
-        body = jawaban_md[jawab_idx:] if jawab_idx != -1 else jawaban_md
-    except Exception:  # noqa: BLE001
-        body = jawaban_md
-    _render_markdown(doc, body)
+    body = _answer_body(jawaban_md)
+    if body.strip():
+        _render_markdown(doc, body)
 
     _apply_hanging_indent_refs(doc)
     _neutralize_metadata(doc, meta)
@@ -934,6 +1083,41 @@ def build_docx(
     out_docx.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out_docx))
     return out_docx
+
+
+def _default_template_path() -> Path | None:
+    """Template standar; `None` kalau folder template tidak ada."""
+    from config import TEMPLATE_DIR
+
+    if not TEMPLATE_DIR.is_dir():
+        return None
+    docx = sorted(TEMPLATE_DIR.glob("*.docx"))
+    return docx[0] if docx else None
+
+
+def _heading_style(doc: Document, level: int) -> str:
+    """`##` -> Heading 2, `###` -> Heading 3, dengan fallback aman.
+
+    Template menentukan ukuran/warna heading lewat style-nya sendiri; kalau
+    kita setsize manual, perubahan template jadi tidak berlaku dan hasilnya
+    menyimpang dari contoh. Kalau style tidak ada (dokumen tanpa template),
+    turun ke bold polos.
+    """
+    wanted = f"Heading {min(max(level, 2), 3)}"
+    try:
+        doc.styles[wanted]
+    except KeyError:
+        return "Normal"
+    return wanted
+
+
+def _answer_body(jawaban_md: str) -> str:
+    """Ambil bagian jawaban saja, buang sisa sebelum heading pertama."""
+    for marker in ("## jawaban mahasiswa", "## jawab", "## jawaban"):
+        idx = jawaban_md.lower().find(marker)
+        if idx != -1:
+            return jawaban_md[idx:]
+    return jawaban_md
 
 
 def _neutralize_metadata(doc: Document, meta: dict) -> None:
@@ -1004,7 +1188,14 @@ def _convert_to_doc(docx_path: Path, doc_path: Path) -> bool:
         return False
 
 
-def save_doc(jawaban_md: str, soal_text: str, meta: dict, out_dir: Path) -> tuple[Path, Path]:
+def save_doc(
+    jawaban_md: str,
+    soal_text: str,
+    meta: dict,
+    out_dir: Path,
+    *,
+    template: Path | None = None,
+) -> tuple[Path, Path]:
     """Simpan jawaban sebagai satu file .docx final (equation OMML asli).
 
     Equation asli (Word Equation) hanya dapat disimpan dalam format OOXML
@@ -1016,10 +1207,15 @@ def save_doc(jawaban_md: str, soal_text: str, meta: dict, out_dir: Path) -> tupl
     doc_path = out_dir / f"{base}.doc"
     doc_path.unlink(missing_ok=True)
 
+    if template is not None and not Path(template).is_file():
+        print(f"  ! format jawaban tidak ditemukan ({Path(template).name}), pakai template standar.")
+        template = None
+
     build_docx(
         jawaban_md=jawaban_md,
         soal_text=soal_text,
         meta=meta,
         out_docx=docx_path,
+        template=template,
     )
     return docx_path, docx_path

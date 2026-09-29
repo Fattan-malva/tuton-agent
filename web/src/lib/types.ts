@@ -105,17 +105,24 @@ export interface ResultsResponse {
 
 export interface RuntimeConfig {
   jobs: number;
-  soal_mode: string;
   timeout: number;
   retries: number;
   transcribe: string;
   vision_tries: number;
+  /** Batas keras jumlah referensi per jawaban. Batas biaya, bukan selera. */
+  max_pustaka: number;
+  /** Model murah untuk pemetaan soal dan pencarian referensi. Kosong = otomatis. */
+  helper_model: string;
 }
 
 export interface AppConfig {
   nama: string;
   nim: string;
   prodi: string;
+  /** Isi baris "Semester" di tabel identitas dokumen. Boleh kosong. */
+  semester: string;
+  /** Isi baris "UT Daerah" di tabel identitas dokumen. Boleh kosong. */
+  ut_daerah: string;
   model: string;
   default_model?: string;
   base_url: string;

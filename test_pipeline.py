@@ -18,9 +18,11 @@ Tidak ada panggilan jaringan keluar dan tidak ada biaya model.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 import threading
+from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -31,6 +33,10 @@ sys.path.insert(0, ".")
 PASS: list[str] = []
 FAIL: list[tuple[str, str]] = []
 PROMPTS: list[str] = []
+# Prompt dikelompokkan per agen supaya pemeriksaan bisa menunjuk yang tepat.
+# Mengambil `PROMPTS[0]` saja tidak lagi cukup: pipeline sekarang memanggil
+# pemetaan dulu, lalu pencarian referensi, lalu penulisan.
+AGENT_PROMPTS: dict[str, list[str]] = defaultdict(list)
 
 
 def check(name: str, condition: bool, detail: str = "") -> None:
@@ -233,8 +239,55 @@ class MockMoodle(BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------------------
 # Stub agent
+#
+# Pipeline punya tiga agen dengan peran berbeda, dan ketiganya memanggil
+# `opencode run` lewat fungsi yang sama. Stub di sini menyimulasikan semuanya:
+# agen peta menulis peta, agen pustaka menulis daftar referensi, dan agen
+# penulis menulis jawaban. Isi tiap stub harus cukup panjang untuk lolos ambang
+# cache, kalau tidak tahap berikutnya menganggapnya gagal dan memakai jalur
+# cadangan -- yang justru membuat prompt yang diperiksa jadi tidak sesuai.
 # ---------------------------------------------------------------------------
-GOOD_ANSWER = """## Jawab
+PETAK_STUB = """# Peta Soal - Basis Data 64 - Sesi 1
+
+Halaman yang diperiksa: 2. Batas: 12.
+
+## Buka diskusi
+
+- Jenis: diskusi
+- Nomor: 1
+- Halaman: http://127.0.0.1:0/soal?u=abc&k=halaman&t=xyz
+- Butir yang ditanyakan:
+  1. Jelaskan perbedaan model relasi 1NF, 2NF, dan 3NF.
+  2. Baitlah rancangan database untuk sistem informasi absensi mahasiswa.
+- Format jawaban: uraian singkat, maksimal 300 kata per butir.
+- Rubrik: ketepatan konsep 40, contoh 30, bahasa 30.
+- Lampiran: tugas1.pdf
+- Perlu lampiran lain: tidak
+
+## Buka tugas
+
+- Jenis: tugas
+- Nomor: 1
+- Halaman: http://127.0.0.1:0/soal?u=qrs&k=halaman&t=abc
+- Butir yang ditanyakan:
+  1. Jelaskan perbedaan model relasi 1NF, 2NF, dan 3NF.
+- Format jawaban: uraian dengan tabel perbandingan.
+- Rubrik: tidak ada
+- Lampiran: tugas1.pdf
+- Perlu lampiran lain: tidak
+
+## Belum diperiksa
+- Tidak ada tautan yang tertinggal.
+"""
+
+REF_STUB = """1. Connolly, T., & Begg, C. (2015). Database Systems: A Practical Approach to
+   Design, Implementation, and Management (6th ed.). Pearson Education. ISBN
+   978-1-4479-3248-8.
+2. Elmasri, R., & Navathe, S. B. (2016). Fundamentals of Database Systems
+   (7th ed.). Pearson Education. ISBN 978-0-13-468599-1.
+"""
+
+GOOD_ANSWER = """## Jawaban Mahasiswa
 
 ### a. Perbedaan 1NF, 2NF, dan 3NF
 
@@ -272,17 +325,41 @@ def _stub_transcribe_opencode(prompt: str, **_kwargs):
     return type("R", (), {"returncode": 0, "stdout": "SELESAI", "stderr": ""})()
 
 
-def _stub_run_opencode(prompt: str, **_kwargs):
-    """Meniru `run_opencode`: catat prompt, tulis jawaban ke path yang diminta."""
-    PROMPTS.append(prompt)
+def _out_path(prompt: str, marker: str) -> Path | None:
+    """Ambil path keluaran dari baris prompt yang memuat `marker`.
+
+    Path dicari per baris, bukan dengan memindai seluruh prompt: prompt agen
+    penulis juga menyebut path peta dan path referensi, sehingga pemindaian
+    tanpa batas baris akan menulis isi ke berkas yang salah.
+    """
     for line in prompt.splitlines():
-        if line.startswith("7. Tulis jawaban final") or "Tulis jawaban final dalam format" in line:
-            for token in line.split("`"):
-                if token.endswith(".md"):
-                    out = Path(token)
-                    out.parent.mkdir(parents=True, exist_ok=True)
-                    out.write_text(GOOD_ANSWER, encoding="utf-8")
-                    break
+        if marker not in line:
+            continue
+        for token in line.split("`"):
+            if token.endswith(".md"):
+                return Path(token)
+    return None
+
+
+# Penanda unik tiap agen, supaya stub tahu berkas mana yang harus ditulisnya.
+_STUB_BY_AGENT = {
+    "pemetak-soal": ("Tulis peta soal ke:", PETAK_STUB),
+    "pencari-pustaka": ("Tulis Daftar Pustaka ke", REF_STUB),
+}
+_WRITER_MARKER = "Tulis jawaban final dalam format Markdown ke"
+
+
+def _stub_run_opencode(prompt: str, **kwargs):
+    """Miru `run_opencode`: catat prompt sesuai agennya, lalu tulis keluarannya."""
+    agent = str(kwargs.get("agent") or "tuton").strip()
+    PROMPTS.append(prompt)
+    AGENT_PROMPTS[agent].append(prompt)
+
+    marker, body = _STUB_BY_AGENT.get(agent, (_WRITER_MARKER, GOOD_ANSWER))
+    out = _out_path(prompt, marker)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(body, encoding="utf-8")
     return type("R", (), {"returncode": 0, "stdout": "Selesai", "stderr": ""})()
 
 
@@ -401,7 +478,21 @@ def main() -> int:
             course=1, sesi=1, force=True, kind="all", jobs=2, soal_mode=""
         )
         main_mod.cmd_run(args)
-        check("agent dipanggil untuk 2 item", len(PROMPTS) == 2, f"{len(PROMPTS)} prompt")
+
+        writer_p = AGENT_PROMPTS["tuton"]
+        petak_p = AGENT_PROMPTS["pemetak-soal"]
+        pustaka_p = AGENT_PROMPTS["pencari-pustaka"]
+        check("agen penulis dipanggil untuk 2 item", len(writer_p) == 2, f"{len(writer_p)} prompt")
+        check(
+            "peta soal cukup SATU kali untuk satu sesi berisi 2 item",
+            len(petak_p) == 1,
+            f"{len(petak_p)} prompt peta",
+        )
+        check(
+            "referensi dicari satu kali per item",
+            len(pustaka_p) == 2,
+            f"{len(pustaka_p)} prompt referensi",
+        )
 
         out_root = fixtures / "out"
         state_path = out_root / "state.json"
@@ -433,20 +524,79 @@ def main() -> int:
               len(transcripts) == 2, f"{len(transcripts)} file")
 
         print("\n[5] Prompt yang diterima AI")
-        if PROMPTS:
-            p = PROMPTS[0]
-            check("prompt berisi URL Reader", "http://127.0.0.1:" in p and "/soal?u=" in p)
-            check("prompt menyuruh webfetch", "webfetch" in p)
+
+        # Bagian ini memeriksa prompt agen PENULIS. Prompt pemetaan dan
+        # prompt pencarian referensi punya bentuk yang berbeda, jadi keduanya
+        # diperiksa terpisah di [5b].
+        if writer_p:
+            p = writer_p[0]
+            check("prompt memuat URL Reader", "http://127.0.0.1:" in p and "/soal?u=" in p)
+            check("prompt menyebut webfetch sebagai cadangan", "webfetch" in p)
             check("prompt TIDAK menempel soal.md", "soal.md" not in p)
-            check("prompt menyebut rubrik", "Rubrik" in p or "rubrik" in p)
+            check("prompt menekankan rubrik", "Rubrik" in p or "rubrik" in p)
             check("prompt menunjuk file transkrip", "transkrip_" in p)
             check("prompt tidak menumpuk transkripsi inline",
                   "Topik Diskusi Ke 1</strong>" not in p)
             check("prompt punya Daftar Pustaka", "Daftar Pustaka" in p)
             check("identitas masuk prompt", "Mahasiswa Uji" in p)
             check("token Reader ada di URL", "&t=" in p)
-        diskusi_prompts = [p for p in PROMPTS if "Jenis pekerjaan: diskusi" in p]
-        tugas_prompts = [p for p in PROMPTS if "Jenis pekerjaan: tugas" in p]
+
+            print("\n[5a] Agen penulis membaca hasil kerja agen lain")
+            peta_files = [t for t in p.split("`") if t.endswith(".md") and "_petak" in t]
+            ref_files = [t for t in p.split("`") if t.endswith(".md") and "referensi_" in t]
+            check("prompt menunjuk file peta soal", bool(peta_files), str(peta_files[:1]))
+            check("prompt menunjuk file daftar pustaka", bool(ref_files), str(ref_files[:1]))
+            check("peta dan referensi bukan file yang sama",
+                  bool(peta_files) and bool(ref_files) and peta_files[0] != ref_files[0])
+            check("petanya benar-benar ada di disk", all(Path(t).is_file() for t in peta_files))
+            check("referensinya benar-benar ada di disk", all(Path(t).is_file() for t in ref_files))
+            check("agen penulis DILARANG melakukan riset sendiri",
+                  "DILARANG mencari referensi sendiri" in p)
+            check("agen penulis diwajibkan menyalin daftar pustaka",
+                  "Salin persis" in p)
+            check("prompt meminta heading 'Jawaban Mahasiswa'",
+                  "## Jawaban Mahasiswa" in p)
+            check("prompt tidak menyuruh mencari referensi baru",
+                  "websearch" not in p.replace("Jangan pakai websearch", ""))
+        else:
+            check("ada prompt agen penulis", False, "tidak ada")
+
+        print("\n[5b] Prompt agen pembantu")
+        if petak_p:
+            pp = petak_p[0]
+            # Batas jumlah halaman sengaja TIDAK ditulis ulang di prompt. Petunjuk
+            # agen sudah ada di `.opencode/agent/pemetak-soal.md`, dan
+            # mengulangnya di prompt hanya menambah token pada tiap pemanggilan.
+            # Yang diuji di sini adalah prompt tetap memuat fakta faktual,
+            # sedangkan batasnya diuji dari definisi agen.
+            check("prompt peta menunjuk file keluaran",
+                  "Tulis peta soal ke:" in pp and ".md" in pp)
+            check("prompt peta menyebut halaman seksi", "/course/view.php?id=" in pp)
+            check("prompt peta tidak menyuruh menjawab soal",
+                  "Jangan menjawab soal" not in pp)
+            check("prompt peta tidak melontarkan aturan yang panjang",
+                  "webfetch" not in pp and "Daftar Pustaka" not in pp)
+            definisi = Path(".opencode/agent/pemetak-soal.md").read_text(encoding="utf-8")
+            check("definisi agen pemetaan punya batas keras jumlah halaman",
+                  re.search(r"[Bb]atas[:\s*]*\**\d+", definisi) is not None)
+            check("definisi agen pemetaan menyuruh menulis berkas Markdown",
+                  "Markdown" in definisi and "JSON" in definisi)
+        else:
+            check("ada prompt peta", False, "tidak ada")
+
+        if pustaka_p:
+            rp = pustaka_p[0]
+            check("prompt referensi menyebut batas keras jumlah referensi",
+                  f"maksimal" in rp.lower() or "batas" in rp.lower())
+            check("prompt referensi memuat isi soal dari peta",
+                  "## Isi soal" in rp)
+            check("prompt referensi menyuruh jangan menjawab soal",
+                  "Jangan menjawab soal" in rp)
+        else:
+            check("ada prompt referensi", False, "tidak ada")
+
+        diskusi_prompts = [p for p in writer_p if "Jenis pekerjaan: diskusi" in p]
+        tugas_prompts = [p for p in writer_p if "Jenis pekerjaan: tugas" in p]
         check("prompt diskusi dapat aturan manfaat",
               any("Manfaat dan Relevansi" in p for p in diskusi_prompts),
               f"{len(diskusi_prompts)} prompt diskusi")

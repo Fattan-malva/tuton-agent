@@ -13,24 +13,32 @@ interface SettingsForm {
   nama: string;
   nim: string;
   prodi: string;
+  semester: string;
+  ut_daerah: string;
   moodle_session: string;
   moodle_url: string;
   opencode_model: string;
   output_dir: string;
   jobs: string;
-  soal_mode: 'url' | 'file';
+  max_pustaka: string;
 }
+
+/** Batas keras daftar pustaka. Di-hardcode di UI supaya form tidak pernah
+ *  mengirim angka absurd yang hanya akan ditolak server. */
+const DEFAULT_MAX_PUSTAKA = 5;
 
 const emptyForm: SettingsForm = {
   nama: '',
   nim: '',
   prodi: '',
+  semester: '',
+  ut_daerah: '',
   moodle_session: '',
   moodle_url: '',
   opencode_model: '',
   output_dir: './output',
   jobs: '2',
-  soal_mode: 'url',
+  max_pustaka: String(DEFAULT_MAX_PUSTAKA),
 };
 
 interface ModelPickerProps {
@@ -139,12 +147,18 @@ function ModelPicker({
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search
-              size={15}
-              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted"
+              size={16}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
               aria-hidden="true"
             />
             <input
-              className="pixel-input font-terminal pl-8"
+              // Padding kiri WAJIB lewat `pixel-input-icon`, bukan utility
+              // Tailwind seperti `pl-8`. Class `pixel-*` ditulis di luar
+              // `@layer`, dan di CSS kaskade aturan tanpa layer selalu menang
+              // atas utility yang Berlapis -- jadi `pl-8` diam-diam diabaikan
+              // dan teks menabrak ikon. `pixel-input-icon` yang mengaturnya
+              // (38px), jadi ada ruang lega untuk ikon 16px di `left-3`.
+              className="pixel-input pixel-input-icon font-terminal"
               name="opencode_model"
               value={open ? query : value}
               placeholder={value || defaultModel}
@@ -285,12 +299,14 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
       nama: config?.nama ?? '',
       nim: config?.nim ?? '',
       prodi: config?.prodi ?? '',
+      semester: config?.semester ?? '',
+      ut_daerah: config?.ut_daerah ?? '',
       moodle_session: '',
       moodle_url: config?.base_url ?? '',
       opencode_model: config?.model && config.model !== '(default)' ? config.model : '',
       output_dir: config?.output_dir ?? './output',
       jobs: String(runtime?.jobs ?? 2),
-      soal_mode: runtime?.soal_mode === 'file' ? 'file' : 'url',
+      max_pustaka: String(runtime?.max_pustaka ?? DEFAULT_MAX_PUSTAKA),
     });
   }, [config]);
 
@@ -302,6 +318,10 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
     event.preventDefault();
     setIsSaving(true);
 
+    // Field angka dikirim sebagai string dari `<input type="number">`. Server
+    // mem-parsing sendiri (dan memakai nilai lama kalau tidak terbaca), jadi
+    // tidak perlu konversi di sini -- konversi diam-diam justru menyembunyikan
+    // input yang tidak valid.
     try {
       const response = await apiClient.saveConfig(form);
       if (!response.success) throw new Error(response.error || 'Gagal menyimpan settings.');
@@ -320,7 +340,9 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
       <div className="mb-6 max-w-3xl">
         <div className="font-terminal text-[10px] uppercase tracking-[0.18em] text-accent">Control Room</div>
         <h1 id="settings-heading" className="mt-1 font-display text-2xl leading-snug text-text sm:text-3xl">Settings</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">Atur identitas mahasiswa, sesi Moodle, dan model OpenCode.</p>
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
+          Atur identitas mahasiswa, sesi Moodle, dan model OpenCode.
+        </p>
       </div>
 
       <form onSubmit={handleSubmit} className="pixel-panel max-w-4xl p-5 sm:p-7">
@@ -329,7 +351,11 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
             <UserSquare size={17} className="text-accent" aria-hidden="true" />
             <h2 className="font-display text-sm">Data Mahasiswa</h2>
           </div>
-          <p className="mt-1 text-xs leading-relaxed text-muted">Identitas ini digunakan sebagai metadata dokumen jawaban.</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
+            Identitas ini menjadi tabel identitas di halaman pertama setiap dokumen
+            jawaban. Baris yang dikosongkan tidak dicetak, jadi Prodi boleh kosong
+            selama tidak dipakai di template Anda.
+          </p>
           <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
             <label className="pixel-field">
               <span className="pixel-label">Nama Lengkap</span>
@@ -339,9 +365,33 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
               <span className="pixel-label">NIM</span>
               <input className="pixel-input" name="nim" value={form.nim} onChange={(event) => updateField('nim', event.target.value)} placeholder="Nomor induk mahasiswa" />
             </label>
-            <label className="pixel-field md:col-span-2">
+            <label className="pixel-field">
               <span className="pixel-label">Program Studi (Prodi)</span>
               <input className="pixel-input" name="prodi" value={form.prodi} onChange={(event) => updateField('prodi', event.target.value)} placeholder="Program studi" />
+            </label>
+            <label className="pixel-field">
+              <span className="pixel-label">Semester</span>
+              <input
+                className="pixel-input"
+                name="semester"
+                value={form.semester}
+                onChange={(event) => updateField('semester', event.target.value)}
+                placeholder="Semester 2"
+              />
+              <span className="pixel-helper">Boleh kosong. Tulis “Semester 2”, bukan cuma “2”.</span>
+            </label>
+            <label className="pixel-field md:col-span-2">
+              <span className="pixel-label">UT Daerah</span>
+              <input
+                className="pixel-input"
+                name="ut_daerah"
+                value={form.ut_daerah}
+                onChange={(event) => updateField('ut_daerah', event.target.value)}
+                placeholder="Jakarta"
+              />
+              <span className="pixel-helper">
+                Nama UT tempat ujian, bukan nama lengkap universitas. Boleh kosong.
+              </span>
             </label>
           </div>
         </div>
@@ -408,21 +458,31 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
               </span>
             </label>
             <label className="pixel-field">
-              <span className="pixel-label">Sumber Soal</span>
-              <select
+              <span className="pixel-label">Maksimum Daftar Pustaka</span>
+              <input
                 className="pixel-input font-terminal"
-                name="soal_mode"
-                value={form.soal_mode}
-                onChange={(event) => updateField('soal_mode', event.target.value as 'url' | 'file')}
-              >
-                <option value="url">URL - AI ambil soal sendiri (disarankan)</option>
-                <option value="file">File - tempel soal.md (mode lama)</option>
-              </select>
+                name="max_pustaka"
+                type="number"
+                min={1}
+                max={20}
+                value={form.max_pustaka}
+                onChange={(event) => updateField('max_pustaka', event.target.value)}
+              />
               <span className="pixel-helper">
-                Mode URL membuat AI membaca rubrik dan instruksi tutor langsung
-                dari halaman.
+                Batas keras jumlah referensi per jawaban. Ini batas biaya: tiap
+                entri berarti satu kali verifikasi sumber. Bawaan {DEFAULT_MAX_PUSTAKA}.
               </span>
             </label>
+            <div className="pixel-field">
+              <span className="pixel-label">Model Pembantu</span>
+              <p className="pixel-input pixel-input-readonly font-terminal text-muted">
+                {config?.runtime?.helper_model || 'pilih otomatis'}
+              </p>
+              <span className="pixel-helper">
+                Model murah untuk memetakan soal dan mencari referensi. Kalau
+                belum diisi, sistem memilih sendiri yang termurah tersedia.
+              </span>
+            </div>
             <div className="pixel-field">
               <span className="pixel-label">Transkripsi Lampiran</span>
               <p className="pixel-input pixel-input-readonly font-terminal text-muted">

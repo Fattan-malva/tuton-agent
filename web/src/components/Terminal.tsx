@@ -33,6 +33,29 @@ function formatElapsed(seconds: number): string {
   return hours > 0 ? `${pad(hours)}:${pad(minutes)}:${pad(remainder)}` : `${pad(minutes)}:${pad(remainder)}`;
 }
 
+/**
+ * Nama tahap dalam bahasa manusia.
+ *
+ * Nama internal (`petak`, `pustaka`, `opencode`) adalah untuk kode; yang
+ * tampil ke user harus menjelaskan sedang apa yang sedang dibayar model.
+ */
+const STEP_LABELS: Record<string, string> = {
+  idle: 'Menunggu',
+  scraping: 'Membaca halaman',
+  petak: 'Memetakan soal',
+  transkripsi: 'Membaca lampiran',
+  pustaka: 'Mencari referensi',
+  mengerjakan: 'Menyiapkan item',
+  opencode: 'Menulis jawaban',
+  docx: 'Menyusun dokumen',
+  selesai: 'Selesai',
+  error: 'Gagal',
+};
+
+function stepLabel(step: string): string {
+  return STEP_LABELS[step] ?? step;
+}
+
 function lineTone(line: string): string {
   if (/ERROR|Gagal|✗|exit code/i.test(line)) return 'error';
   if (/✓|Selesai|siap\.$/i.test(line)) return 'success';
@@ -73,7 +96,6 @@ export default function Terminal({ output, snapshot, command, onStop, onClear, b
 
   const isRunning = snapshot.running;
   const progress = snapshot.progress;
-  const activeProgress = ['scraping', 'mengerjakan', 'transkripsi', 'opencode', 'docx'].includes(snapshot.step);
 
   return (
     <div className="pixel-terminal-panel min-h-[340px] overflow-hidden">
@@ -104,7 +126,7 @@ export default function Terminal({ output, snapshot, command, onStop, onClear, b
             <div className="pixel-progress-fill" style={{ width: `${progress}%` }} />
           </div>
           <div className="mt-2 flex items-center justify-between font-terminal text-[9px] uppercase tracking-[0.1em] text-muted">
-            <span>{activeProgress ? snapshot.step : snapshot.step}</span>
+            <span>{stepLabel(snapshot.step)}</span>
             <span>{formatElapsed(snapshot.elapsed)}</span>
           </div>
         </div>

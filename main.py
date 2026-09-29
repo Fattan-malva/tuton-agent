@@ -49,10 +49,14 @@ for _stream in (sys.stdout, sys.stderr):
             pass
 
 from config import Config, OUTPUT_DIR, now_stamp
-from generator import state
+from generator import models, state
 from generator.docx import save_doc
 from generator.opencode_runner import run_opencode
-from generator.prompt import build_prompt
+from generator.prompt import (
+    build_petak_prompt,
+    build_prompt,
+    build_referensi_prompt,
+)
 from moodle.auth import MoodleSession
 from moodle.discovery import SoalSource, SourceDiscovery
 from moodle.downloader import AttachmentDownloader
@@ -191,6 +195,16 @@ class Prefetched:
     error: str = ""
     pos: int = 0
     total: int = 0
+    # Artefak dari tahap sebelumnya. `petak` dipakai bersama semua item dalam
+    # satu sesi, sedangkan `referensi` milik item ini saja. Keduanya boleh
+    # `None`: pipeline lalu memakai jalur cadangan, bukan berhenti.
+    petak: Path | None = None
+    referensi: Path | None = None
+    # Dokumen dasar untuk .docx. `None` berarti pakai template standar.
+    # Form Soal mengisinya dengan berkas "Format Jawaban" milik pengguna bila
+    # field itu diisi, sehingga hasil dokumennya mengikuti tata letak yang
+    # benar-benar dipakai, bukan template bawaan.
+    template: Path | None = None
 
 
 def _display_index(item: Activity, kind: str, section_num: int) -> int:
@@ -291,6 +305,349 @@ def _prefetch_one(
         except Exception as exc:  # noqa: BLE001
             log(f"  ! gagal unduh lampiran: {exc}", prefix=f"[{kind}] {item.title} · ")
     return record
+
+
+# ---------------------------------------------------------------------------
+# Tahap 0: PETA SOAL  (satu kali per course + sesi, hasilnya di-cache)
+#
+# Kenapa tahap ini perlu: di UT, soal tidak selalu ada di halaman yang kebetulan
+# ditemukan. Kadang menu Diskusi memuat soal tambahan, kadang butir tertentu
+# bergantung pada lampiran atau halaman materi lain, dan kadang rubrik ada di
+# halaman seksi sementara butirnya ada di halaman aktivitas (atau sebaliknya).
+#
+# Yang dulunya terjadi: agen `tuton` membuka beberapa halaman untuk tiap item,
+# dan tiap item membayar harga penuh untuk halaman yang sama. Satu sesi berisi
+# lima item berarti lima kali pembacaan halaman yang isinya identik.
+#
+# Sekarang: satu proses `pemetak-soal` membaca halaman-halaman itu SEKALI per
+# sesi dan menulis peta ringkas. Lima item berikutnya membaca peta yang sama,
+# yang isinya jauh lebih kecil karena sudah disaring: hanya butir soal, syarat
+# format, rubrik, dan lampiran yang relevan.
+# ---------------------------------------------------------------------------
+_PETAK_AGENT = "pemetak-soal"
+
+# Peta yang terlalu pendek hampir pasti gagal (agen hanya menulis pengumuman
+# lalu berhenti), jadi dipakai sebagai ambang cache. 200 karakter setara satu
+# blok butir soal plus syarat format.
+_MIN_PETAK_CHARS = 200
+# Referensi sah minimal satu baris APA yang lengkap, kira-kira 80 karakter.
+# Entri tunggal yang pendek ("1. Tidak ada.") tetap diterima karena mungkin
+# memang cuma satu sumber; yang ditolak di sini adalah file kosong.
+_MIN_PUSTAKA_CHARS = 20
+# Potongan peta yang dikirim ke agen cari referensi. Peta penuh sebenarnya
+# sudah cukup kecil, tapi dipotong agar biaya prompt tidak bertambah seiring
+# jumlah item dalam satu sesi.
+_MAX_PETAK_DIGIT_CHARS = 6000
+
+# Kata umum yang tidak membantu pencocokan judul aktivitas dengan judul
+# bagian peta.
+_STOP_WORDS = frozenset(
+    {
+        "dan", "untuk", "dengan", "yang", "dari", "pada", "dalam", "tugas",
+        "diskusi", "tube", "pertemuan", "ulang", "tengah", "akhir", "pertama",
+        "kedua", "modul", "sesi", "sesi", "kelas", "baru", "materi", "soal",
+    }
+)
+
+
+def _petak_dir(course: Course) -> Path:
+    """Folder peta, satu per mata kuliah.
+
+    Dipisah dari `sesi<N>/` supaya peta tidak ikut terhitung sebagai hasil kerja
+    item di sebelahnya, dan supaya satu file peta dipakai bersama semua item
+    dalam sesinya.
+    """
+    return OUTPUT_DIR / course.folder_name / "_petak"
+
+
+def _artifact_ok(path: Path, min_chars: int) -> bool:
+    """Apakah artefak tahap sebelumnya sudah ada dan isinya masuk akal.
+
+    `min_chars` mencegah artefak yang hanya berisi pengumuman tanpa isi
+    dianggap berhasil. Inilah yang membuat cache tidak mengunci kegagalan
+    selamanya: tahap yang gagal akan dicoba lagi pada run berikutnya.
+    """
+    try:
+        if not path.is_file():
+            return False
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    if len(text.strip()) < min_chars:
+        return False
+    # Jejak kegagalan opencode tidak boleh dihitung sebagai peta atau daftar
+    # pustaka yang sah. diperiksa di awal teks saja, karena jawaban boleh saja
+    # membahas kata "error" di bagian pemikirannya.
+    head = text[:400].lower()
+    if "traceback (most recent call last)" in head:
+        return False
+    return True
+
+
+def _run_helper(
+    prompt: str,
+    *,
+    path: Path,
+    agent: str,
+    model: str,
+    label: str,
+    min_chars: int,
+) -> bool:
+    """Jalankan satu agen pembantu dan tunggu berkas yang dijanjikannya.
+
+    Berbeda dengan agen penulis, agen pembantu tidak diperiksa dengan
+    `answer_quality_issues`: isinya bukan jawaban melainkan artefak. Yang
+    diperiksa hanya benar-benar tertulis dan cukup berisi. Mengembalikan
+    `False` membuat pemanggil memakai jalur cadangan.
+    """
+    path.unlink(missing_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    attempts = max(1, Config.TUTON_HELPER_RETRIES)
+    for attempt in range(1, attempts + 1):
+        try:
+            result = run_opencode(
+                prompt,
+                agent=agent,
+                model=model or None,
+                timeout=Config.TUTON_TIMEOUT_HELPER,
+            )
+        except TimeoutError:
+            log(f"  ! {label}: timeout (percobaan {attempt}/{attempts})")
+            continue
+        except Exception as exc:  # noqa: BLE001
+            log(f"  ! {label}: {type(exc).__name__}: {exc}")
+            continue
+
+        if _artifact_ok(path, min_chars):
+            return True
+        output = ((result.stdout or "") + (result.stderr or "")).strip()
+        if result.returncode != 0 and output:
+            tail = " | ".join(output.splitlines()[-3:])[:280]
+            log(f"  ! {label}: opencode exit {result.returncode} ({tail})")
+        else:
+            log(f"  ! {label}: {path.name} tidak tertulis.")
+    return False
+
+
+def helper_model() -> str:
+    """Model untuk agen pembantu. String kosong berarti default opencode.
+
+    Sengaja tidak di-hardcode di sini. Pemanggil cukup menyebut perannya, dan
+    `generator.models` yang memilih model termurah yang benar-benar tersedia.
+    """
+    from generator import models  # noqa: PLC0415
+
+    return models.resolve(models.ROLE_HELPER)
+
+
+def writer_model() -> str:
+    """Model untuk agen penulis `tuton`."""
+    from generator import models  # noqa: PLC0415
+
+    return models.resolve(models.ROLE_WRITER)
+
+
+def _petak_stage(
+    course: Course,
+    sections: list,
+    *,
+    force: bool,
+) -> dict[int, Path]:
+    """Petakan soal sekali per sesi memakai model pembantu.
+
+    Mengembalikan peta `{nomor_sesi: path}` hanya untuk sesi yang petanya benar
+    benar ada di disk, supaya pemanggil bisa membedakan "tidak ada peta" dari
+    "peta ada tapi kosong".
+
+    Kegagalan tidak menghentikan pipeline: agen penulis punya jalur cadangan
+    untuk membaca halaman sumber sendiri. Yang hilang hanya penghematan biaya.
+    """
+    done: dict[int, Path] = {}
+    pending: list[tuple[object, Path]] = []
+    for sec in sections:
+        path = _petak_dir(course) / f"sesi{sec.number}.md"
+        if not force and _artifact_ok(path, _MIN_PETAK_CHARS):
+            done[sec.number] = path
+            continue
+        pending.append((sec, path))
+
+    if not pending:
+        if done:
+            log(
+                f"  · peta soal: {len(done)} sesi diambil dari cache.",
+                prefix="  ",
+            )
+        return done
+
+    log(
+        f"  · memetakan soal {len(pending)} sesi dengan model kecil "
+        "(mencari sekaligus memahami butir, rubrik, dan lampiran)...",
+        prefix="  ",
+    )
+    model = helper_model()
+    for sec, path in pending:
+        started = time.monotonic()
+        try:
+            prompt = build_petak_prompt(
+                course_name=course.name,
+                section_num=sec.number,
+                section_title=sec.title,
+                section_url=(
+                    f"{Config.base_url()}/course/view.php"
+                    f"?id={course.id}&section={sec.number}"
+                ),
+                out_path=path,
+            )
+            ok = _run_helper(
+                prompt,
+                path=path,
+                agent=_PETAK_AGENT,
+                model=model,
+                label=f"{course.name} sesi {sec.number}",
+                min_chars=_MIN_PETAK_CHARS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log(f"  ! peta sesi {sec.number} gagal: {type(exc).__name__}: {exc}")
+            continue
+        if ok:
+            done[sec.number] = path
+            log(
+                f"  ✓ peta sesi {sec.number} "
+                f"({time.monotonic() - started:.1f}s, {path.stat().st_size} byte)",
+                prefix="  ",
+            )
+        else:
+            log(
+                f"  · peta sesi {sec.number} tidak terbentuk. Agen penulis akan "
+                "membaca halaman sumber sendiri: lebih mahal, tapi tetap jalan.",
+                prefix="  ",
+            )
+    return done
+
+
+# ---------------------------------------------------------------------------
+# Tahap 1: DAFTAR PUSTAKA  (satu kali per item, di-cache)
+#
+# Riset adalah langkah termahal di pipeline ini: satu putaran websearch ditambah
+# satu webfetch untuk setiap referensi. Dulu semuanya dilakukan agen `tuton`
+# untuk setiap item, padahal daftar referensi yang relevan bisa diambil dari
+# sumber yang sama.
+#
+# Dipisah ke agen `pencari-pustaka` dengan batas keras supaya biayanya
+# terkontrol: maksimal 1 websearch dan maksimal 1 webfetch per referensi.
+# ---------------------------------------------------------------------------
+_PUSTAKA_AGENT = "pencari-pustaka"
+
+
+def _pustaka_path(record: Prefetched) -> Path:
+    out_dir = record.out_dir or (
+        OUTPUT_DIR / record.course.folder_name / f"sesi{record.section_num}"
+    )
+    return out_dir / f"referensi_{record.kind}_{record.index}.md"
+
+
+def _pustaka_digest(petak: Path | None, record: Prefetched) -> str:
+    """Potongan peta yang relevan untuk satu item.
+
+    Peta per sesi bisa memuat beberapa soal. Mengirim peta utuh ke tiap item
+    membuat biaya prompt tumbuh linear, padahal tiap item hanya butuh bagiannya.
+    Dipotong per heading; kalau tidak ada yang cocok, peta utuh tetap dikirim
+    karena lebih baik daripada memetakan kosong.
+    """
+    if not petak or not petak.is_file():
+        return ""
+    try:
+        text = petak.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    if not text.strip():
+        return ""
+
+    title = record.item.title.lower()
+    words = [
+        w for w in re.findall(r"[a-z0-9]{3,}", title) if w not in _STOP_WORDS
+    ]
+    parts = re.split(r"(?m)^(?=##\s)", text)
+    header = parts[0] if parts else ""
+    chunks: list[str] = []
+    for chunk in parts[1:]:
+        if not chunk.strip():
+            continue
+        haystack = chunk[:600].lower()
+        if any(w in haystack for w in words):
+            chunks.append(chunk)
+    if not chunks:
+        return text[:_MAX_PETAK_DIGIT_CHARS]
+    return (header + "".join(chunks))[:_MAX_PETAK_DIGIT_CHARS]
+
+
+def _pustaka_stage(
+    records: list[Prefetched],
+    peta_by_section: dict[int, Path],
+    *,
+    force: bool,
+) -> dict[int, Path]:
+    """Cari referensi per item, sekali saja, memakai model pembantu.
+
+    Dijalankan setelah `_petak_stage` selesai, bukan paralel dengannya: referensi
+    yang baik bergantung pada Understanding butir soalnya, dan dua tahap yang
+    keduanya memanggil model secara bersamaan hanya memperpanjang waktu tunggu
+    tanpa menambah hasil per menit.
+    """
+    todo = [r for r in records if r.source is not None and r.source.ok_links]
+    if not todo:
+        return {}
+
+    out: dict[int, Path] = {}
+    pending: list[Prefetched] = []
+    for record in todo:
+        path = _pustaka_path(record)
+        if not force and _artifact_ok(path, _MIN_PUSTAKA_CHARS):
+            out[id(record)] = path
+            continue
+        pending.append(record)
+
+    if not pending:
+        log(f"  · daftar pustaka: {len(out)} item dari cache.", prefix="  ")
+        return out
+
+    model = helper_model()
+    log(
+        f"  · mencari referensi {len(pending)} item (maksimal "
+        f"{Config.TUTON_MAX_PUSTAKA} per item, tanpa riset di model utama)...",
+        prefix="  ",
+    )
+    for record in pending:
+        path = _pustaka_path(record)
+        digest = _pustaka_digest(peta_by_section.get(record.section_num), record)
+        try:
+            prompt = build_referensi_prompt(
+                work_kind=record.kind,
+                index=record.index,
+                course_name=record.course.name,
+                section_num=record.section_num,
+                activity_title=record.item.title,
+                petak_digest=digest,
+                transcript_path=record.transcript_path,
+                attachment_names=[p.name for p in record.attachments],
+                out_path=path,
+                max_refs=Config.TUTON_MAX_PUSTAKA,
+            )
+            ok = _run_helper(
+                prompt,
+                path=path,
+                agent=_PUSTAKA_AGENT,
+                model=model,
+                label=f"{record.kind} {record.index}",
+                min_chars=_MIN_PUSTAKA_CHARS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log(f"  ! referensi {record.kind} {record.index} gagal: {exc}")
+            continue
+        if ok:
+            out[id(record)] = path
+    return out
 
 
 def _needs_transcription(record: Prefetched) -> bool:
@@ -495,6 +852,17 @@ def answer_quality_issues(text: str) -> list[str]:
         ]
         if not refs:
             issues.append("Daftar Pustaka kosong (tidak ada entri)")
+        elif len(refs) > Config.TUTON_MAX_PUSTAKA:
+            # Batas jumlah entri adalah batas biaya, bukan selera. Setiap
+            # entri tambahan berarti satu putaran webfetch pada tahap
+            # `pencari-pustaka`, dan daftar yang terlalu panjang juga tidak
+            # terbaca. Menegakkan batas di sini membuat pagu ini bekerja:
+            # prompt bisa saja salah, tapi hasil akhirnya tetap tidak bisa
+            # melewatinya.
+            issues.append(
+                f"Daftar Pustaka berisi {len(refs)} entri, "
+                f"melebihi batas {Config.TUTON_MAX_PUSTAKA}"
+            )
 
     jawab = re.search(r"^#+\s*jawab", body, re.IGNORECASE | re.MULTILINE)
     isi = body[jawab.end():] if jawab else body
@@ -571,7 +939,12 @@ def _run_agent(
     for attempt in range(1, retries + 1):
         try:
             log(f"→ opencode run ... (percobaan {attempt}/{retries})")
-            result = run_opencode(prompt, timeout=Config.TUTON_TIMEOUT)
+            result = run_opencode(
+                prompt,
+                agent="tuton",
+                model=writer_model() or None,
+                timeout=Config.TUTON_TIMEOUT,
+            )
         except TimeoutError:
             log(f"! opencode timeout di percobaan {attempt}/{retries}")
             continue
@@ -673,6 +1046,8 @@ def _write_docx(
         "nama": Config.NAMA,
         "nim": Config.NIM,
         "prodi": Config.PRODI,
+        "semester": Config.SEMESTER,
+        "ut_daerah": Config.UT_DAERAH,
         "matkul": record.course.name,
         "kind_label": "Diskusi" if record.kind == "diskusi" else "Tugas",
         "display_index": record.index,
@@ -687,6 +1062,7 @@ def _write_docx(
             soal_text=(source.soal_text if source else ""),
             meta=meta,
             out_dir=out_dir,
+            template=record.template,
         )
     except Exception as exc:  # noqa: BLE001
         log(f"✗ gagal membuat docx: {type(exc).__name__}: {exc}")
@@ -746,6 +1122,9 @@ def _process_record(record: Prefetched, *, force: bool, mode: str) -> bool:
     attachments = [str(p) for p in record.attachments]
     can_read_files = _agent_can_read_files()
     if mode == "url":
+        # Peta soal dan daftar referensi datang dari tahap sebelumnya. Kalau
+        # salah satunya kosong, `build_prompt` otomatis menaruh instruksi
+        # webfetch sebagai cadangan, jadi agen penulis tetap bisa jalan.
         prompt = build_prompt(
             mode="url",
             work_kind=record.kind,
@@ -760,6 +1139,8 @@ def _process_record(record: Prefetched, *, force: bool, mode: str) -> bool:
             lampiran_dir=lamp_dir,
             jawaban_path=jawaban_path,
             agent_can_read_files=can_read_files,
+            petak_path=record.petak,
+            pustaka_path=record.referensi,
         )
     else:
         # Mode file: susun soal.md dari konten Reader supaya tetap konsisten.
@@ -840,7 +1221,21 @@ def _process_course(
     kind_filter: str = "all",
     mode: str = "url",
     jobs_workers: int = 1,
+    remap: bool = False,
 ) -> int:
+    """Kerjakan satu mata kuliah: peta -> referensi -> jawaban -> docx.
+
+    Dua sakelar cache, dan bedanya disengaja:
+
+    - `force`   mengulang PENULISAN jawaban saja. Peta soal dan daftar pustaka
+                masih dipakai dari cache. Ini kasus yang paling sering terjadi:
+                jawaban sebelumnya salah, tapi datanya sudah benar.
+    - `remap`   membuang cache peta dan referensi, lalu memetakan ulang. Pakai
+                ini hanya kalau peta itu sendiri yang keliru, misalnya tutor
+                baru saja mengganti naskah soal. Menjalankan `--force` tanpa
+                `--remap` saat peta keliru hanya menghasilkan jawaban keliru
+                yang sama, dua kali bayar.
+    """
     course, jobs = _gather_jobs(
         scraper, course_id, sesi_filter=sesi_filter, kind_filter=kind_filter
     )
@@ -849,6 +1244,14 @@ def _process_course(
         return 0
 
     log(f"\n=== {course.name} ===")
+    # Model yang dipakai ditampilkan sekali per mata kuliah. Dua peran dengan
+    # biaya yang jauh berbeda; kalau keduanya jatuh ke model termahal, pemetaan
+    # dan pencarian referensi tidak menambah penghematan apa pun.
+    roles = models.describe()
+    log(
+        f"  · model: penulis `{roles['writer']}` · pembantu `{roles['helper']}`",
+        prefix="  ",
+    )
     total = len(jobs)
     if total == 0:
         label = {"all": "tugas dan diskusi", "tugas": "tugas", "diskusi": "diskusi"}[
@@ -876,9 +1279,26 @@ def _process_course(
         log("  · tidak ada item baru.")
         return 0
 
+    # Tahap 0: peta soal per sesi. Harus selesai sebelum transkripsi dan
+    # pencarian referensi, karena ketiganya membaca artefak yang saling
+    # bergantung: peta memberi butir, transkrip memberi isi lampiran, daftar
+    # referensi memakai keduanya untuk memilih sumber.
+    sections = [s for s in scraper.get_available_sections(course_id)
+                if s.number in {sec for _, sec, _, _ in pending}]
+    peta_by_section = (
+        _petak_stage(course, sections, force=remap) if mode == "url" else {}
+    )
+
     discovery = SourceDiscovery(reader, make_url=soalu)
     records = _prefetch_all(discovery, downloader, pending)
     _transcribe_stage(records)
+
+    # Tahap 1: daftar pustaka per item, memakai peta dan transkrip.
+    if mode == "url":
+        referensi_by_id = _pustaka_stage(records, peta_by_section, force=remap)
+        for record in records:
+            record.petak = peta_by_section.get(record.section_num)
+            record.referensi = referensi_by_id.get(id(record))
 
     # Kerjakan; satu item gagal TIDAK lagi memblokir sisa item di seksi yang
     # sama (perilaku lama: `blocked_session` menghentikan satu sesi penuh).
@@ -962,10 +1382,16 @@ def cmd_run(args):
     downloader = AttachmentDownloader(session)
     reader = MoodleReader()
 
-    mode = getattr(args, "soal_mode", None) or Config.TUTON_SOAL_MODE or "url"
+    # Mode soal hanya punya satu jalur resmi sekarang: pipeline tiga tahap.
+    # `--soal-mode file` masih ada sebagai jalur uji A/B (Form Soal memakai
+    # jalur yang sama persis), tapi tidak lagi bisa datang dari .env: dulu ini
+    # sakelarnya, dan sakelar yang tersembunyi membuat hasil run tidak bisa
+    # dijelaskan hanya dari log.
+    mode = getattr(args, "soal_mode", "") or "url"
     if mode not in ("url", "file"):
         mode = "url"
     jobs_workers = int(getattr(args, "jobs", 0) or Config.TUTON_JOBS or 1)
+    remap = bool(getattr(args, "remap", False))
     ensure_reader()  # nyalakan hanya sekali; idempoten
 
     sesi_filter = int(args.sesi) if args.sesi else None
@@ -975,6 +1401,7 @@ def cmd_run(args):
             session, scraper, downloader, reader,
             int(args.course), sesi_filter=sesi_filter, force=args.force,
             kind_filter=kind_filter, mode=mode, jobs_workers=jobs_workers,
+            remap=remap,
         )
     else:
         for c in scraper.get_courses():
@@ -982,6 +1409,7 @@ def cmd_run(args):
                 session, scraper, downloader, reader,
                 c.id, sesi_filter=sesi_filter, force=args.force,
                 kind_filter=kind_filter, mode=mode, jobs_workers=jobs_workers,
+                remap=remap,
             )
 
 
@@ -1086,6 +1514,34 @@ def cmd_solve(args):
     # Moodle. Prompt mode file membaca file soal yang baru kita tulis.
     from generator.prompt import build_file_prompt  # noqa: PLC0415
 
+    # Field "Format Jawaban" opsional. Berkas .docx yang diunggah pengguna
+    # dipakai langsung sebagai dokumen dasar keluaran, sehingga margin, font,
+    # dan style dokumennya benar-benar miliknya. Disalin ke folder khusus,
+    # bukan ke `template/`, supaya file unggahan tidak diam-diam menggantikan
+    # template standar pada run berikutnya.
+    format_path: Path | None = None
+    format_note = (getattr(args, "format_note", "") or "").strip()
+    raw_format = (getattr(args, "format", "") or "").strip()
+    if raw_format:
+        upload = Path(raw_format)
+        if upload.exists():
+            fmt_dir = out_dir / "_format"
+            fmt_dir.mkdir(parents=True, exist_ok=True)
+            dest = fmt_dir / (
+                upload.name if upload.suffix.lower() == ".docx" else "format.docx"
+            )
+            if dest.exists() and not dest.samefile(upload):
+                dest = fmt_dir / f"format_{int(time.time())}.docx"
+            try:
+                shutil.move(str(upload), str(dest))
+            except OSError as exc:
+                log(f"  ! gagal menyimpan Format Jawaban: {exc}")
+            else:
+                format_path = dest
+                log(f"  · Format Jawaban dipakai sebagai dokumen dasar: {dest.name}")
+        else:
+            log(f"  ! berkas Format Jawaban tidak ditemukan: {upload}")
+
     jawaban_path = out_dir / f"jawaban_{kind}_{index}.md"
     prompt = build_file_prompt(
         work_kind=kind,
@@ -1097,6 +1553,8 @@ def cmd_solve(args):
         attachment_dir=lamp_dir,
         lampiran=[p.name for p in saved],
         jawaban_path=jawaban_path,
+        format_path=format_path,
+        format_note=format_note,
     )
     record = Prefetched(
         course=course,
@@ -1105,6 +1563,7 @@ def cmd_solve(args):
         kind=kind,
         index=index,
         out_dir=out_dir,
+        template=format_path,
     )
     _run_agent(record, key, prompt=prompt, jawaban_path=jawaban_path)
     log("Selesai. 1 item diproses untuk %s (form soal)." % course.name)
@@ -1173,7 +1632,7 @@ def cmd_vision_probe(args):
 
     token = "".join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
     work = OUTPUT_DIR / ".jobs"
-    work.mkdir(parents=True, exist_ok=True)
+    work.mkdir(parents=True, exist_ok=True)  # `cmd_vision_probe` tidak lewat `require`
     path = work / f"vision_probe_{token}.png"
     img = Image.new("RGB", (600, 200), "white")
     draw = ImageDraw.Draw(img)
@@ -1227,7 +1686,16 @@ def main():
         "--kind", choices=["all", "tugas", "diskusi"], default="all",
         help="Jenis pekerjaan yang diproses",
     )
-    p_run.add_argument("--force", action="store_true", help="Ulangi meski sudah selesai")
+    p_run.add_argument(
+        "--force", action="store_true",
+        help="Tulis ulang jawaban item yang sudah selesai. Peta soal dan daftar "
+             "pustaka tetap dipakai dari cache.",
+    )
+    p_run.add_argument(
+        "--remap", action="store_true",
+        help="Buang cache peta soal dan daftar pustaka, lalu buat ulang. Pakai "
+             "hanya kalau soalnya sendiri berubah dan peta hasil lama jadi salah.",
+    )
     p_run.add_argument(
         "--jobs", type=int, default=0,
         help="Berapa item dikerjakan bersamaan (default dari TUTON_JOBS)",
@@ -1251,6 +1719,16 @@ def main():
     p_solve.add_argument("--title", default="")
     p_solve.add_argument("--text", default="")
     p_solve.add_argument("--file", action="append", default=[])
+    # Field "Format Jawaban". Keduanya opsional: kosong berarti memakai template
+    # standar. `--format` menerima satu berkas .docx contoh yang dipakai
+    # sebagai dokumen dasar keluaran; `--format-note` menerima keterangan
+    # bebas dari pengguna.
+    p_solve.add_argument(
+        "--format", default="", help="Berkas .docx contoh format jawaban (opsional)"
+    )
+    p_solve.add_argument(
+        "--format-note", default="", help="Keterangan format jawaban (opsional)"
+    )
     p_solve.set_defaults(fn=cmd_solve)
 
     p_status = sub.add_parser("status", help="Lihat progres")
@@ -1274,7 +1752,8 @@ def main():
     if not args.cmd:
         cmd_run(
             argparse.Namespace(
-                course=None, sesi=None, force=False, kind="all", jobs=0, soal_mode=""
+                course=None, sesi=None, force=False, remap=False, kind="all",
+                jobs=0, soal_mode="",
             )
         )
         return

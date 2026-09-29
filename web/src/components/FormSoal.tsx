@@ -1,4 +1,4 @@
-import { ClipboardList, FileUp, Play } from 'lucide-react';
+import { ClipboardList, FileUp, LayoutTemplate, Play } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import apiClient from '../lib/api-client';
 import type { Course, Section, ToastType, WorkKind } from '../lib/types';
@@ -20,11 +20,14 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
   const [title, setTitle] = useState('');
   const [soalText, setSoalText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+  const [formatFile, setFormatFile] = useState<File | null>(null);
+  const [formatNote, setFormatNote] = useState('');
   const [isStarting, setIsStarting] = useState(false);
   const [launched, setLaunched] = useState(false);
 
   const fileName = files.map((f) => f.name).join(', ');
   const hasFile = files.length > 0;
+  const hasFormat = Boolean(formatFile) || formatNote.trim().length > 0;
 
   const isRunning = terminal.snapshot.running;
   const busy = isRunning || isStarting || launched;
@@ -85,6 +88,8 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
       `--kind ${kind}`,
       title ? `--title "${title}"` : '',
       hasFile ? `--file "${files.map((f) => f.name).join('", "')}"` : '',
+      formatFile ? `--format "${formatFile.name}"` : '',
+      formatNote.trim() ? '--format-note "..."' : '',
     ].filter(Boolean).join(' ');
 
     terminal.setCommand(`user@tuton:~$ ${commandLine}`);
@@ -101,6 +106,8 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
         soal_text: soalText,
         file: files[0] ?? null,
         files: files.slice(1),
+        format_file: formatFile,
+        format_note: formatNote.trim(),
       });
 
       if (!response.success) throw new Error(response.error || 'Gagal memulai pengerjaan soal.');
@@ -190,7 +197,7 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
 
             <label className="pixel-field">
               <span className="pixel-label">Soal (teks)</span>
-              <textarea className="pixel-input min-h-32 resize-y" value={soalText} onChange={(event) => setSoalText(event.target.value)} placeholder="Tulis soal yang ingin dikerjakan di sini..." disabled={busy} />
+              <textarea className="pixel-input pixel-textarea" value={soalText} onChange={(event) => setSoalText(event.target.value)} placeholder="Tulis soal yang ingin dikerjakan di sini..." disabled={busy} />
             </label>
 
             <div className="pixel-field">
@@ -220,6 +227,65 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
               </label>
             </div>
 
+            {/* Field opsional. Kosong berarti dokumen hasilnya mengikuti template
+                standar; diisi berarti dokumen contoh milik pengguna yang jadi
+                acuan. Pakai <fieldset> supaya satu blok terbaca sebagai satu
+                grup, bukan empat kontrol terpisah. */}
+            <fieldset className="space-y-3 border border-dashed border-line/40 px-3 py-4" disabled={busy}>
+              <legend className="flex items-center gap-2 px-1 font-terminal text-[10px] uppercase tracking-[0.14em] text-muted">
+                <LayoutTemplate size={13} className="text-accent" aria-hidden="true" />
+                Format Jawaban (opsional)
+              </legend>
+
+              <div className="flex items-start justify-between gap-2">
+                <p className="pixel-helper text-muted">
+                  Kosongkan kalau tidak ada bagian. Isi bagian ini kalau jawabanmu
+                  punya bentuk khusus, lalu unggah satu file .docx berisi contoh
+                  jawaban yang benar. Dokumen hasil akan mengikuti file itu.
+                </p>
+                {hasFormat && (
+                  <button
+                    type="button"
+                    onClick={() => { setFormatFile(null); setFormatNote(''); }}
+                    className="shrink-0 font-terminal text-[10px] uppercase tracking-[0.1em] text-accent hover:underline"
+                  >
+                    Hapus
+                  </button>
+                )}
+              </div>
+
+              <div className="pixel-field">
+                <span className="pixel-label">Contoh format (.docx, opsional)</span>
+                <label className={`pixel-file-drop ${busy ? 'opacity-50' : 'cursor-pointer'}`}>
+                  <FileUp size={18} className="text-accent" aria-hidden="true" />
+                  {formatFile ? (
+                    <span className="truncate text-xs font-semibold text-text" title={formatFile.name}>{formatFile.name}</span>
+                  ) : (
+                    <span className="font-terminal text-[10px] uppercase tracking-[0.1em] text-muted">
+                      Klik untuk memilih satu file .docx
+                    </span>
+                  )}
+                  <input
+                    type="file"
+                    accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    onChange={(event) => setFormatFile(event.target.files?.[0] ?? null)}
+                    className="sr-only"
+                  />
+                </label>
+              </div>
+
+              <label className="pixel-field">
+                <span className="pixel-label">Keterangan format (opsional)</span>
+                <textarea
+                  className="pixel-input pixel-textarea-sm"
+                  value={formatNote}
+                  onChange={(event) => setFormatNote(event.target.value)}
+                  placeholder="contoh: isomorphic dengan judul 'ABSTRAK' dan kata kunci, gunakan heading 1 untuk sub-bagian, jangan gunakan tabel"
+                  disabled={busy}
+                />
+              </label>
+            </fieldset>
+
             <button type="submit" disabled={busy} className="pixel-button pixel-button-primary w-full justify-center">
               {isStarting ? (
                 <><span className="pixel-spinner" aria-hidden="true" /><span>Mengeksekusi...</span></>
@@ -228,9 +294,7 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
               )}
             </button>
           </form>
-        </div>
-
-        <Terminal
+        </div>        <Terminal
           output={terminal.output}
           snapshot={terminal.snapshot}
           command={terminal.command}

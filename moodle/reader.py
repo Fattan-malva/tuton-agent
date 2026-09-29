@@ -32,6 +32,13 @@ from moodle.auth import MoodleSession
 MAX_BYTES = 25 * 1024 * 1024
 _FETCH_TIMEOUT = 60
 
+# Versi bentuk markdown. Naikkan setiap kali `render_moodle_html` /
+# penanganan tautannya berubah, supaya cache `.md` versi lama tidak terpakai
+# (lihat `ReaderCache._md_key`).
+#   v1 = tautan apa adanya (tidak bisa dibuka agen)
+#   v2 = tautan ditulis ulang jadi URL Reader (bisa dijelajahi agen)
+MD_RENDER_VERSION = "v2"
+
 _IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".tiff")
 _DOC_EXT = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".zip", ".txt", ".csv")
 
@@ -177,7 +184,16 @@ class Fetched:
 
 
 class ReaderCache:
-    """Cache disk untuk hasil fetch & markdown, supaya tidak memukul Moodle ulang."""
+    """Cache disk untuk hasil fetch & markdown, supaya tidak memukul Moodle ulang.
+
+    Cache `pages` (HTML mentah) aman dari perubahan renderer. Cache `md` TIDAK:
+    bentuk markdown bergantung pada apakah tautannya ditulis ulang menjadi URL
+    Reader. Sebelum ada penulisan ulang, entri `md` berisi `https://elearning...
+    apa adanya` yang tidak bisa dibuka agen tanpa cookie -- dan cache itu
+    bertahan 30 menit di disk. Karena itu kunci `md` memuat versi renderer:
+    menaikkan `MD_RENDER_VERSION` otomatis membuat seluruh entri lama tidak
+    terpakai, lalu file yatim dibersihkan saat cache dibuat.
+    """
 
     def __init__(self, root: Path, ttl: int = 1800) -> None:
         self.root = root
@@ -188,11 +204,33 @@ class ReaderCache:
             (root / "md").mkdir(parents=True, exist_ok=True)
         except OSError:
             pass
+        self._purge_stale_md()
 
     @staticmethod
     def _key(url: str, suffix: str) -> str:
         digest = hashlib.sha1(url.encode("utf-8", "replace")).hexdigest()[:20]
         return f"{digest}{suffix}"
+
+    @classmethod
+    def _md_key(cls, url: str) -> str:
+        digest = hashlib.sha1(url.encode("utf-8", "replace")).hexdigest()[:20]
+        return f"{MD_RENDER_VERSION}_{digest}.md"
+
+    def _purge_stale_md(self) -> None:
+        """Hapus file `.md` versi lama supaya direktori cache tidak tumbuh."""
+        keep = f"{MD_RENDER_VERSION}_"
+        try:
+            stale = [
+                p for p in (self.root / "md").glob("*.md")
+                if not p.name.startswith(keep)
+            ]
+        except OSError:
+            return
+        for path in stale:
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
     def _read_fresh(self, path: Path) -> bytes | None:
         try:
@@ -252,7 +290,7 @@ class ReaderCache:
                 pass
 
     def get_md(self, url: str) -> str | None:
-        path = self.root / "md" / self._key(url, ".md")
+        path = self.root / "md" / self._md_key(url)
         try:
             if time.time() - path.stat().st_mtime > self.ttl:
                 return None
@@ -263,7 +301,7 @@ class ReaderCache:
     def put_md(self, url: str, text: str) -> None:
         if not text.strip():
             return
-        path = self.root / "md" / self._key(url, ".md")
+        path = self.root / "md" / self._md_key(url)
         with self._lock:
             try:
                 path.write_text(text, encoding="utf-8")
@@ -346,15 +384,34 @@ class MoodleReader:
         return result
 
     # -- render ------------------------------------------------------------
-    def render(self, url: str, *, kind: str = "generic", use_cache: bool = True) -> tuple[str, Fetched]:
-        """Kembalikan (markdown, hasil_fetch)."""
+    def render(
+        self,
+        url: str,
+        *,
+        kind: str = "generic",
+        use_cache: bool = True,
+        url_for=None,
+    ) -> tuple[str, Fetched]:
+        """Kembalikan (markdown, hasil_fetch).
+
+        `url_for` meneruskan callback penulisan ulang tautan (lihat
+        `render_moodle_html`). Tanpa itu, tautan di markdown keluar sebagai URL
+        Moodle mentah yang tidak bisa dibuka pemanggil tanpa cookie -- sehingga
+        agen tidak bisa menelusuri menu/tautan di dalam halaman. Default `None`
+        mempertahankan perilaku lama: tautan apa adanya.
+        """
         url = self.reader_url_target(url)
         fetched = self.fetch(url, use_cache=use_cache)
         if not fetched.ok:
             return "", fetched
         if not fetched.is_html:
             return self._render_binary(url, fetched), fetched
-        md = render_moodle_html(fetched.text, fetched.final_url or url, kind=kind)
+        md = render_moodle_html(
+            fetched.text,
+            fetched.final_url or url,
+            kind=kind,
+            url_for=url_for,
+        )
         if use_cache:
             self.cache.put_md(url, md)
         return md, fetched

@@ -93,6 +93,15 @@ function parseProgress(lines: string[]): Omit<TerminalSnapshot, 'output' | 'runn
     }
 
     if (/^\s*· Transkripsi /.test(line)) progress.step = 'transkripsi';
+
+    // Tahap 0 (peta soal) dan Tahap 1 (daftar pustaka) berjalan SEBELUM item
+    // dikerjakan, jadi tidak ada `[n/m]` yang menandai kemajuannya. Tanpa baris
+    // di bawah ini, layar terlihat macet di 0% selama berjam-jam padahal
+    // pipeline sedang bekerja.
+    if (/^\s*· memetakan soal /.test(line)) progress.step = 'petak';
+    if (/^\s*✓ peta sesi /.test(line)) progress.step = 'petak';
+    if (/^\s*· mencari referensi /.test(line)) progress.step = 'pustaka';
+
     if (/→ .*? run \.\.\./.test(line)) progress.step = 'opencode';
     if (/✓ .+? siap\.$/.test(line)) {
       progress.done += 1;

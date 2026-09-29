@@ -323,6 +323,31 @@ select.pixel-input {
   padding: 0 12px 0 38px;
 }
 
+/* Area teks multi-baris.
+ *
+ * `.pixel-input` sengaja berbobot: `padding: 0 12px` tanpa padding vertikal
+ * supaya `input` satu baris tetap rapat, dan `min-height: 42px` supaya
+ * semua kontrol punya tinggi sentuh yang sama. Keduanya tidak cocok untuk
+ * `textarea`, dan tidak bisa ditimpa dengan utility `min-h-*` / `p-y-*`
+ * karena aturan `pixel-*` ditulis di luar `@layer` -- di kaskade CSS,
+ * aturan tanpa layer selalu menang atas yang berlapis.
+ *
+ * Jadi tinggi dan padding textarea diatur lewat class ini, bukan utility.
+ */
+.pixel-textarea {
+  min-height: 132px;
+  padding: 11px 12px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.pixel-textarea-sm {
+  min-height: 88px;
+  padding: 9px 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
 .pixel-file-drop {
   display: flex;
   align-items: center;

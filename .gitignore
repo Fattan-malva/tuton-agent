@@ -27,8 +27,6 @@ ENV/
 .cache/
 .huggingface/
 .model_cache/
-
-# Generated output
 output/
 outputs/
 *.log

@@ -22,12 +22,11 @@ from flask_cors import CORS
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import Config, OUTPUT_DIR, stamp_display
-from generator import state
+from config import Config, OUTPUT_DIR, ensure_output_dirs, stamp_display
+from generator import models, state
 from moodle.auth import MoodleSession
 from moodle.discovery import SourceDiscovery
 from moodle.downloader import AttachmentDownloader
-from moodle.parser import QuestionParser
 from moodle.reader import MoodleReader
 from moodle.reader_server import ensure_reader, handle_file, handle_soal, soalu
 from moodle.scraper import Activity, CourseScraper
@@ -200,6 +199,15 @@ def _enum_value(value, allowed: tuple[str, ...], fallback: str) -> str:
     return text if text in allowed else fallback
 
 
+# Ejaan lama yang dibuang saat Settings menyimpan ulang `.env`.
+#
+# `UT Daerah=Jakarta` adalah yang paling bothersome: nama variabelnya
+# mengandung spasi, jadi python-dotenv tidak bisa menguraikannya dan
+# MELEWATI baris tersebut tanpa pesan yang mudah dilihat. Nilai Jakarta
+# hilang, dan baris "UT Daerah" tidak pernah tercetak di dokumen.
+_ENV_LEGACY_KEYS = {"Semester", "semester", "UT Daerah", "UTDaerah", "ut_daerah"}
+
+
 @app.route("/api/models")
 def get_models():
     """Daftar semua model opencode untuk dropdown di Settings.
@@ -223,8 +231,8 @@ def get_models():
                 {"id": model_id, "name": name or model_id, "current": model_id == current}
             )
         ordered = [
-            {"provider": provider, "models": models}
-            for provider, models in sorted(groups.items())
+            {"provider": provider, "models": entries}
+            for provider, entries in sorted(groups.items())
         ]
         if current and not any(m["current"] for g in ordered for m in g["models"]):
             provider, _, name = current.partition("/")
@@ -246,10 +254,21 @@ def get_models():
 @app.route("/api/config")
 def get_config():
     """Get current configuration (without sensitive data)."""
+    # `models.resolve` bisa memanggil `opencode models`, jadi dibungkus. Halaman
+    # Settings harus tetap termuat walau CLI sedang lambat atau gagal; model
+    # pembantu yang tidak terbaca lebih baik daripada halaman kosong.
+    try:
+        helper = models.resolve(models.ROLE_HELPER)
+    except Exception:  # noqa: BLE001
+        helper = ""
     return jsonify({
         "nama": Config.NAMA,
         "nim": Config.NIM,
         "prodi": Config.PRODI,
+        # Isi tabel identitas di header dokumen. Boleh kosong: `docx.py`
+        # melewati baris yang nilainya kosong, bukan mencetaknya sebagai "".
+        "semester": Config.SEMESTER,
+        "ut_daerah": Config.UT_DAERAH,
         "model": Config.OPENCODE_MODEL or DEFAULT_MODEL,
         "default_model": DEFAULT_MODEL,
         "base_url": Config.MOODLE_BASE_URL,
@@ -257,11 +276,12 @@ def get_config():
         "output_dir": str(OUTPUT_DIR),
         "runtime": {
             "jobs": Config.TUTON_JOBS,
-            "soal_mode": Config.TUTON_SOAL_MODE,
             "timeout": Config.TUTON_TIMEOUT,
             "retries": Config.TUTON_RETRIES,
             "transcribe": Config.TUTON_TRANSCRIBE,
             "vision_tries": Config.OPENCODE_VISION_TRIES,
+            "max_pustaka": Config.TUTON_MAX_PUSTAKA,
+            "helper_model": helper,
         },
     })
 
@@ -291,6 +311,11 @@ def save_config():
         "NAMA": data.get("nama", ""),
         "NIM": data.get("nim", ""),
         "PRODI": data.get("prodi", ""),
+        # Semester dan UT Daerah boleh kosong (barisnya dilewati di dokumen),
+        # jadi TIDAK memakai pola "kalau kosong pertahankan nilai lama" seperti
+        # MOODLE_BASE_URL. Menghapus Semester memang harus bisa dilakukan.
+        "SEMESTER": str(data.get("semester") or "").strip(),
+        "UT_DAERAH": str(data.get("ut_daerah") or "").strip(),
         "MOODLE_BASE_URL": moodle_url,
         "OPENCODE_MODEL": str(data.get("opencode_model") or "").strip()
         or Config.OPENCODE_MODEL
@@ -303,11 +328,11 @@ def save_config():
     updates.update(
         {
             "TUTON_JOBS": _positive_int(data.get("jobs"), Config.TUTON_JOBS, maximum=8),
-            "TUTON_SOAL_MODE": _enum_value(
-                data.get("soal_mode"), ("url", "file"), Config.TUTON_SOAL_MODE
-            ),
             "TUTON_TRANSCRIBE": _enum_value(
                 data.get("transcribe"), ("auto", "always", "never"), Config.TUTON_TRANSCRIBE
+            ),
+            "TUTON_MAX_PUSTAKA": _positive_int(
+                data.get("max_pustaka"), Config.TUTON_MAX_PUSTAKA, maximum=20
             ),
         }
     )
@@ -320,6 +345,11 @@ def save_config():
             key = line.split("=")[0].strip()
             if key == "MOODLE_SESSION":
                 continue  # dipindah ke moodle_credentials.json
+            if key in _ENV_LEGACY_KEYS:
+                # Ejaan lama dibuang, bukan dipertahankan. Kalau dibiarkan,
+                # `.env` akan menyimpan dua kunci untuk nilai yang sama dan
+                # pembaca berikutnya bisa salah pilih.
+                continue
             if key in updates:
                 new_lines.append(f"{key}={updates[key]}")
                 seen_keys.add(key)
@@ -786,10 +816,9 @@ def solve_soal():
     if kind not in ("tugas", "diskusi"):
         return jsonify({"success": False, "error": "Jenis harus tugas atau diskusi."}), 400
 
-    jobs_dir = OUTPUT_DIR / ".jobs"
-    jobs_dir.mkdir(parents=True, exist_ok=True)
-
     stamp = int(time.time() * 1000)
+    ensure_output_dirs()
+    jobs_dir = OUTPUT_DIR / ".jobs"
     text_path = None
     if soal_text:
         text_path = jobs_dir / f"solve_{stamp}.md"
@@ -805,11 +834,34 @@ def solve_soal():
         upload.save(str(dest))
         file_paths.append(str(dest))
 
+    # Field "Format Jawaban" opsional. Dua sumber berkas: `format_file` (satu
+    # .docx) dan `format_files` (multi, tapi hanya yang pertama yang dipakai --
+    # satu dokumen dasar sudah cukup, dan memilih diam-diam yang pertama
+    # membuat hasilnya sulit ditebak). Keterangan format dibaca terpisah
+    # sebagai teks biasa supaya tidak ikut diperlakukan sebagai lampiran soal.
+    format_path: str | None = None
+    format_note = str(data.get("format_note", "") or "").strip()
+    format_uploads = [f for f in request.files.getlist("format_file") if f and f.filename]
+    format_uploads += [f for f in request.files.getlist("format_files") if f and f.filename]
+    if format_uploads:
+        # Hanya yang pertama dipakai. Unggahan yang lain sengaja tidak
+        # disimpan: file-nya sudah ada di memori request, jadi tidak perlu
+        # menulis lalu menghapus lagi.
+        upload = format_uploads[0]
+        fname = os.path.basename(upload.filename or "") or "format.docx"
+        if not fname.lower().endswith(".docx"):
+            fname = f"{os.path.splitext(fname)[0]}.docx"
+        dest = jobs_dir / f"format_{stamp}_{fname}"
+        upload.save(str(dest))
+        format_path = str(dest)
+
     if text_path is None and not file_paths:
         return jsonify({
             "success": False,
             "error": "Isi teks soal atau unggah file soal terlebih dahulu.",
         }), 400
+
+    temp_paths = [p for p in [text_path, *(Path(x) for x in file_paths)] if p is not None]
 
     cmd = [
         sys.executable, "-u", "main.py", "solve",
@@ -822,14 +874,18 @@ def solve_soal():
         cmd += ["--text", str(text_path)]
     for path in file_paths:
         cmd += ["--file", path]
+    if format_path:
+        cmd += ["--format", format_path]
+    if format_note:
+        cmd += ["--format-note", format_note]
 
     result = run_command_async(cmd)
     if not result.get("success"):
         # Proses tidak jalan (mis. masih ada proses lain) → bersihkan file temp.
-        if text_path is not None:
-            text_path.unlink(missing_ok=True)
-        for path in file_paths:
-            Path(path).unlink(missing_ok=True)
+        for path in temp_paths:
+            path.unlink(missing_ok=True)
+        if format_path:
+            Path(format_path).unlink(missing_ok=True)
     return jsonify(result)
 
 
@@ -925,13 +981,15 @@ def _cleanup_stale_jobs(max_age_hours: float = 24.0) -> int:
                 path.unlink()
                 removed += 1
         except OSError:
-            continue
+            pass  # berkas sedang dipakai atau sudah hilang; abaikan
     return removed
 
 
 if __name__ == "__main__":
-    # Ensure output directory exists
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # Folder keluaran disiapkan sebelum apa pun yang menyentuh disk. Dipanggil
+    # di sini, bukan hanya di `Config.require`, karena `/api/results` dan
+    # `/api/status` tetap harus bisa dilayani walau `.env` belum lengkap.
+    ensure_output_dirs()
 
     print("Starting Tuton Agent Web Server...")
     print(f"Output directory: {OUTPUT_DIR}")

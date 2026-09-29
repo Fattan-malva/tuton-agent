@@ -67,35 +67,49 @@ tuton-agent/
 ├── moodle/
 │   ├── auth.py                    # Session + retry/backoff
 │   ├── scraper.py                 # Course/section/activity
-│   ├── reader.py                  # HTML Moodle -> Markdown bersih  (BARU)
-│   ├── reader_server.py           # Server Reader 127.0.0.1         (BARU)
-│   ├── discovery.py               # Kumpulkan + verifikasi URL      (BARU)
-│   ├── parser.py                  # Parser lama (mode --soal-mode file)
+│   ├── reader.py                  # HTML Moodle -> Markdown bersih
+│   ├── reader_server.py           # Server Reader 127.0.0.1
+│   ├── discovery.py               # Kumpulkan + verifikasi URL
 │   ├── downloader.py              # Unduh lampiran
-│   ├── transcribe.py              # Lampiran -> teks (+ cache hash)  (DIperbaiki)
+│   ├── transcribe.py              # Lampiran -> teks (+ cache hash)
 │   └── ocr.py                     # EasyOCR fallback
 │
 ├── generator/
 │   ├── state.py                   # State persistence (thread-safe)
-│   ├── prompt.py                  # Prompt URL-only + mode file       (BARU)
-│   ├── docx.py                    # Markdown -> Word (OMML math)
+│   ├── models.py                  # Resolver model per peran (writer/helper)
+│   ├── prompt.py                  # Prompt peta, referensi, penulis, form
+│   ├── docx.py                    # Markdown -> Word (OMML, template-driven)
 │   └── opencode_runner.py         # Wrapper subprocess OpenCode CLI
 │
-├── .opencode/agent/tuton.md        # System prompt agent (URL-first)
-├── vendor/humanizer/              # Skill humanizer
-├── template/                      # Template Word referensi
+├── .opencode/agent/
+│   ├── tuton.md                   # Agen PENULIS jawaban (tanpa riset)
+│   ├── pemetak-soal.md            # Cari + pahami soal, sekali per sesi
+│   ├── mencari-pustaka.md         # Daftar referensi, sekali per item
+│   └── transcriber.md             # Lampiran gambar/PDF -> teks
+├── .opencode/skills/humanizer/    # Skill humanizer
+├── template/                      # Template Word (dokumen dasar semua .docx)
+├── web/                           # Sumber Next.js (build -> web/out)
+├── frontend/                      # Hasil static export, disajikan server.py
 └── output/
     ├── state.json
-    ├── .cache/                    # Cache halaman + transkripsi     (BARU)
+    ├── .cache/                    # Cache halaman + transkripsi
     │   ├── pages/                 # HTML mentah per URL
     │   ├── md/                    # Markdown hasil render
     │   └── transkrip/             # Transkripsi keyed SHA-256 berkas
-    └── <NamaMatkul>/sesi<N>/
-        ├── soal.md                # hanya pada mode `file`
-        ├── jawaban_<kind>_<n>.md
-        ├── <kind><n>.docx
-        └── lampiran/
+    └── <NamaMatkul>/
+        ├── _petak/sesi<N>.md      # Tahap 0: peta soal per sesi
+        └── sesi<N>/
+            ├── jawaban_<kind>_<n>.md
+            ├── referensi_<kind>_<n>.md   # Tahap 1: daftar pustaka
+            ├── <MataKuliah>_<Kind><n>.docx
+            └── lampiran/
 ```
+
+Folder `vendor/`, `nextjs-pages/`, berkas `moodle/parser.py`, dan
+`package.json` di root sudah dihapus: semuanya sisa versi lama yang sudah
+digantikan oleh `web/`. `package.json` root pernah menunjuk Next 14 /
+React 18 / Tailwind 3, sedangkan yang benar `web/package.json`
+(Next 15 / React 19 / Tailwind 4).
 
 ---
 
@@ -105,15 +119,28 @@ tuton-agent/
 |---------|--------|-----------|
 | `python main.py run` | `cmd_run` | Pipeline penuh (default bila tanpa subcommand) |
 | `python main.py run --jobs 3` | `cmd_run` | 3 item dikerjakan bersamaan |
-| `python main.py run --soal-mode file` | `cmd_run` | Perilaku lama (A/B test) |
+| `python main.py run --force` | `cmd_run` | Tulis ulang jawaban; peta + referensi dari cache |
+| `python main.py run --remap` | `cmd_run` | Buang cache peta + referensi, buat ulang |
+| `python main.py run --soal-mode file` | `cmd_run` | Jalur uji A/B (bukan jalur resmi) |
 | `python main.py scrape [--course N]` | `cmd_scrape` | Lihat course/sesi/aktivitas |
 | `python main.py probe --course N [--sesi S]` | `cmd_probe` | **Tampilkan persis yang dilihat AI** |
 | `python main.py vision-probe` | `cmd_vision_probe` | Cek model bisa melihat gambar? |
-| `python main.py solve ...` | `cmd_solve` | Soal dari form (teks/unggah) |
+| `python main.py solve ...` | `cmd_solve` | Soal dari form (teks/unggah/format) |
 | `python main.py status` | `cmd_status` | Progres + URL sumber tiap item |
 
 `probe` adalah alat paling berguna saat ada masalah: ia mencetak URL Reader,
 hasil HTTP, dan isi yang akan dibaca AI — tanpa menjalankan agent.
+
+### Dua sakelar cache, bedanya disengaja
+
+| Flag | Efek | Pakai saat |
+|------|------|-----------|
+| (tanpa flag) | Cache dipakai, item `done` dilewati | Run biasa. Termurah. |
+| `--force` | Jawaban ditulis ulang; peta + referensi dari cache | Jawaban lama salah, datanya sudah benar. |
+| `--force --remap` | Peta + referensi + jawaban semuanya dibuat ulang | Soalnya sendiri berubah, jadi peta lama jadi salah. |
+
+`--force` tanpa `--remap` saat peta keliru hanya menghasilkan jawaban keliru
+yang sama, dua kali bayar.
 
 ---
 
@@ -121,48 +148,69 @@ hasil HTTP, dan isi yang akan dibaca AI — tanpa menjalankan agent.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ 1. CONFIG + AUTH                                                    │
-│    Config.require() -> cek identitas & sesi                          │
-│    MoodleSession.check_login()                                      │
-│    retry 3x + backoff untuk timeout/5xx (auth.py)                   │
-└───────────────────────────┬──────────────────────────────────────────┘
-                            ▼
+ │ 1. CONFIG + AUTH                                                    │
+ │    Config.require() → cek identitas & sesi                          │
+ │    MoodleSession.check_login()                                      │
+ │    retry 3x + backoff untuk timeout/5xx (auth.py)                   │
+└──────────────────────────────────────────────────────────────────────┘
+                                   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ 2. COURSE & SECTION DISCOVERY (scraper.py)                          │
-│    get_courses() -> get_available_sections() -> split_assignable()   │
-│    Lewati item yang statusnya sudah `done` (state.json)              │
-└───────────────────────────┬──────────────────────────────────────────┘
-                            ▼
+ │ 2. COURSE & SECTION DISCOVERY (scraper.py)                          │
+ │    get_courses() → get_available_sections() → split_assignable()    │
+ │    Lewati item yang statusnya sudah `done` (state.json)             │
+└──────────────────────────────────────────────────────────────────────┘
+                                   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ 3. PREFETCH — paralel (TUTON_PREFETCH_WORKERS, default 6)           │
-│    SourceDiscovery.discover(activity, kind):                        │
-│      a. kumpulkan URL kandidat:                                     │
-│         halaman aktivitas | halaman seksi | thread diskusi | lampiran│
-│      b. VERIFIKASI tiap URL (reader.verify_url):                    │
-│         HTTP 200, bukan halaman login, isi >= 40 karakter           │
-│         atau lampiran >= 200 byte                                   │
-│      c. gagal semua -> putar ulang tanpa cache (2x)                 │
-│      d. unduh lampiran ke output/<Course>/sesi<N>/lampiran/          │
-│    Semua bisa paralel karena hanya menyentuh jaringan/disk.         │
-└───────────────────────────┬──────────────────────────────────────────┘
-                            ▼
+ │ TAHAP 0 — PETA SOAL, satu kali per (mata kuliah, sesi)              │
+ │   Agent pemetak-soal (model kecil) → output/_petak/sesi<N>.md       │
+ │     a. buka halaman seksi, cari soal di MENU APA SAJA               │
+ │     b. tulis butir, rubrik, format jawaban, lampiran                │
+ │     c. batas keras 12 halaman; tidak menjawab, tidak riset          │
+ │   Cache dipakai ulang di run berikutnya.                            │
+ │   --remap memaksa buat ulang dari nol.                              │
+ │   GAGAL tidak menghentikan pipeline (lihat catatan bawah).          │
+└──────────────────────────────────────────────────────────────────────┘
+                                   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ 4. KERJA — paralel (TUTON_JOBS, default 2)                          │
-│    Satu item = satu proses `opencode run` (agent `tuton`)            │
-│      - prompt berisi URL Reader (bukan teks soal)                   │
-│      - AI: webfetch URL -> pahami rubrik/instruksi -> kerjakan      │
-│      - retry sampai TUTON_RETRIES bila quality gate gagal            │
-│      - quality gate: answer_quality_issues()                        │
-│      - docx + state.json                                            │
-│    Item gagal TIDAK lagi memblokir sisa item seksi yang sama.       │
-│    Log tiap item dibUFFER per-thread lalu dicetak utuh ber-prefix,   │
-│    jadi dua item paralel tidak saling mengacak barisnya.            │
-└───────────────────────────┬──────────────────────────────────────────┘
-                            ▼
+ │ PREFETCH + TRANSKRIPSI — paralel (TUTON_PREFETCH_WORKERS, 6)        │
+ │   SourceDiscovery.discover(activity, kind):                         │
+ │     a. kumpulkan URL kandidat:                                      │
+ │        halaman aktivitas | seksi | thread diskusi | lampiran        │
+ │     b. VERIFIKASI tiap URL (reader.verify_url):                     │
+ │        HTTP 200, bukan halaman login, isi ≥ 40 karakter             │
+ │        atau lampiran ≥ 200 byte                                     │
+ │     c. gagal semua → putar ulang tanpa cache (2x)                   │
+ │     d. unduh lampiran → output/<Course>/sesi<N>/lampiran/           │
+ │   Lalu transkripsi lampiran sesuai TUTON_TRANSCRIBE.                │
+ │   Bisa paralel karena hanya menyentuh jaringan/disk.                │
+└──────────────────────────────────────────────────────────────────────┘
+                                   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ 5. DOKUMEN & STATE                                                  │
-│    save_doc(soal_text=reader.markdown, jawaban_md, meta)             │
-│    state.set_item({... "urls": [sumber yang terverifikasi]})         │
+ │ TAHAP 1 — DAFTAR PUSTAKA, satu kali per item                        │
+ │   Agent mencari-pustaka (model kecil)                               │
+ │     → output/<Course>/sesi<N>/referensi_<kind>_<n>.md               │
+ │   Batas keras: maksimal TUTON_MAX_PUSTAKA (bawaan 5) entri,         │
+ │   maksimal 1 websearch dan 1 webfetch per entri.                    │
+ │   Cache per item. GAGAL tidak menghentikan pipeline.                │
+└──────────────────────────────────────────────────────────────────────┘
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+ │ TAHAP 2 — MENULIS, satu kali per item (TUTON_JOBS, 2)               │
+ │   Satu item = satu proses opencode run (agent tuton)                │
+ │     – baca peta + referensi + transkrip lampiran                    │
+ │     – webfetch hanya cadangan kalau peta tidak ada                  │
+ │     – salin daftar pustaka VERBATIM dari berkas referensi           │
+ │     – retry sampai TUTON_RETRIES bila quality gate gagal            │
+ │     – quality gate: answer_quality_issues()                         │
+ │   Item gagal tidak memblokir item lain.                             │
+ │   Log per-thread di-buffer lalu dicetak utuh ber-prefix,            │
+ │   jadi dua item tidak saling mengacak barisnya.                     │
+└──────────────────────────────────────────────────────────────────────┘
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+ │ DOKUMEN & STATE                                                     │
+ │   save_doc(soal_text, jawaban_md, meta, template)                   │
+ │   state.set_item({... urls: [sumber yang terverifikasi]})           │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -187,6 +235,7 @@ hasil HTTP, dan isi yang akan dibaca AI — tanpa menjalankan agent.
 | Server terekspos jaringan | bind `127.0.0.1` saja |
 | Lampiran besar melahap memori | batas 25 MB, timeout 60s |
 | `docx` gagal karena karakter kontrol | kontrol & biner dibuang saat render |
+| Dokumen hasil menyimpang dari format resmi | template dipakai sebagai dokumen dasar, bukan ditiru |
 
 ### Pembersihan HTML (3 tahap, urutannya penting)
 
@@ -198,8 +247,8 @@ hasil HTTP, dan isi yang akan dibaca AI — tanpa menjalankan agent.
 
 Tahap 2 dan 3 tidak boleh digabung. Percobaan menggabungkannya menghapus
 seluruh halaman, karena `<body>` Moodle membawa class tata letak seperti
-`sidebar-one` dan `header-light`.这种事情 hanya ketahuan karena menguji
-terhadap HTML asli UT, bukan asumsi.
+`sidebar-one` dan `header-light`. Hal seperti ini hanya ketahuan karena
+menguji terhadap HTML asli UT, bukan asumsi.
 
 Selector yang sengaja TIDAK dipakai:
 
@@ -252,15 +301,42 @@ per satu dan satu lampiran bisa menahan belasan menit.
 
 ---
 
-## 8. Mode `file` (A/B test)
+## 8. Jalur `file` (Form Soal + uji A/B)
 
-`--soal-mode file` menghidupkan perilaku lama: Python menyusun `soal.md` lalu
-menempelkannya ke prompt. Dipertahankan untuk membandingkan hasil
-`--soal-mode url` vs `file` pada soal yang sama tanpa mengubah kode lain.
+Ada dua tempat yang memakai jalur file, dan sengaja dipisah:
 
-Perbedaan utama pada mode `file`: rubrik dan instruksi khusus tutor tetap bisa
-terpotong oleh parser, karena info itu memang tidak pernah ikut dalam
-`soal.md`.
+| Pemakai | Tujuan |
+|---|---|
+| `cmd_solve` (Form Soal) | Jalur resmi. Sumber soal dari ketikan/unggah pengguna, bukan dari scrape. |
+| `main.py run --soal-mode file` | Uji A/B di CLI. Bukan jalur resmi dan tidak bisa diaktifkan lewat `.env`. |
+
+Dulu `--soal-mode` ada di Settings dan `.env`. Itu dibuang: sakelar yang
+tersembunyi membuat hasil run tidak bisa dijelaskan hanya dari log, dan dropdown
+itu membuat orang memilih antara dua perilaku yang kesannya sama padahal
+hanya satu yang benar.
+
+### Form Soal
+
+Form Soal bekerja seperti biasa, dengan satu field opsional tambahan:
+
+| Field | Kosong | Terisi |
+|---|---|---|
+| Contoh format (`.docx`) | Template standar jadi dokumen dasar | Berkas pengguna jadi dokumen dasar |
+| Keterangan format | — | Ditambahkan ke prompt sebagai petunjuk isi |
+
+Berkas format disalin ke `output/<Course>/sesi<N>/_format/`, bukan ke
+`template/`. Kalau diletakkan di `template/`, satu unggahan akan diam-diam
+menggantikan template standar untuk semua run berikutnya.
+
+Python menyalin berkas format apa adanya sebagai dokumen dasar, sehingga
+margin, ukuran halaman, font, dan style dokumen hasil benar-benar milik
+pengguna. Yang tidak ditangani Python adalah **isi**: model penulislah yang
+mengisi tiap sub-bagian memakai style asli berkas contoh itu.
+
+Berkas `.docx` hasil Agent Run mengikuti `template/ContohFormatJawaban.docx`
+dengan cara yang sama: dipakai sebagai dokumen dasar, bukan ditiru. Style
+`Normal`, `Heading 2`, `Heading 3`, dan tabel identitas diambil dari dokumen itu
+supaya perubahan template ikut terbawa.
 
 ---
 
@@ -272,24 +348,100 @@ terpotong oleh parser, karena info itu memang tidak pernah ikut dalam
 | `TUTON_PREFETCH_WORKERS` | `6` | Worker pra-ambil (network-bound) |
 | `TUTON_TIMEOUT` | `600` | Batas waktu satu item (detik) |
 | `TUTON_RETRIES` | `2` | Percobaan menjawab per item |
-| `TUTON_SOAL_MODE` | `url` | `url` (AI ambil sendiri) atau `file` (lama) |
+| `TUTON_MAX_PUSTAKA` | `5` | Batas keras referensi per jawaban |
+| `TUTON_TIMEOUT_HELPER` | `420` | Batas waktu satu pemanggilan agen pembantu |
+| `TUTON_HELPER_RETRIES` | `1` | Percobaan agen pembantu |
+| `OPENCODE_MODEL_HELPER` | (kosong) | Model pemetaan soal + cari referensi. Kosong = pilih otomatis |
 | `TUTON_READER_PORT` | `8765` | Port Reader Lokal |
 | `TUTON_TRANSCRIBE` | `auto` | `auto` / `always` / `never` |
 | `TUTON_PDF_TEXT_FIRST` | `1` | Ekstrak teks layer PDF sebelum vision |
 | `TUTON_CACHE_TTL` | `1800` | Umur cache halaman (detik) |
+| `SEMESTER` | (kosong) | Isi baris Semester di tabel identitas |
+| `UT_DAERAH` | (kosong) | Isi baris UT Daerah di tabel identitas |
 | `OPENCODE_VISION_TRIES` | `3` | Batas model vision per lampiran |
 | `OPENCODE_VISION_PREFER` | (kosong) | Prioritaskan model vision tertentu |
+
+### Nama variabel `.env` harus bisa diurai
+
+Nama variabel ber-spasi — misalnya `UT Daerah=Jakarta` — **tidak bisa diurai
+python-dotenv**. Barisnya dilewati dengan pesan "could not parse statement",
+`Config.UT_DAERAH` tetap kosong, dan baris "UT Daerah" tidak pernah tercetak di
+dokumen. Tidak ada error yang terlihat dari sisi pengguna, hanya baris yang
+bikin-bilang hilang.
+
+Aturannya sederhana: huruf besar + garis bawah, tanpa spasi.
+`SEMESTER=Semester 2`, `UT_DAERAH=Jakarta`.
+
+`config._env_any()` masih menerima ejaan lama (`Semester`, `UT Daerah`)
+supaya `.env` yang terlanjur salah edit tidak harus dibetulkan manual, dan
+`server.py` membuang kunci ejaan lama setiap kali Settings menyimpan ulang —
+jadi filenya lama-lama mendekati benar sendiri.
+
+`test_format.py` bagian 6 mengunci aturan ini, termasuk membuktikan bahwa
+nama ber-spasi memang tidak terbaca.
+
+`TUTON_MAX_PUSTAKA` adalah batas **biaya**, bukan selera. Satu entri berarti
+satu kali verifikasi sumber. Referensi tanpa batas membuat satu run bisa jauh
+lebih mahal tanpa menambah ketepatan.
 
 ---
 
 ## 10. Verifikasi
 
-`python verify_reader.py` menjalankan 49 pemeriksaan tanpa menyentuh Moodle:
-render Markdown (rubrik, gambar, tautan, forum), guard keamanan, server Reader
-end-to-end, deteksi model vision, dan isi prompt.
+Tiga pagar regresi, semuanya jalan lokal tanpa menyentuh Moodle dan tanpa
+biaya model (karena `run_opencode` di-stub):
+
+| Perintah | Cek | Cakupan |
+|---|---|---|
+| `python verify_reader.py` | 49 | Render Markdown (rubrik, gambar, tautan, forum), guard keamanan, server Reader end-to-end, deteksi model vision, isi prompt |
+| `python test_pipeline.py` | 70 | Rantai penuh URL → docx: discovery, transkripsi, tiga tahap agent, quality gate, template-driven docx, state, CLI |
+| `python test_format.py` | 61 | Field "Format Jawaban" (opsional), berkas format sebagai dokumen dasar, Semester + UT Daerah sampai ke dokumen, nama variabel `.env`, `output/` dibuat otomatis, aturan git, pagar class `pixel-*` |
+
+Stub di `test_pipeline.py` sadar-per-agen: agen peta menulis peta, agen
+pencari-pustaka menulis referensi, dan agen penulis menulis jawaban. Stub juga
+mencatat prompt per agen, sehingga pemeriksaan bisa menunjuk prompt yang tepat
+— bukan `PROMPTS[0]`, yang sejak pipeline tiga tahap adalah prompt pemetaan.
 
 Untuk memastikan apa yang sebenarnya dilihat AI, gunakan:
 
 ```
 python main.py probe --course 329012 --sesi 3
 ```
+
+---
+
+## 11. Aturan CSS kustom
+
+Class tema (`pixel-input`, `pixel-button`, `pixel-label`, ...) ditulis **di luar
+`@layer`** di `globals.css`. Konsekuensinya yang harus diingat:
+
+> Di kaskade CSS, aturan tanpa layer selalu menang atas utility Tailwind yang
+> berada di `@layer utilities`.
+
+Jadi `className="pixel-input pl-8"` **tidak** memberi padding kiri 2rem.
+`padding: 0 12px` dari `.pixel-input` tetap yang berlaku, teks mulai di 12px,
+dan ikon di 10px langsung tertimpa. Bug ini pernah terjadi di input pencarian
+model.
+
+Aturan yang berlaku: kalau butuh mengubah properti yang sudah diatur class
+`pixel-*`, tambahkan class baru di `globals.css` (contoh: `pixel-input-icon`,
+`pixel-textarea`), jangan pakai utility Tailwind.
+
+`test_format.py` bagian 9 memindai seluruh `.tsx` dan gagal kalau ada
+`pixel-input` yang digabung utility `p*`/`min-h*` — menangkap niatnya, bukan
+hasil visualnya.
+
+---
+
+## 12. Folder keluaran
+
+`output/` dibuat otomatis oleh `config.ensure_output_dirs()`, yang dipanggil
+dari `Config.require()` (seluruh perintah `main.py`) dan dari blok `__main__`
+`server.py`. Tidak ada `.gitkeep`, jadi tidak perlu ada apa pun yang
+di-commit hanya untuk menjaga foldernya tetap ada.
+
+Isinya diabaikan git sepenuhnya lewat satu baris `output/` di `.gitignore`.
+Satu baris sudah cukup karena git mengabaikan seluruh isi direktori, termasuk
+subfolder `.jobs/`, `.cache/`, `_petak/`, dan `_format/`. `test_format.py`
+memeriksa ini berkas per berkas, karena satu pola yang terlewat berarti
+Nama/NIM bisa ikut ter-push tanpa terlihat.

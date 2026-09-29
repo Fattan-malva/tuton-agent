@@ -68,11 +68,30 @@ _AUDIT_RULES = [
     "  [ ] Tidak ada butir yang dijawab 'seperti di atas' atau 'dapat ditafsirkan begitu saja'.",
     "  [ ] Semua angka hasil hitung sudah dicek ulang; tidak ada yang bertentangan antar bagian.",
     "  [ ] Tidak ada kalimat yang setengah jadi atau terpotong.",
-    "  [ ] Semua referensi di Daftar Pustaka sudah pernah diverifikasi via webfetch, "
-    "dan tautan/DOI-nya benar-benar hidup.",
+    "  [ ] Daftar Pustaka di file jawaban identik dengan isi file referensi yang "
+    "diberikan - tidak ditambah, tidak dikurangi, tidak diubah.",
+    "  [ ] Semua syarat format yang diminta tutor (batas kata, jumlah butir, bentuk "
+    "tabel, jumlah desimal, spasi, dan sejenisnya) benar-benar dipenuhi.",
     "  [ ] Tidak ada karakter aneh (mis. huruf CJK/Cyrillic) yang nyasar di dalam kata "
     "Indonesia. Tulis ulang dari nol bila perlu - JANGAN melakukan edit kecil-kecil pada "
     "teks yang sudah rusak, karena itu menyisakan fragmen aneh.",
+]
+
+# Aturan untuk agen PENULIS. Riset sudah dipindah ke agen `pencari-pustaka`
+# yang terpisah, jadi di sini riset justru dilarang: kalau dua pihak sama-sama
+# mencari referensi, biaya terbuang dua kali untuk hasil yang sama.
+_NO_RESEARCH_RULES = [
+    "DILARANG mencari referensi sendiri. Jangan pakai websearch. Jangan pakai "
+    "webfetch untuk mencari atau memverifikasi sumber. Referensi sudah disiapkan "
+    "di file yang disebutkan di bawah.",
+    "Bagian '## Daftar Pustaka' di file jawaban HARUS berupa salinan persis dari "
+    "file referensi tersebut: entris yang sama, urutan yang sama, penulisan yang "
+    "sama. Jangan menambah entri, jangan mengoreksi, jangan menulis referensi dari "
+    "ingat model sendiri.",
+    "Kalau file referensi berisi satu baris 'TIDAK ADA REFERENSI YANG TERVERIFIKASI', "
+    "tulis tepat baris itu di bagian Daftar Pustaka. Jangan mengarang pengganti.",
+    "Dalam teks jawaban, boleh merujuk '(Rosen, 2011)' untuk sumber yang memang "
+    "ada di daftar. Jangan mengarang sitasi untuk sumber yang tidak ada di sana.",
 ]
 
 _OUTPUT_SKELETON = [
@@ -81,6 +100,27 @@ _OUTPUT_SKELETON = [
     "",
     "## Daftar Pustaka",
     "1. ...",
+    "2. ...",
+]
+
+# Kerangka jawaban untuk agen penulis. Level heading di sini bukan gaya penulisan:
+# `##` dan `###` dipetakan langsung ke style "Heading 2" dan "Heading 3" dari
+# template .docx, jadi tingkatnya menentukan tampilan dokumen, bukan hanya
+# struktur markdown. Mengubah `## Jawaban Mahasiswa` menjadi `## Jawab`
+# memindahkan dokumen ke sub-bagian yang salah.
+_WRITER_SKELETON = [
+    "## <Judul Soal>",
+    "",
+    "## Jawaban Mahasiswa",
+    "### <Sub-bagian pertama>",
+    "<isi jawaban butir pertama, dengan penomoran yang sama seperti di soal>",
+    "### <Sub-bagian berikutnya>",
+    "...",
+    "### Kesimpulan",
+    "<kesimpulan akhir>",
+    "",
+    "## Daftar Pustaka",
+    "1. <salinan persis entri pertama dari berkas referensi>",
     "2. ...",
 ]
 
@@ -129,8 +169,28 @@ _MANFAAT_RULES = [
     "postingan teman; fiktif dilarang).",
 ]
 
+# Versi aturan manfaat untuk agen PENULIS. Bedanya cuma satu dari
+# `_MANFAAT_RULES`: di sini tidak boleh menyebut websearch/webfetch, karena
+# agen penulis sudah dilarang riset dan referensinya datang dari berkas terpisah.
+# `_MANFAAT_RULES` yang asli sengaja dibiarkan utuh karena masih dipakai
+# `build_file_prompt` (jalur Form Soal) yang memang masih melakukan riset.
+_MANFAAT_RULES_WRITER = [
+    "",
+    "9. Argumentasi manfaat (HANYA jika relevan): sebelum menulis, nilai dulu apakah topik "
+    "soal punya aplikasi nyata yang jelas (sistem informasi seperti HRIS, organisasi, "
+    "perusahaan, industri, atau praktik profesional lain).",
+    "   - JIKA relevan: akhiri bagian jawaban dengan sub-bagian "
+    "`### Manfaat dan Relevansi` berisi argumentasi mengapa konsep ini berguna di "
+    "konteks nyata tersebut (mekanisme atau alasan logis, bukan klaim kosong), dan "
+    "merujuk hanya sumber yang sudah ada di Daftar Pustaka.",
+    "   - JIKA TIDAK relevan (soal murni teoretis, abstrak, atau hitungan tanpa konteks "
+    "aplikatif): JANGAN memaksakan bagian ini, langsung ke `## Daftar Pustaka`.",
+    "   - DILARANG menulis tanggapan ke teman atau postingan orang lain (tidak ada "
+    "data postingan teman; fiktif dilarang).",
+]
 
-def build_url_prompt(
+
+def build_writer_prompt(
     *,
     work_kind: str,
     index: int,
@@ -144,44 +204,83 @@ def build_url_prompt(
     lampiran_dir: Path | None = None,
     jawaban_path: Path,
     agent_can_read_files: bool = False,
+    petak_path: Path | None = None,
+    pustaka_path: Path | None = None,
 ) -> str:
-    """Prompt mode URL: AI ambil sendiri soalnya dari Reader Lokal."""
+    """Prompt agen penulis: baca peta soal + daftar pustaka, lalu susun jawaban.
+
+    Dua file lokal menggantikan pencarian yang sebelumnya agen ini lakukan sendiri:
+
+    - `petak_path`   peta soal hasil agen `pemetak-soal` (satu kali per sesi,
+                     di-cache). Berisi butir soal, syarat format, rubrik, dan
+                     lampiran yang relevan.
+    - `pustaka_path` daftar referensi hasil agen `pencari-pustaka` (satu kali
+                     per item, di-cache).
+
+    Efeknya: satu sesi berisi lima item tidak lagi dibaca lima kali oleh model
+    kuat. Sekali saja oleh model kecil, lalu hasilnya dipakai bersama.
+
+    Kalau `petak_path` tidak ada (tahap pemetaan gagal), prompt otomatis
+    memakai jalur lama: ambil soalnya sendiri dari `soal_urls` dengan webfetch.
+    Jadi kegagalan tahap 0 menurunkan kualitas, bukan menghentikan pipeline.
+    """
+    pakai_peta = bool(petak_path and Path(petak_path).is_file())
     lines = [
         f"Kamu adalah asisten pengerjaan {work_kind} tutorial online (tuton).",
         "",
-        "SOAL BUKAN diberikan sebagai teks di pesan ini. Kamu harus mengambilnya sendiri "
-        "dari URL di bawah memakai tool `webfetch`. URL tersebut sudah diautentikasi dengan "
-        "sesi Moodle aktif, jadi isinya adalah halaman resmi dari dosen.",
-        "",
         *_context(work_kind, index, course_name, section_num, activity_title),
-        "",
-        "## URL SUMBER SOAL (ambil dengan webfetch, urut dari atas)",
     ]
+
+    if pakai_peta:
+        lines.extend(
+            [
+                "",
+                "## Peta soal (WAJIB dibaca paling dulu)",
+                f"Baca file `{petak_path}` dengan tool `read` SEBELUM melakukan apa pun. "
+                "File itu hasil agen pemetaan yang sudah menelusuri halaman Moodle untuk "
+                "sesi ini, jadi isinya sudah gathered: butir soal, syarat format, rubrik, "
+                "dan daftar lampiran yang relevan.",
+                "",
+                "Isi peta adalah rujukan utama kerjamu. Aturan memakainya:",
+                "  1. Kerjakan SETIAP butir yang tertulis di peta. Butir yang tidak "
+                "dijawab berarti nilai hilang.",
+                "  2. Patuhi syarat format di peta SECARA HARFIAH (batas kata, jumlah "
+                "butir, bentuk tabel, jumlah desimal, dan sejenisnya). Pelanggaran "
+                "format adalah alasan paling sering jawaban dinyatakan salah bentuk.",
+                "  3. Kalau peta menyebut rubrik atau pedoman penilaian, pastikan setiap "
+                "butir rubrik itu kelihatan di jawabanmu.",
+                "  4. Kalau peta menandai ada butir yang bergantung lampiran atau materi "
+                "lain, WAJIB buka lampiran itu (lihat bagian Lampiran di bawah) sebelum "
+                "menjawab butir tersebut. Jangan menjawab dari asumsi.",
+                "  5. Cadangan saja: kalau peta ternyata tidak memuat butir soalmu secara "
+                "lengkap (butir hilang, atau ada judul tanpa pertanyaannya), boleh buka "
+                "halaman aslinya dengan webfetch pada URL di bawah. Ini pengecualian, "
+                "bukan langkah wajib. Jangan lakukan bila peta sudah cukup.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "## Cara mengambil soal (WAJIB)",
+                "Peta soal tidak tersedia untuk sesi ini, jadi kamu harus mengambil "
+                "soalnya sendiri. Panggil webfetch pada URL di bawah, urut dari nomor "
+                "1, dan baca SELURUH isi hasilnya sampai bawah termasuk bagian "
+                "'Pedoman Penilaian / Rubrik' dan 'Lampiran' bila ada.",
+            ]
+        )
+
+    lines.extend(["", "## URL sumber (dibaca dengan webfetch, hanya bila perlu)"])
     for pos, url in enumerate(soal_urls, 1):
         lines.append(f"{pos}. {url}")
     if source_urls:
         lines.append("")
-        lines.append("URL asli di Moodle (untuk-catatan/referensi, tidak bisa dibuka "
-                     "langsung karena butuh cookie):")
+        lines.append(
+            "URL asli di Moodle (untuk catatan/referensi, tidak bisa dibuka langsung "
+            "karena butuh cookie):"
+        )
         lines.extend(f"- {url}" for url in source_urls)
 
-    lines.extend(
-        [
-            "",
-            "## Cara mengambil soal (WAJIB)",
-            "1. Panggil webfetch pada URL nomor 1. Baca SELURUH isi hasilnya sampai bawah, "
-            "termasuk bagian 'Pedoman Penilaian / Rubrik' dan 'Lampiran' bila ada.",
-            "2. Halaman itu adalah konteks resmi. Pahami dengan saksama APAKAH ini Diskusi "
-            "atau Tugas, dan apa yang sebenarnya diminta tutor: bukan cuma kalimat "
-            "pertanyaannya, tapi juga instruksi khusus, rubrik/pedoman penilaian, "
-            "batas kata, jumlah butir, dan semua syarat yang disebut.",
-            "3. Kalau URL pertama tidak memuat soal yang lengkap, coba URL berikutnya sampai "
-            "satu memuat soal. Gabungkan informasi dari semua sumber yang relevan.",
-            "4. JIKA ada lampiran (gambar/PDF/dokumen) yang isinya penting dan belum "
-            "tereksir di halaman, ambil isinya dari file lokal di folder lampiran "
-            "(lihat bagian Lampiran di bawah) memakai tool `read`.",
-        ]
-    )
     if attachments or transcript_path:
         lines.extend(["", "## Lampiran"])
         if lampiran_dir:
@@ -193,18 +292,18 @@ def build_url_prompt(
                 [
                     f"- Isi lampiran sudah diekstrak otomatis ke `{transcript_path}` "
                     "(hasil OCR/vision atas gambar, PDF, dan dokumen).",
-                    "- **Baca file transkrip itu dengan tool `read` bila halaman "
-                    "soal belum memuat butir pertanyaan secara lengkap.** Di UT, "
-                    "PDF/gambar lampiran sering kali justru zawar utama soal, "
+                    "- Baca file transkrip itu dengan tool `read` bila butir "
+                    "pertanyaan ada di dalam lampiran dan tidak tertulis di halaman "
+                    "soal. Di UT, PDF atau gambar lampiran sering justru zawarnya, "
                     "sedangkan halaman hanya berisi instruksi umum.",
                     "- Perlakukan isi transkrip sebagai bagian resmi soal, bukan "
-                    "sekadar catatan. setiap butir yang ada di sana wajib dijawab.",
+                    "sekadar catatan. Setiap butir yang ada di sana wajib dijawab.",
                 ]
             )
         if agent_can_read_files:
             lines.append(
-                "- Kamu bisa melihat gambar/PDF: kalau transkrip terasa kurang atau "
-                "ada bagian `[tidak terbaca]`, buka langsung berkasnya dengan tool `read`."
+                "- Kamu bisa melihat gambar/PDF: kalau transkrip terasa kurang atau ada "
+                "bagian `[tidak terbaca]`, buka langsung berkasnya dengan tool `read`."
             )
         else:
             lines.append(
@@ -212,74 +311,84 @@ def build_url_prompt(
                 "Kalau ada bagian yang tidak terbaca, sebutkan itu di Catatan dan "
                 "jangan mengarang isinya."
             )
-        lines.append("- DILARANG menjalankan perintah shell/bash, OCR, crop, atau resize.")
+        lines.append(
+            "- DILARANG menjalankan perintah shell/bash, OCR, crop, atau resize."
+        )
+
+    if pustaka_path and Path(pustaka_path).is_file():
+        lines.extend(
+            [
+                "",
+                "## Referensi (WAJIB dipakai, jangan dicari ulang)",
+                f"Baca file `{pustaka_path}` dengan tool `read`. Isinya adalah Daftar "
+                "Pustaka final untuk soal ini, sudah diverifikasi oleh agen terpisah. "
+                "Salin persis ke bagian `## Daftar Pustaka` pada file jawabanmu.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "## Referensi",
+                "Berkas referensi tidak tersedia. Tulis `## Daftar Pustaka` lalu satu "
+                "baris `TIDAK ADA REFERENSI YANG TERVERIFIKASI`. Jangan mengarang "
+                "referensi dari ingatan model.",
+            ]
+        )
 
     lines.extend(["", "## Gaya jawaban", *_STYLE_RULES])
     lines.extend(["", "## Aturan kejujuran (WAJIB)", *_HONESTY_RULES])
+    lines.extend(["", "## Aturan referensi (WAJIB)", *_NO_RESEARCH_RULES])
     lines.extend(
         [
             "",
             "## Cara kerja (WAJIB, ikuti berurutan)",
-            "LANGKAH 1 - PETA SOAL. Setelah membaca sumber, buat daftar internal semua "
-            "pertanyaan/butir yang harus dijawab (nomor butir: 1, 2, a, b, c, i-iv), "
-            "termasuk setiap persyaratan di rubrik atau instruksi khusus. Jangan tulis "
-            "peta ini ke file jawaban; ini catatan internal kamu.",
+            "LANGKAH 1 - PETA INTERNAL. Dari peta soal dan lampiran, buat daftar internal "
+            "semua butir yang harus dijawab, termasuk setiap persyaratan format. Jangan "
+            "tulis daftar ini ke file jawaban; ini catatan internal kamu.",
             "",
-            *_RESEARCH_RULES,
+            "LANGKAH 2 - JAWAB. Jawab SETIAP butir dari langkah 1, tidak ada yang "
+            "dilewati. Untuk setiap butir: (a) kerjakan langkahnya, (b) cek ulang hasil "
+            "hitungannya secara independen (hitung ulang dengan cara lain, cek satuan, "
+            "cek masuk akal terhadap besaran soal), (c) tulis jawaban akhirnya di bawah "
+            "sub-bagian dengan label butir yang sama dengan soal.",
             "",
-            "LANGKAH 3 - JAWAB. Jawab SETIAP butir dari langkah 1, tidak ada yang "
-            "dilewati. Untuk setiap butir: (a) kerjakan langkahnya, (b) cek ulang "
-            "hasil hitungannya secara independen (hitung ulang dengan cara lain, cek "
-            "satuan, cek masuk akal terhadap besaran soal), (c) tulis jawaban akhirnya "
-            "di bawah sub-bagian dengan label butir yang sama dengan soal.",
-            "",
-            "LANGKAH 4 - AUDIT SEBELUM MENULIS. Periksa daftar berikut satu per satu, dan "
-            "perbaiki sebelum menulis file:",
+            "LANGKAH 3 - AUDIT SEBELUM MENULIS. Periksa daftar berikut satu per satu, "
+            "dan perbaiki sebelum menulis file:",
             *_AUDIT_RULES,
-            "  [ ] Semua syarat/rubrik dari halaman soal sudah dipenuhi dalam jawaban.",
             "",
-            "LANGKAH 5 - TULIS. Tulis jawaban final ke file dengan struktur di bawah. Tulis "
-            "file sekali secara utuh. Jangan mengedit file berulang kali untuk "
-            "'memperbaiki' satu kata - itu pernah merusak jawaban (menyisakan fragmen acak).",
+            "LANGKAH 4 - TULIS. Tulis jawaban final ke file dengan struktur di bawah. "
+            "Tulis file sekali secara utuh. Jangan mengedit file berulang kali untuk "
+            "'memperbaiki' satu kata; itu pernah merusak jawaban dan menyisakan "
+            "fragmen acak.",
             "",
             "## Instruksi",
-            "1. Kerjakan dengan benar dan LENGKAP. Mulai dari URL nomor 1 dan ikuti "
-            "urutan langkah 1-5 di atas tanpa kecuali.",
+            "1. Kerjakan dengan benar dan LENGKAP. Ikuti urutan langkah 1-4 di atas "
+            "tanpa kecuali.",
             "2. JANGAN menulis ulang isi soal atau mempotong kutipan dari halaman; cukup "
             "jawabannya. Kutipan singkat sebagai bukti boleh, dengan tanda kutip.",
-            "3. Jika setelah mencoba semua URL sumber, soal benar-benar tidak tersedia: "
-            "JANGAN mengarang. Tulis di file jawaban `## Jawab` lalu paragraf yang "
-            "menjelaskan sumber mana yang gagal diakses dan apa yang tidak diketahui, "
-            "lalu akhiri dengan Daftar Pustaka kosong bila tidak ada sumber yang dipakai. "
-            "Jangan menulis jawaban fiktif.",
-            "   Jika sebagian ada yang '[tidak terbaca]', kerjakan bagian yang terbaca dan "
-            "sebutkan asumsi yang kamu pakai di bagian Catatan.",
-            "4. Sertakan 'Daftar Pustaka' di akhir jawaban yang BERISI HANYA referensi NYATA "
-            "dan sudah diverifikasi lewat webfetch:",
-            "   - Setiap entri harus bisa dibuka pembaca lain: sertakan tautan stabil (DOI "
-            "resolver https://doi.org/..., URL penerbit/arxiv/repositori, atau ISBN).",
-            "   - Kalau sebuah buku tidak punya URL gratis, tetap tulis ISBN-nya.",
-            "   - Pilih 3-8 entri yang paling relevan dengan butir soal.",
-            "   - Format APA edisi ke-7:",
-            "     Buku  : Penulis, A. A., & Penulis, B. B. (Tahun). *Judul Buku* (edisi). "
-            "Penerbit. ISBN xxx.",
-            "     Jurnal: Penulis, A. A. (Tahun). Judul artikel. *Nama Jurnal, Vol*(No), "
-            "hlm-hlm. https://doi.org/...",
-            "     Standar/Web: Organisasi. (Tahun). *Judul*. URL",
+            "3. Jika setelah membaca peta, lampiran, dan URL cadangan, soal benar-benar "
+            "tidak tersedia: JANGAN mengarang. Tulis di file jawaban bagian `## Jawab` "
+            "lalu paragraf yang menjelaskan sumber mana yang tidak bisa diakses dan apa "
+            "yang tidak diketahui. Jangan menulis jawaban fiktif.",
+            "4. Kalau sebagian ada yang '[tidak terbaca]', kerjakan bagian yang terbaca "
+            "dan sebutkan asumsi yang kamu pakai di bagian Catatan.",
             _HUMANIZER_LINE,
-            f"7. Tulis jawaban final dalam format Markdown ke `{jawaban_path}`. Struktur wajib:",
+            f"7. Tulis jawaban final dalam format Markdown ke `{jawaban_path}`. "
+            "Struktur wajib:",
             "```",
-            *_OUTPUT_SKELETON,
+            *_WRITER_SKELETON,
             "```",
         ]
     )
     if work_kind == "diskusi":
-        lines.extend(_MANFAAT_RULES)
+        lines.extend(_MANFAAT_RULES_WRITER)
     lines.extend(
         [
             "",
-            "Penting: AKURASI > kecepatan. Kerjakan langkah 1-5 sesuai urutan, dan pastikan "
-            "jawaban menjawab SEMUA butir dengan Daftar Pustaka yang benar-benar terverifikasi.",
+            "Penting: AKURASI lebih penting daripada kecepatan. Kerjakan langkah 1-4 "
+            "sesuai urutan, dan pastikan jawaban menjawab SEMUA butir dengan Daftar "
+            "Pustaka yang persis sama seperti berkas referensi.",
         ]
     )
     return "\n".join(lines)
@@ -296,10 +405,23 @@ def build_file_prompt(
     attachment_dir: Path,
     lampiran: list[str],
     jawaban_path: Path,
+    format_path: Path | None = None,
+    format_note: str = "",
 ) -> str:
-    """Prompt mode file (perilaku lama): teks soal ditempel ke file soal.md.
+    """Prompt mode file (jalur Form Soal).
 
-    Dipertahankan sebagai jalur cadangan/A-B test lewat `--soal-mode file`.
+    `format_path` dan `format_note` berasal dari field "Format Jawaban" yang
+    opsional di form. Kalau keduanya kosong, prompt ini persis sama dengan
+    versi sebelumnya dan dokumen keluaran memakai template standar.
+
+    Kalau ada isinya, dua hal berubah dan tidak ada yang lain:
+      - `format_path`  berkas .docx contoh format milik pengguna. Python
+        menyalinnya sebagai dokumen dasar, sehingga hasil .docx mengikuti
+        tata letak, font, ukuran halaman, dan style yang benar-benar dipakai
+        pengguna -- bukan tebakan.
+      - `format_note`  keterangan tambahan dari pengguna. Isi teks jawabannya
+        tetap ditulis model memakai style asli berkas contoh itu, bukan style
+        bawaan template.
     """
     lines = [
         f"Kamu adalah asisten pengerjaan {work_kind} tutorial online (tuton).",
@@ -317,6 +439,43 @@ def build_file_prompt(
         lines.append(f"  Isi folder: {', '.join(lampiran)}")
     lines.extend(["", "## Gaya jawaban", *_STYLE_RULES])
     lines.extend(["", "## Aturan kejujuran (WAJIB)", *_HONESTY_RULES])
+
+    if format_path or format_note.strip():
+        lines.extend(["", "## Format jawaban (WAJIB, mengikuti berkas contoh)"])
+        if format_path:
+            lines.extend(
+                [
+                    f"Berkas contoh format: `{format_path}`.",
+                    "Ini dokumen .docx milik mahasiswa yang berisi contoh jawaban dengan "
+                    "tata letak yang benar. **Buka dan periksa strukturnya lebih dulu** "
+                    "dengan tool `read` kalau kamu bisa; kalau tidak bisa, andalkan "
+                    "keterangan di bawah.",
+                    "Ikuti struktur itu persis: jumlah dan urutan sub-bagian, apakah "
+                    "pakai tabel atau daftar, anak judul apa yang dipakai, dan di mana "
+                    "kesimpulan diletakkan.",
+                    "Soal MUAT: struktur dokumen, penataan paragraf, margin, ukuran "
+                    "halaman, nama font, ukuran font, warna, spasi, penomoran, dan "
+                    "tabel identitas. Pipeline sudah meneruskannya ke berkas keluaran, "
+                    "jadi kamu tidak perlu menyalin gaya itu sendiri.",
+                    "Yang belum ditangani pipeline adalah ISI: gunakan style yang benar "
+                    "saat mengisi setiap sub-bagian, dengan panjang yang sesuai contoh.",
+                ]
+            )
+        if format_note.strip():
+            lines.extend(
+                [
+                    "",
+                    "Keterangan tambahan dari mahasiswa:",
+                    format_note.strip(),
+                ]
+            )
+        lines.extend(
+            [
+                "",
+                "Kalau keterangan dan berkas contoh saling berbeda, ikuti BERKAS "
+                "CONTOH untuk bentuk dan keterangan untuk isi.",
+            ]
+        )
     lines.extend(
         [
             "",
@@ -368,9 +527,111 @@ def build_file_prompt(
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Prompt agen pembantu.
+#
+# Dipisah dari prompt agen penulis karena tugasnya berbeda jenis: yang satu
+# menulis jawaban panjang, yang satu hanya menyusun artefak pendek yang dibaca
+# agent lain.
+#
+# `build_petak_prompt` sengaja dibuat sangat tipis. Petunjuk sebenarnya sudah
+# ada di definisi agen `.opencode/agent/pemetak-soal.md`, jadi mengulangnya di
+# sini hanya menambah token pada setiap pemanggilan. Yang dikirim ke sini
+# hanyalah fakta yang tidak diketahui opencode dari definisi agent: nama mata
+# kuliah, nomor sesi, URL, dan lokasi berkas keluaran.
+# ---------------------------------------------------------------------------
+
+
+def build_petak_prompt(
+    *,
+    course_name: str,
+    section_num: int,
+    section_title: str,
+    section_url: str,
+    out_path: Path,
+) -> str:
+    """Prompt untuk agen `pemetak-soal`: satu peta soal untuk satu sesi."""
+    lines = [
+        f"Petakan soal untuk satu sesi mata kuliah: **{course_name}**, "
+        f"sesi ke-{section_num}"
+        + (f" ({section_title})" if section_title.strip() else "")
+        + ".",
+        "",
+        f"- Halaman seksi (URL Reader, sudah diautentikasi): {section_url}",
+        f"- Tulis peta soal ke: `{out_path}`",
+        "",
+        "Ikuti aturan di definisi agent kamu. Ringkasnya: telusuri halaman ini "
+        "untuk menemukan semua soal yang ada di sesi ini, pahami setiap soal, lalu "
+        "tulis peta ke berkas di atas.",
+    ]
+    return "\n".join(lines)
+
+
+def build_referensi_prompt(
+    *,
+    work_kind: str,
+    index: int,
+    course_name: str,
+    section_num: int,
+    activity_title: str,
+    petak_digest: str,
+    transcript_path: Path | None,
+    attachment_names: list[str],
+    out_path: Path,
+    max_refs: int,
+) -> str:
+    """Prompt untuk agen `pencari-pustaka`: daftar referensi untuk satu item.
+
+    `petak_digest` adalah potongan peta soal milik item ini. Potongan itu
+    penting: daftar referensi untuk satu soal tidak boleh ikut-butir soal lain,
+    karena hanya referensi yang benar-benar relevan yang membuat daftar ini
+    berguna.
+    """
+    lines = [
+        f"Cari daftar pustaka untuk satu soal: {work_kind} ke-{index}, mata kuliah "
+        f"{course_name}, sesi {section_num}.",
+        "",
+        f"- Judul aktivitas: {activity_title}",
+        f"- Batas jumlah referensi: **{max_refs}**. Batas keras, bukan saran.",
+    ]
+    if petak_digest.strip():
+        lines.extend(
+            [
+                "",
+                "## Isi soal (hasil pemetaan)",
+                "Bagian ini sudah dipetakan oleh agen sebelumnya. Pakai untuk "
+                "membaca topik sebenarnya, bukan hanya judulnya.",
+                "",
+                petak_digest.strip(),
+            ]
+        )
+    if attachment_names:
+        lines.extend(["", f"- Lampiran yang menyertai: {', '.join(attachment_names)}"])
+    if transcript_path and Path(transcript_path).is_file():
+        lines.append(
+            f"- Isi lampiran sudah diekstrak ke `{transcript_path}`. **Baca dulu** "
+            "kalau kamu punya tool `read`, karena butir soal sering ada di dalam "
+            "lampiran dan bukan di halaman."
+        )
+    lines.extend(
+        [
+            "",
+            f"Tulis Daftar Pustaka ke `{out_path}`. Ikuti aturan di definisi agent "
+            "kamu, terutama batas jumlah referensi dan larangan mengarang. Jangan "
+            "menjawab soal.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def build_prompt(**kwargs) -> str:
-    """Pintu masuk tunggal. Mode ditentukan oleh `soal_urls` yang diberikan."""
+    """Pintu masuk tunggal. Mode ditentukan oleh `soal_urls` yang diberikan.
+
+    `mode="file"` adalah jalur Form Soal dan tidak berubah sama sekali: teks soal
+    ditempel ke `soal.md`, lalu agen `tuton` mencari referensi sendiri seperti
+    sebelumnya. Jalur itu tidak memakai peta soal maupun daftar pustaka terpisah.
+    """
     mode = kwargs.pop("mode", "url")
     if mode == "file" or not kwargs.get("soal_urls"):
         return build_file_prompt(**kwargs)
-    return build_url_prompt(**kwargs)
+    return build_writer_prompt(**kwargs)

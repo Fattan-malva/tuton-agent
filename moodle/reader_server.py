@@ -65,11 +65,41 @@ def fileurl(url: str, kind: str = "file") -> str:
     return f"{base_url()}/file?u={quoted}&t={_TOKEN}"
 
 
+def link_for(url: str, kind: str = "page") -> str:
+    """Dispatcher untuk `render_moodle_html`: tautan halaman -> `/soal`,
+    tautan berkas -> `/file`.
+
+    Ini yang membuat halaman bisa DIJELAJAH oleh agen. Tanpa dispatcher ini,
+    `render_moodle_html` memakai default-nya (URL apa adanya) dan markdown
+    berisi `https://elearning.ut.ac.id/...` mentah. Agen tidak punya cookie
+    MoodleSession, jadi tautan itu mati: tidak ada cara membukanya tanpa
+    menyalin token Reader secara manual per tautan.
+
+    `kind` dari pemanggil hanya memengaruhi endpoint, bukan jenis konten --
+    `/soal` dan `/file` sama-sama menyuntik cookie, bedanya `/file` mengembalikan
+    byte asli.
+    """
+    if kind == "file":
+        return fileurl(url)
+    return soalu(url, kind if kind != "page" else "generic")
+
+
 # ---------------------------------------------------------------------------
 # Logika handler (dipisah supaya bisa diuji tanpa menjalankan server)
 # ---------------------------------------------------------------------------
-def handle_soal(url: str, kind: str, *, use_cache: bool = True) -> tuple[int, str, str]:
-    """(status, content_type, body_text) untuk /soal."""
+def handle_soal(
+    url: str,
+    kind: str,
+    *,
+    use_cache: bool = True,
+    rewrite_links: bool = True,
+) -> tuple[int, str, str]:
+    """(status, content_type, body_text) untuk /soal.
+
+    `rewrite_links=True` (default) menulis ulang seluruh tautan di halaman
+    menjadi URL Reader yang bisa dibuka agen. Setel `False` untuk memakai
+    perilaku lama (tautan Moodle mentah), misalnya saat membandingkan output.
+    """
     if not url:
         return 400, "text/plain; charset=utf-8", "URL wajib diisi (parameter u)."
     r = reader()
@@ -78,7 +108,12 @@ def handle_soal(url: str, kind: str, *, use_cache: bool = True) -> tuple[int, st
             "URL di luar host Moodle. Reader hanya menyajikan halaman dari "
             f"{Config.MOODLE_BASE_URL}."
         )
-    md, fetched = r.render(url, kind=kind, use_cache=use_cache)
+    md, fetched = r.render(
+        url,
+        kind=kind,
+        use_cache=use_cache,
+        url_for=link_for if rewrite_links else None,
+    )
     if not md.strip():
         return _fail_status(fetched), "text/plain; charset=utf-8", _fail_text(fetched, url)
     header = (

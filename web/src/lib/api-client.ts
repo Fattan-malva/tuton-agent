@@ -21,6 +21,20 @@ import type {
 
 const API_BASE = '';
 
+/**
+ * Bentuk yang diterima `saveConfig`: kunci datar, bukan `runtime` bersarang.
+ * Server membaca kunci datar dan mempertahankan nilai lama untuk field yang
+ * tidak dikirim, jadi form boleh mengirim subset saja.
+ */
+export type SettingsPayload = Partial<AppConfig> & {
+  moodle_session?: string;
+  // `string` diterima karena `<input type="number">` mengirim teks; server yang
+  // mem-parsing dan hanya memakai nilai lama kalau tidak terbaca.
+  jobs?: number | string;
+  max_pustaka?: number | string;
+  transcribe?: string;
+};
+
 export class ApiError extends Error {
   status: number;
   data: unknown;
@@ -101,7 +115,14 @@ export const apiClient = {
     return request<ModelsResponse>(`/api/models${query}`);
   },
 
-  saveConfig(config: Partial<AppConfig> & { moodle_session?: string }): Promise<ApiEnvelope<unknown>> {
+  /**
+   * Kirim setelan ke `/api/config`.
+   *
+   * Body dikirim apa adanya. Server membaca kunci datar (`jobs`,
+   * `max_pustaka`, `transcribe`, ...) dan mempertahankan nilai lama untuk
+   * field yang tidak dikirim, jadi form boleh mengirim subset saja.
+   */
+  saveConfig(config: SettingsPayload): Promise<ApiEnvelope<unknown>> {
     return envelope('/api/config', {
       method: 'POST',
       body: JSON.stringify(config),
@@ -155,6 +176,10 @@ export const apiClient = {
     soal_text: string;
     file?: File | null;
     files?: File[];
+    /** Contoh format jawaban (.docx). Opsional: dikosongkan berarti pakai template standar. */
+    format_file?: File | null;
+    /** Keterangan format jawaban bebas. Opsional. */
+    format_note?: string;
   }): Promise<RunStartResponse> {
     const form = new FormData();
     form.append('course_id', String(payload.course_id));
@@ -167,6 +192,13 @@ export const apiClient = {
     }
     for (const extra of payload.files ?? []) {
       form.append('files', extra);
+    }
+    if (payload.format_file) {
+      form.append('format_file', payload.format_file);
+    }
+    const note = (payload.format_note ?? '').trim();
+    if (note) {
+      form.append('format_note', note);
     }
     return envelope('/api/solve', { method: 'POST', body: form });
   },

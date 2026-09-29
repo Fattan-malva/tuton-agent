@@ -11,10 +11,32 @@ load_dotenv(BASE_DIR / ".env", override=True)
 PROJECT_ROOT = BASE_DIR
 OUTPUT_DIR = BASE_DIR / "output"
 TEMPLATE_DIR = BASE_DIR / "template"
-HUMANIZER_DIR = BASE_DIR / "vendor" / "humanizer"
+
+# Subfolder yang dibuat di dalam `output/`. `.jobs` dipakai server.py untuk
+# unggahan sementara, `.cache` untuk cache halaman dan transkripsi, `_petak`
+# untuk peta soal per sesi. Semuanya diabaikan git.
+OUTPUT_JOBS_DIR = OUTPUT_DIR / ".jobs"
+OUTPUT_CACHE_DIR = OUTPUT_DIR / ".cache"
 
 # Zona waktu untuk stempel waktu hasil pekerjaan. UT operates on WIB (UTC+7).
 WIB = timezone(timedelta(hours=7))
+
+
+def ensure_output_dirs() -> Path:
+    """Buat `output/` beserta subfoldernya kalau belum ada, lalu kembalikan.
+
+    Dipanggil dari setiap titik masuk (`Config.require`, `server.py`, dan
+    `cmd_solve`) supaya folder keluaran selalu ada sebelum ada yang menulis ke
+    sana. Tanpa ini, mengklona repo baru langsung gagal dengan
+    `FileNotFoundError` yang jauh lebih sulit dibaca daripada "folder belum
+    ada".
+
+    `exist_ok=True` membuat fungsi ini idempoten dan aman dipanggil dari banyak
+    worker sekaligus.
+    """
+    for folder in (OUTPUT_DIR, OUTPUT_JOBS_DIR, OUTPUT_CACHE_DIR):
+        folder.mkdir(parents=True, exist_ok=True)
+    return OUTPUT_DIR
 
 
 def now_wib() -> datetime:
@@ -67,6 +89,26 @@ def _env(key: str, default: str = "") -> str:
     return (os.getenv(key) or "").strip() or default
 
 
+def _env_any(*keys: str, default: str = "") -> str:
+    """Baca beberapa nama variabel, ambil yang pertama terisi.
+
+    Hanya dipakai untuk variabel yang ejaan lamanya keliru. Contoh nyata:
+    `.env` pernah menulis `UT Daerah=Jakarta` -- nama variabel dengan spasi di
+    tengah. python-dotenv tidak bisa menguraikannya sama sekali (memunculkan
+    "could not parse statement" lalu MELOMPATI barisnya), jadi nilainya hilang
+    tanpa error dan baris "UT Daerah" tidak pernah tercetak di dokumen.
+
+    `.env.example` sekarang memakai nama yang benar. Fungsi ini tetap ada
+    supaya `.env` yang sudah terlanjur salah edit tidak harus diperbaiki
+    manual oleh pengguna.
+    """
+    for key in keys:
+        nilai = (os.getenv(key) or "").strip()
+        if nilai:
+            return nilai
+    return default
+
+
 def normalize_base_url(raw: str) -> str:
     """Rapikan base URL Moodle: tambah skema bila kurang, buang slash akhir."""
     url = (raw or "").strip().rstrip("/")
@@ -84,7 +126,23 @@ class Config:
     NAMA = _env("NAMA")
     NIM = _env("NIM")
     PRODI = _env("PRODI")
+    # Isi tabel identitas di header dokumen. Boleh kosong: baris dengan nilai
+    # kosong dilewati, bukan dicetak sebagai "None"/"" atau label menggantung.
+    #
+    # Nama ejaan lama ikut diterima supaya `.env` yang sudah terlanjur ditulis
+    # dengan `Semester=` / `UT Daerah=` tetap bekerja. Lihat `_env_any`.
+    SEMESTER = _env_any("SEMESTER", "Semester", "semester")
+    UT_DAERAH = _env_any("UT_DAERAH", "UT Daerah", "ut_daerah", "UTDaerah")
+
+    # Model untuk agen PENULIS jawaban (`tuton`). Ini satu-satunya langkah yang
+    # butuh model kuat, karena seluruh halaman tidak lagi dibacanya sendiri.
     OPENCODE_MODEL = _env("OPENCODE_MODEL")
+    # Model untuk agen pembantu: `pemetak-soal` dan `pencari-pustaka`. Tugasnya
+    # sempit (baca halaman -> tulis brief; cari referensi -> tulis daftar) jadi
+    # model kecil/grading gratis sudah cukup. Kosongkan untuk auto-pilih dari
+    # `opencode models`; bila diisi tapi modelnya tidak ada, tetap auto-pilih
+    # alih-alih gagal.
+    OPENCODE_MODEL_HELPER = _env("OPENCODE_MODEL_HELPER")
 
     # Model transcriber (vision) dipilih OTOMATIS dari `opencode models`
     # berdasarkan yang support image/pdf, jadi tidak di-hardcode. Variabel ini
@@ -111,9 +169,23 @@ class Config:
     # Jumlah percobaan menjawab per item. Maks 3; default 2 sudah cukup karena
     # retry ketiga hanya mengulang kesalahan yang sama dengan biaya penuh.
     TUTON_RETRIES = int(_env("TUTON_RETRIES", "2"))
+    # Batas waktu untuk agen pembantu (`pemetak-soal`, `pencari-pustaka`).
+    # Lebih pendek dari TUTON_TIMEOUT karena tugasnya sempit: satu peta soal
+    # atau satu daftar referensi. Tanpa batas lebih pendek, satu pemetaan yang
+    # macet menahan seluruh batch selama 10 menit.
+    TUTON_TIMEOUT_HELPER = int(_env("TUTON_TIMEOUT_HELPER", "420"))
+    # Jumlah percobaan untuk agen pembantu. Default 1: kalau pemetaan gagal,
+    # jalur cadangan agen penulis (baca URL sendiri) masih rescuing pekerjaan,
+    # jadi mengulang pemetaan dengan model yang sama hanya menguras kuota.
+    TUTON_HELPER_RETRIES = int(_env("TUTON_HELPER_RETRIES", "1"))
     # Berapa item yang dikerjakan bersamaan (masing-masing = 1 proses
     # `opencode run` independen). Naikkan kalau kuota model masih lega.
     TUTON_JOBS = int(_env("TUTON_JOBS", "2"))
+    # Batas keras jumlah referensi di Daftar Pustaka. Ini batas BIAYA, bukan
+    # selera: riset adalah langkah termahal per item, dan tiap referensi
+    # menambah satu putaran webfetch. Prompt agen `pencari-pustaka` memakai
+    # angka yang sama, dan `answer_quality_issues` menolak hasil yang melebihi.
+    TUTON_MAX_PUSTAKA = int(_env("TUTON_MAX_PUSTAKA", "5"))
     # Worker untuk tahap pra-ambil (verifikasi URL + unduh lampiran) yang
     # network-bound saja, jadi jauh boleh lebih banyak dari TUTON_JOBS.
     TUTON_PREFETCH_WORKERS = int(_env("TUTON_PREFETCH_WORKERS", "6"))
@@ -124,9 +196,6 @@ class Config:
     # Port Reader Lokal (server yang menyuntikkan cookie Moodle ke URL yang
     # dibaca agent). 0 = port otomatis.
     TUTON_READER_PORT = int(_env("TUTON_READER_PORT", "8765"))
-    # "url" = prompt hanya berisi URL, AI yang ambil soalnya sendiri.
-    # "file" = perilaku lama, soal.md statis ditempel ke prompt.
-    TUTON_SOAL_MODE = _env("TUTON_SOAL_MODE", "url")
     # "auto" = pakai transkripsi hanya bila model agent tak bisa melihat
     # gambar/PDF; "always" = selalu transkripsi; "never" = serahkan file
     # ke agent (ia membacanya sendiri lewat tool read).
@@ -197,6 +266,11 @@ class Config:
 
     @classmethod
     def require(cls) -> None:
+        # Folder keluaran disiapkan lebih dulu, bahkan sebelum identitas dicek.
+        # Kalau identitas kurang lengkap, run memang berhenti -- tapi `output/`
+        # tetap harus ada supaya `status` dan `results` (yang tidak lewat
+        # `require`) bisa membaca cache lama tanpa error.
+        ensure_output_dirs()
         missing = [k for k, v in {
             "NAMA": cls.NAMA,
             "NIM": cls.NIM,
