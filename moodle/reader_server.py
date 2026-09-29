@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import sys
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -138,12 +139,48 @@ def _fail_text(fetched: Fetched, url: str) -> str:
 # ---------------------------------------------------------------------------
 # HTTP plumbing
 # ---------------------------------------------------------------------------
+class _QuietServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer yang tidak mencetak traceback untuk koneksi putus.
+
+    `socketserver` secara default mencetak traceback penuh ke stderr setiap
+    handler melempar exception. Client Reader (opencode) sering menutup koneksi
+    duluan -- misalnya membatalkan fetch saat masih menunggu render -- sehingga
+    tiap socket yang ditutup memicu ConnectionResetError yang terlihat seperti
+    crash. Noise ini sempat menutupi pesan kegagalan yang sebenarnya.
+    """
+
+    daemon_threads = True
+
+    def handle_error(self, request, client_address) -> None:  # noqa: ANN001, ANN202
+        exc = sys.exc_info()[1]
+        if isinstance(
+            exc,
+            (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError),
+        ):
+            return
+        super().handle_error(request, client_address)
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "TutonReader/1.0"
     protocol_version = "HTTP/1.1"
+    # Batas tunggu sebelum socket dianggap mati, supaya thread handler tidak
+    # menggantung tanpa batas pada readline.
+    timeout = 30
 
     def log_message(self, fmt, *args):  # noqa: A003 - supaya terminal tidak penuh
         return
+
+    def handle_one_request(self) -> None:
+        try:
+            super().handle_one_request()
+        except (
+            ConnectionResetError,
+            BrokenPipeError,
+            ConnectionAbortedError,
+            TimeoutError,
+        ):
+            self.close_connection = True
 
     def _query(self) -> dict:
         parsed = urlparse(self.path)
@@ -211,7 +248,7 @@ def _pick_port(preferred: int) -> int:
         if candidate <= 0:
             continue
         try:
-            ThreadingHTTPServer(("127.0.0.1", candidate), _Handler)
+            _QuietServer(("127.0.0.1", candidate), _Handler).server_close()
             return candidate
         except OSError:
             continue
@@ -238,12 +275,11 @@ def ensure_reader(preferred: int | None = None) -> str:
         return ""
 
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", port), _Handler)
+        server = _QuietServer(("127.0.0.1", port), _Handler)
     except OSError as exc:
         _STATE["error"] = f"gagal menjalankan Reader: {exc}"
         return ""
 
-    server.daemon_threads = True
     _SERVER = server
     _STATE.update({"port": port, "started": _time.time(), "requests": 0, "error": ""})
     threading.Thread(target=server.serve_forever, name="tuton-reader", daemon=True).start()

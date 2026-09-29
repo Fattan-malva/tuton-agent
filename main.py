@@ -79,6 +79,10 @@ class _RoutedStdout(io.TextIOBase):
     stdout proses, baris dari dua item akan saling potong dan bercampur. Dengan
     routing per-thread, setiap item bisa diberi prefix sendiri lalu dicetak utuh
     setelah selesai, tanpa saling mengacak.
+
+    Mode live (`_LOCAL.live`) tetap menyimpan ke buffer, tapi juga langsung
+    menyalin ke terminal. Tanpa itu, satu `opencode run` yang-working 3 menit
+    tampil sebagai layar yang benar-benar diam -- orang mengira pipeline hang.
     """
 
     def write(self, text):  # noqa: ANN001, ANN202
@@ -86,13 +90,18 @@ class _RoutedStdout(io.TextIOBase):
             return 0
         buffer = getattr(_LOCAL, "buffer", None)
         if buffer is not None:
-            return buffer.write(text)
+            written = buffer.write(text)
+            if getattr(_LOCAL, "live", False):
+                _echo_live(text)
+            return written
         with _PRINT_LOCK:
             return _REAL_STDOUT.write(text)
 
     def flush(self):  # noqa: D102
         buffer = getattr(_LOCAL, "buffer", None)
         if buffer is not None:
+            if getattr(_LOCAL, "live", False):
+                _flush_live()
             return None
         with _PRINT_LOCK:
             try:
@@ -102,6 +111,39 @@ class _RoutedStdout(io.TextIOBase):
 
     def isatty(self):  # noqa: D102
         return False
+
+
+def _echo_live(text: str) -> None:
+    """Salin `print` dari worker ke terminal seketika, satu baris utuh.
+
+    `print` menulis teks dan newline sebagai dua panggilan `write` terpisah,
+    jadi sisipan disimpan sampai baris lengkap agar dua thread tidak
+    menyisipkan di tengah baris yang sama.
+    """
+    pending = getattr(_LOCAL, "live_pending", "") + text
+    lines = pending.split("\n")
+    _LOCAL.live_pending = lines.pop()  # sisipan tanpa newline
+    tag = getattr(_LOCAL, "prefix", "")
+    with _PRINT_LOCK:
+        for line in lines:
+            _REAL_STDOUT.write(f"{tag}{line}\n")
+        try:
+            _REAL_STDOUT.flush()
+        except (OSError, ValueError):
+            pass
+
+
+def _flush_live() -> None:
+    pending = getattr(_LOCAL, "live_pending", "")
+    if not pending:
+        return
+    _LOCAL.live_pending = ""
+    with _PRINT_LOCK:
+        _REAL_STDOUT.write(f"{getattr(_LOCAL, 'prefix', '')}{pending}\n")
+        try:
+            _REAL_STDOUT.flush()
+        except (OSError, ValueError):
+            pass
 
 
 def _install_routed_stdout() -> None:
@@ -478,9 +520,19 @@ def _fail_item(record: Prefetched, key: str, reason: str) -> None:
     )
 
 
+# Pola rate limit harus spesifik. Versi lama mencantumkan `429` dan `503`
+# polos, sehingga baris biasa seperti "halaman 429 karakter" atau nomor port
+# ikut cocok -- dan karena ceknya berjalan sebelum jawaban diperiksa, satu item
+# yang jawabannya sudah jadi tetap ditandai gagal.
 _RATE_LIMIT_RE = re.compile(
-    r"rate limit|rate_limit|too many requests|429|quota|overloaded|"
-    r"service unavailable|503|try again later",
+    r"rate[ _-]?limit|too many requests|"
+    r"(?:status|status\s*code|http|code|error)\D{0,3}429\b|"
+    r"\b429\b\D{0,20}(?:too many requests|rate)|"
+    r"(?:quota|credit)\b[^.\n]{0,40}(?:exhaust|exceed|depleted|insufficient|habis)|"
+    r"(?:insufficient|out of|no)\s+(?:remaining\s+)?(?:quota|credit)\b|"
+    r"overloaded|service unavailable|"
+    r"(?:status|status\s*code|http|code|error)\D{0,3}503\b|"
+    r"try again later",
     re.I,
 )
 
@@ -526,10 +578,13 @@ def _run_agent(
         output = (result.stdout or "") + (result.stderr or "")
         if result.returncode != 0:
             log(f"! opencode exit {result.returncode}\n{output[-1200:]}")
-        if _is_rate_limit(output):
-            rate_limited = True
-            if attempt < retries:
-                wait = _RATE_LIMIT_SLEEP * attempt
+        rate_limited = rate_limited or _is_rate_limit(output)
+        # Cek jawaban DULU. Dulu urutannya terbalik: begitu output mengandung
+        # kata "rate limit", item langsung tidur lalu mengulang -- padahal
+        # opencode sering sudah menulis jawaban lengkap di percobaan pertama.
+        if not (jawaban_path.exists() and jawaban_path.stat().st_size > 100):
+            if rate_limited and attempt < retries:
+                wait = _env_rate_limit_sleep() * attempt
                 log(
                     f"! provider menyatakan rate limit. Menunggu {wait}s sebelum "
                     f"mencoba lagi (percobaan {attempt}/{retries}). Jangan "
@@ -537,7 +592,6 @@ def _run_agent(
                 )
                 time.sleep(wait)
                 continue
-        if not (jawaban_path.exists() and jawaban_path.stat().st_size > 100):
             log(f"! jawaban belum tertulis (percobaan {attempt}/{retries})")
             if attempt < retries:
                 time.sleep(5)
@@ -566,7 +620,10 @@ def _run_agent(
                 pass
             jawaban_path.unlink(missing_ok=True)
     else:
-        if rate_limited:
+        # `rate_limited` hanya relevan kalau jawaban memang tidak pernah
+        # tertulis. Kalau jawabannya ada tapi(mutu) jelek, penyebabnya kualitas
+        # -- bukan provider.
+        if rate_limited and not issues:
             reason = (
                 "rate limit provider. Item ini aman dijalankan ulang nanti "
                 "tanpa --force."
@@ -856,14 +913,18 @@ def _safe_process(record: Prefetched, *, force: bool, mode: str) -> bool:
     """Kerjakan satu item, menahan log-nya sendiri lalu menampilkannya utuh.
 
     Buffernya per-thread, jadi dua item yang jalan bersamaan tidak saling
-    menimpa keluaran. Semua baris item ini dicetak di akhir dengan prefix yang
-    konsisten, apa pun yang terjadi di dalamnya.
+    menimpa keluaran. Mode live menyalin apa pun yang di-`print` ke terminal
+    seketika; kalau tidak, satu `opencode run` yang working beberapa menit
+    terlihat seperti pipeline hang. Karena isi buffer sudah tampil live, blok
+    yang dicetak ulang di akhir dilewati.
     """
     tag = f"[{record.pos}/{record.total}] " if record.total > 1 else ""
     prefix = f"{tag}[{record.kind}] {record.item.title} - "
     buffer = io.StringIO()
     _LOCAL.buffer = buffer
     _LOCAL.prefix = prefix
+    _LOCAL.live = True
+    _LOCAL.live_pending = ""
     ok = False
     try:
         ok = _process_record(record, force=force, mode=mode)
@@ -885,12 +946,11 @@ def _safe_process(record: Prefetched, *, force: bool, mode: str) -> bool:
         )
         ok = False
     finally:
+        _flush_live()
         _LOCAL.buffer = None
         _LOCAL.prefix = ""
-    captured = buffer.getvalue().rstrip()
-    if captured:
-        log("")
-        log(captured, prefix=prefix)
+        _LOCAL.live = False
+        _LOCAL.live_pending = ""
     return ok
 
 

@@ -124,8 +124,14 @@ class MockMoodle(BaseHTTPRequestHandler):
             """)
 
         if path == "/course/view.php":
+            # `&amp;` wajib, bukan `&` mentah: `&section` dibaca parser HTML
+            # sebagai entitas `&sect` (tanda paragraf), sehingga href-nya
+            # menjadi `id=1§ion=1` dan selector `a[href*='section=']` tidak
+            # pernah cocok -- halaman nav jadi tidak menghasilkan section
+            # sama sekali.
             return self._html(
-                f'<html><body><div id="region-main"><a href="{b}/course/view.php?id=1&section=1">'
+                f'<html><body><div id="region-main">'
+                f'<a href="{b}/course/view.php?id=1&amp;section=1">'
                 "AKTIVITAS BELAJAR 2</a></div></body></html>"
             )
 
