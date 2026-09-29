@@ -5,6 +5,12 @@ interface NavigationProps {
   activeTab: Tab;
   onSwitch: (tab: Tab) => void;
   onLogout: () => void;
+  /**
+   * Nama untuk header mobile. Opsional supaya komponen ini tidak pecah saat
+   * `/api/config` belum selesai dimuat atau `.env` masih kosong -- pemanggil
+   * cukup mengosongkannya dan `initials` jatuh ke inisial bawaan.
+   */
+  nama?: string;
 }
 
 const items: Array<{ id: Tab; label: string; icon: typeof Activity }> = [
@@ -15,7 +21,21 @@ const items: Array<{ id: Tab; label: string; icon: typeof Activity }> = [
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
-export default function Navigation({ activeTab, onSwitch, onLogout }: NavigationProps) {
+/**
+ * Inisial untuk avatar profil.
+ *
+ * Desktop memakai inisial statis "AD", jadi versi mobile mengikuti bentuk yang
+ * sama: dua huruf, dan tetap tampil walau nama kosong -- header tidak boleh
+ * berubah tinggi hanya karena `.env` belum diisi.
+ */
+function initials(name?: string): string {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'AD';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+export default function Navigation({ activeTab, onSwitch, onLogout, nama }: NavigationProps) {
   return (
     <>
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r-2 border-border bg-surface/95 md:flex">
@@ -73,16 +93,66 @@ export default function Navigation({ activeTab, onSwitch, onLogout }: Navigation
         </div>
       </aside>
 
-      <header className="flex h-16 items-center justify-between border-b-2 border-border bg-surface/95 px-4 md:hidden">
-        <div className="flex items-center gap-3">
-          <div className="pixel-logo" aria-hidden="true">
+      {/* Header mobile. Di desktop profil sudah ada di sidebar, jadi panel itu
+          tidak diubah -- yang ditambah hanya versi mobile-nya.
+
+          Profil (avatar + nama) dan logout SELALU tampil di semua lebar layar,
+          tanpa breakpoint. Versi sebelumnya menyembunyikan nama di bawah 640px
+          supaya tidak berdesakan, tapi akibatnya di HP 375-430px yang paling
+          umum dipakai, yang terlihat cuma avatar kecil -- dan itu dilaporkan
+          sebagai "profilnya tidak ada". Sekarang keduanya diprioritaskan: judul aplikasi
+          yang memotong diri (`truncate`), nama profil ikut memotong, dan logout
+          dapat target sentuh 44px.
+
+          Kedua teks diberi `max-w` eksplisit. Tanpa itu, flex menyusut secara
+          PROPORSIONAL terhadap lebar dasar, dan karena nama ("Muhammad Fattan
+          Malva Al Dowi") jauh lebih lebar dari judul ("Tuton Agent"),
+          justru profil-lah yang pertama terpotong -- kebalikan dari yang
+          diinginkan. Dengan batas tetap, lebar leftover bisa diprediksi dan
+          tidak pernah berubah-ubah.
+
+          `fixed ... z-30` itu WAJIB, bukan gaya, dan polanya sengaja dibuat
+          sama persis dengan nav bawah. `.pixel-world` di `page.tsx` adalah
+          `position: fixed; z-index: 0` dengan background OPAQUE, dan dalam
+          urutan paint CSS setiap elemen *positioned* menggambar DI ATAS elemen
+          in-flow yang statis. Tanpa `z-30`, header ini terkubur di balik
+          lapisan background itu: tidak terlihat sama sekali, dan karena
+          `pixel-world` juga `pointer-events: none`, tombol logout-nya tidak
+          bisa diklik. `aside` dan `nav` bawah sudah z-30 karena itu -- header
+          biasanya terlewat karena satu-satunya chrome tanpa positioning.
+
+          Karena posisinya `fixed`, konten `<main>` diberi padding atas sebesar
+          `--app-header-h` (lihat globals.css) supaya tidak tertutup header. */}
+      <header
+        className="fixed top-0 left-0 right-0 z-30 flex items-center justify-between gap-2 border-b-2 border-border bg-surface/95 px-3 pb-2 md:hidden"
+        style={{
+          height: 'var(--app-header-h)',
+          paddingTop: 'env(safe-area-inset-top, 0px)',
+        }}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="pixel-logo shrink-0" aria-hidden="true">
             <Cpu size={20} strokeWidth={2.5} />
           </div>
-          <span className="font-display text-sm text-text">Tuton Agent</span>
+          <span className="min-w-0 max-w-[5.5rem] truncate font-display text-sm text-text">
+            Tuton Agent
+          </span>
         </div>
-        <button type="button" onClick={onLogout} className="pixel-icon-button text-danger" aria-label="Logout">
-          <LogOut size={18} aria-hidden="true" />
-        </button>
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="pixel-avatar shrink-0" aria-hidden="true">{initials(nama)}</div>
+          <span className="min-w-0 max-w-[7rem] truncate font-terminal text-[10px] uppercase tracking-[0.08em] text-muted">
+            {nama?.trim() || 'Admin Moodle'}
+          </span>
+          <button
+            type="button"
+            onClick={onLogout}
+            className="pixel-icon-button-lg text-danger"
+            aria-label="Logout"
+            title="Logout"
+          >
+            <LogOut size={19} aria-hidden="true" />
+          </button>
+        </div>
       </header>
 
       <nav className="fixed bottom-0 left-0 right-0 z-30 border-t-2 border-border bg-surface/95 px-2 pb-2 pt-2 md:hidden" aria-label="Navigasi mobile">

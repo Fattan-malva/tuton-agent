@@ -252,6 +252,65 @@ select:disabled {
   transform: translate(-1px, -1px);
 }
 
+/* Varian 44px untuk target sentuh di layar sentuh.
+ *
+ * Kenapa class baru, bukan utility `w-11 h-11`: aturan `.pixel-*` ditulis di
+ * LUAR `@layer`, dan di kaskade CSS deklarasi tanpa layer selalu menang atas
+ * utility yang berlapis -- jadi `w-11` akan diam-diam diabaikan oleh
+ * `width: 32px` milik `.pixel-icon-button`. Class ini dipisah supaya obeyed.
+ *
+ * 44px adalah batas bawah target sentuh yang direkomendasikan Apple HIG dan
+ * Material; 32px (ukuran `.pixel-icon-button`) terlalu kecil untuk ibu jari.
+ */
+.pixel-icon-button-lg {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--muted);
+  transition: border-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.pixel-icon-button-lg:hover {
+  border-color: var(--accent-strong);
+  color: var(--accent);
+  transform: translate(-1px, -1px);
+}
+
+/* Tinggi chrome mobile (header) termasuk area notch iOS.
+ *
+ * Header mobile di `Navigation.tsx` memakai `position: fixed` -- sama seperti
+ * nav bawah -- jadi konten `<main>` wajib diberi padding atas sebesar ini,
+ * kalau tidak halaman pertama akan tertutup header. Di lebar >= 768px header
+ * disembunyikan (`md:hidden`), jadi variabelnya dinolkan dan `md:pt-8` yang
+ * berlaku seperti sebelumnya.
+ *
+ * `env(safe-area-inset-top)` = tinggi notch/status bar iPhone. Tanpa itu,
+ * di mode standalone "Add to Home Screen" isi header tertutup jam.
+ */
+:root {
+  --app-header-h: calc(4.5rem + env(safe-area-inset-top, 0px));
+}
+
+@media (min-width: 48rem) {
+  :root {
+    --app-header-h: 0rem;
+  }
+}
+
+/* Padding atas konten halaman. Dibatasi max-width supaya TIDAK mengalahkan
+ * `md:pt-8`: aturan `.pixel-*`/custom di luar `@layer` menang atas utility
+ * berlapis, jadi tanpa batas max-width utility desktop akan diam-diam gugur. */
+@media (max-width: 47.999rem) {
+  .app-main-top-pad {
+    padding-top: calc(var(--app-header-h) + 1.5rem);
+  }
+}
+
 .pixel-online-dot {
   display: inline-block;
   width: 6px;

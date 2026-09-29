@@ -173,10 +173,15 @@ export default function Home() {
   return (
     <div className="relative min-h-[100dvh] bg-primary text-text">
       <div className="pixel-world" aria-hidden="true" />
-      <Navigation activeTab={activeTab} onSwitch={switchTab} onLogout={handleLogout} />
+      <Navigation
+        activeTab={activeTab}
+        onSwitch={switchTab}
+        onLogout={handleLogout}
+        nama={config?.nama}
+      />
 
       <main className="relative z-10 min-h-[100dvh] md:pl-72">
-        <div className="mx-auto max-w-[1400px] px-4 pb-28 pt-6 sm:px-6 md:px-8 md:pb-10 md:pt-8">
+        <div className="app-main-top-pad mx-auto max-w-[1400px] px-4 pb-28 pt-6 sm:px-6 md:px-8 md:pb-10 md:pt-8">
           {activeTab === 'status' && (
             <Status stats={statusData.stats} items={statusData.items} loading={isLoading} onRefresh={() => void loadStatus()} />
           )}

@@ -290,6 +290,11 @@ def get_config():
         # bukan model hasil auto-pilih yang akan ikut ter-save begitu form
         # dikirim. Kosong = mode otomatis.
         "helper_model_configured": (Config.OPENCODE_MODEL_HELPER or "").strip(),
+        # Sama motifnya dengan helper: nilai TERSIMPAN di .env, bukan model
+        # hasil auto-pilih, supaya form menampilkan pilihan manual yang
+        # sebenarnya dan auto-pick tidak ikut ter-save saat form dikirim.
+        # Kosong = mode otomatis.
+        "transcribe_model_configured": (Config.OPENCODE_MODEL_TRANSCRIBE or "").strip(),
     })
 
 
@@ -336,6 +341,15 @@ def save_config():
         # Helper: field kosong berarti "pilih otomatis". Form UI dikirim apa
         # adanya, jadi nilai auto-pick yang sedang aktif TIDAK ikut ter-save.
         "OPENCODE_MODEL_HELPER": str(data.get("opencode_model_helper") or "").strip(),
+        # Pola yang SAMA persis dengan helper: string kosong berarti "pilih
+        # otomatis", jadi TIDAK memakai "kalau kosong pertahankan nilai lama".
+        # Kalau tidak, begitu satu model transkripsi pernah dipilih manual tidak
+        # ada jalan kembali ke mode otomatis dari Settings. Model ini hanya
+        # mengurutkan kandidat vision (lihat `moodle.transcribe._ordered_vision_ids`),
+        # jadi kegagalan model terpilih tidak mengunci pipeline.
+        "OPENCODE_MODEL_TRANSCRIBE": str(
+            data.get("opencode_model_transcribe") or ""
+        ).strip(),
     }
 
     # Setelan kecepatan pipeline. Kalau form tidak mengirim field, nilai saat

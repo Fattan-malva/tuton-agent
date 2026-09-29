@@ -20,6 +20,11 @@ interface SettingsForm {
   opencode_model: string;
   /** Model agen pembantu. Kosong = auto-pilih + uji dulu (lihat generator/models.py). */
   opencode_model_helper: string;
+  /**
+   * Model vision untuk transkripsi lampiran. Kosong = auto-pilih dari
+   * `opencode models` (perilaku bawaan, tidak berubah).
+   */
+  opencode_model_transcribe: string;
   output_dir: string;
   jobs: string;
   max_pustaka: string;
@@ -39,6 +44,7 @@ const emptyForm: SettingsForm = {
   moodle_url: '',
   opencode_model: '',
   opencode_model_helper: '',
+  opencode_model_transcribe: '',
   output_dir: './output',
   jobs: '2',
   max_pustaka: String(DEFAULT_MAX_PUSTAKA),
@@ -62,6 +68,11 @@ interface ModelPickerProps {
   defaultOptionValue?: string;
   /** Placeholder saat nilai kosong. */
   emptyHint?: string;
+  /**
+   * Teks kecil di bawah input. Bawaan untuk model penulis; picker transkripsi
+   * perlu kalimat sendiri karena model vision bukan untuk menjawab soal.
+   */
+  hint?: string;
 }
 
 /**
@@ -84,6 +95,7 @@ function ModelPicker({
   defaultOptionLabel = 'Bawaan opencode',
   defaultOptionValue,
   emptyHint,
+  hint,
 }: ModelPickerProps) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -278,7 +290,8 @@ function ModelPicker({
       <span className="pixel-helper">
         {loading
           ? 'Memuat daftar model dari opencode...'
-          : `${matched} dari ${total} model ditampilkan. Model dipakai agent saat menjawab, bukan untuk transkripsi lampiran (itu memakai model vision terpisah).`}
+          : hint ??
+            `${matched} dari ${total} model ditampilkan. Model dipakai agent saat menjawab, bukan untuk transkripsi lampiran (itu memakai model vision terpisah).`}
       </span>
     </div>
   );
@@ -333,6 +346,10 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
       // tadinya "otomatis" terkunci jadi manual tanpa pernah disentuh user.
       // Kosong = otomatis, dan itu yang harus tampil saat field di .env kosong.
       opencode_model_helper: config?.helper_model_configured ?? '',
+      // Sama seperti helper: WAJIB nilai yang tersimpan di .env, bukan model
+      // hasil auto-pilih, supaya auto-pick tidak ikut ter-save sebagai
+      // pilihan manual begitu form dikirim.
+      opencode_model_transcribe: config?.transcribe_model_configured ?? '',
       output_dir: config?.output_dir ?? './output',
       jobs: String(runtime?.jobs ?? 2),
       max_pustaka: String(runtime?.max_pustaka ?? DEFAULT_MAX_PUSTAKA),
@@ -527,14 +544,32 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
                 entri berarti satu kali verifikasi sumber. Bawaan {DEFAULT_MAX_PUSTAKA}.
               </span>
             </label>
-            <div className="pixel-field">
-              <span className="pixel-label">Transkripsi Lampiran</span>
-              <p className="pixel-input pixel-input-readonly font-terminal text-muted">
-                Otomatis
-              </p>
+            <div className="md:col-span-2">
+              <ModelPicker
+                value={form.opencode_model_transcribe}
+                groups={modelGroups}
+                loading={modelLoading}
+                total={modelTotal}
+                defaultModel={defaultModel}
+                onChange={(value) => updateField('opencode_model_transcribe', value)}
+                onRefresh={() => void loadModels(true)}
+                label="Model OpenCode untuk Transkripsi Lampiran (vision)"
+                idSuffix="transcribe"
+                defaultOptionLabel="Pilih otomatis (model vision)"
+                // Kosongkan field, bukan diisi model default: "otomatis" berarti
+                // membiarkan `moodle/transcribe.py` memilih model vision sendiri.
+                defaultOptionValue=""
+                emptyHint="pilih otomatis"
+                hint={`${modelTotal} model terdaftar. Yang benar-benar dipakai hanya yang bisa melihat gambar; kalau model di atas tidak cocok, kandidat vision lain tetap dicoba secara otomatis.`}
+              />
               <span className="pixel-helper">
-                Gambar/PDF/dokumen dibaca otomatis memakai model vision yang
-                support vision. Tidak perlu memilih apa pun.
+                Dipakai hanya untuk membaca lampiran gambar atau PDF hasil scan
+                (tulisan tangan). PDF ber-teks-layer dan dokumen .docx/.xlsx
+                dibaca langsung tanpa model sama sekali. Model yang dipilih hanya
+                dicoba lebih dulu, bukan dikunci — bila tidak bisa melihat gambar,
+                kandidat otomatis berikutnya tetap dipakai. Mengganti model akan
+                mentranskripsi ulang lampiran, karena transkrip cache milik model
+                lama tidak lagi dipakai.
               </span>
             </div>
           </div>

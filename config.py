@@ -143,6 +143,13 @@ class Config:
     # `opencode models`; bila diisi tapi modelnya tidak ada, tetap auto-pilih
     # alih-alih gagal.
     OPENCODE_MODEL_HELPER = _env("OPENCODE_MODEL_HELPER")
+    # Model transcriber (vision). Kosong = auto-pilih dari `opencode models`
+    # (perilaku lama, tidak berubah). Kalau diisi, model itu DICOBA PALING
+    # DULU -- bukan dikunci: bila gagal atau ternyata tidak bisa melihat
+    # gambar, kandidat otomatis berikutnya tetap mengambil alih, supaya satu
+    # model rusak tidak mematikan seluruh transkripsi. Prinsip yang sama seperti
+    # `OPENCODE_MODEL_HELPER`: jangan pernah gagal hanya karena model pilihan.
+    OPENCODE_MODEL_TRANSCRIBE = _env("OPENCODE_MODEL_TRANSCRIBE")
 
     # Model transcriber (vision) dipilih OTOMATIS dari `opencode models`
     # berdasarkan yang support image/pdf, jadi tidak di-hardcode. Variabel ini

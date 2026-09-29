@@ -227,15 +227,90 @@ def _match_model_id(pref: str, ids: list[str]) -> str | None:
     return None
 
 
+def _pinned_model() -> str:
+    """Model vision yang dipilih manual di Settings (`OPENCODE_MODEL_TRANSCRIBE`).
+
+    Kosong = mode otomatis, dan itu tetap perilaku bawaan.
+    """
+    return (getattr(Config, "OPENCODE_MODEL_TRANSCRIBE", "") or "").strip()
+
+
+# Model yang SUDAH terbukti tidak bisa menangani jenis berkas tertentu, dicatat
+# per proses run (tidak permanen di .env).
+#
+# Contoh nyata yang jadi pemicunya: `ollama-cloud/gemma4:31b` membaca tulisan
+# tangan dengan bagus, TETAPI menolak PDF ("tidak mendukung input PDF") sambil
+# keluar dengan exit code 0 -- jadi pengecekan `returncode` tidak menangkapnya,
+# yang terdeteksi justru tidak adanya file hasil. Tanpa daftar ini, satu set
+# lampiran berisi 5 PDF scan akan membayar 5 panggilan sia-sia ke model yang
+# sama sebelum pindah ke kandidat lain.
+#
+# Sifatnya sengaja per-jenis berkas: model yang gagal pada PDF masih berguna
+# untuk gambar, jadi model buta PDF tidak-whitelist model yang bisa gambar.
+_BAD_FOR: dict[str, set[str]] = {"image": set(), "pdf": set()}
+
+
+def _kind_of(path: Path) -> str:
+    return "pdf" if path.suffix.lower() in _PDF_EXT else "image"
+
+
+def _remember_failure(path: Path, model: str) -> None:
+    """Catat model yang gagal untuk jenis berkas ini, agar tidak diulang."""
+    if not model:
+        return  # "" = default opencode; bukan model bernama, tidak bisa dicatat
+    label = _kind_of(path)
+    bucket = _BAD_FOR[label]
+    if model in bucket:
+        return
+    bucket.add(model)
+    # Sekali saja per model+jenis: tanpa ini user hanya melihat "gagal"
+    # berulang tanpa tahu kenapa, dan menganggap setting modelnya tidak jalan.
+    print(
+        f"    · model {model} tidak bisa membaca {label} "
+        "(tidak akan dicoba lagi untuk jenis ini di run ini)"
+    )
+
+
 def _ordered_vision_ids(*, pdf: bool) -> list[str]:
-    """Urutan model vision: prefer dari .env > daftar statis > semua tersedia."""
+    """Urutan model vision: pilihan Settings > prefer .env > statis > semua.
+
+    Model yang dipilih Settings hanya MENGURUTKAN kandidat, tidak mengunci
+    pipeline: `_candidates` tetap mencoba `OPENCODE_VISION_TRIES` model, jadi
+    kalau model pilihan ternyata mati atau tidak bisa melihat gambar, kandidat
+    otomatis berikutnya tetap rescuing. Mengunci ke satu model akan membuat
+    satu endpoint yang sedang rate-limited mematikan seluruh transkripsi.
+    """
     available = _filter_vision_models(_fetch_models(), pdf=pdf)
     ids: list[str] = []
     for m in available:
         fid = (m.get("full_id") or "").strip()
         if fid and fid not in ids:
             ids.append(fid)
-    prefer = list(Config.OPENCODE_VISION_PREFER) + list(_STATIC_VISION_FALLBACK)
+
+    # Buang model yang sudah terbukti gagal untuk jenis ini.
+    bad = _BAD_FOR["pdf" if pdf else "image"]
+    if bad:
+        kept = [i for i in ids if i not in bad]
+        # JANGAN PERNAH mengosongkan daftar. Daftar kosong = transkripsi langsung
+        # jatuh ke easyocr (lambat, sering salah baca). Lebih baik mencoba lagi
+        # model yang sudah gagal daripada tidak mencoba sama sekali.
+        if kept:
+            ids = kept
+
+    pinned = _pinned_model()
+    prefer: list[str] = []
+    if pinned:
+        if _match_model_id(pinned, ids):
+            prefer.append(pinned)
+        else:
+            # Jangan diam: user sengaja memilih model ini di Settings, dan
+            #Diam saja akan membuat dia mengira fiturnya tidak berfungsi.
+            print(
+                f"    ! model transkripsi '{pinned}' tidak ada di opencode models; "
+                "pakai auto-pilih"
+            )
+    prefer += list(Config.OPENCODE_VISION_PREFER) + list(_STATIC_VISION_FALLBACK)
+
     if prefer:
         ranked: list[str] = []
         for candidate in prefer:
@@ -290,6 +365,7 @@ def _transcribe_with_model(
     except TimeoutError:
         print(f"    ! transkripsi {path.name} timeout di model {model}")
         out_file.unlink(missing_ok=True)
+        _remember_failure(path, model)
         return ""
     if result.returncode != 0:
         print(f"    ! transkripsi {path.name} gagal di model {model} (exit {result.returncode})")
@@ -297,6 +373,10 @@ def _transcribe_with_model(
         text = out_file.read_text(encoding="utf-8").strip()
         if text:
             return text
+    # Gagal tanpa file hasil. Ini jalur yang dipakai model-butah-gambar dan
+    # model-butah-PDF, karena mereka sering keluar dengan exit code 0 sambil
+    # cuma menempelkan "saya tidak bisa" di terminal.
+    _remember_failure(path, model)
     out_file.unlink(missing_ok=True)
     return ""
 
@@ -328,7 +408,26 @@ def _sha256(path: Path) -> str:
 
 
 def _cache_file(path: Path) -> Path:
-    return _TRANSKRIP_DIR / f"{_sha256(path)}{path.suffix.lower()}.md"
+    """Lokasi transkrip cache untuk `path`.
+
+    Kunci utamanya tetap SHA-256 isi berkas, jadi berkas yang tidak berubah
+    tidak pernah ditranskripsi dua kali dan berkas yang berubah (dosen upload
+    versi baru) otomatis misses cache.
+
+    Ditambahkan sufiks hash dari model yang dipilih manual di Settings. Tanpa
+    ini, mengganti model vision tidak akan terlihat efeknya sama sekali --
+    cache lama terus dipakai, dan user mengira fiturnya rusak. Konsekuensinya
+    disengaja: transkrisi lama hanya dipakai ulang oleh mode OTOMATIS, jadi
+    model yang benar-benar dipilih selalu diuji dengan sendirinya.
+
+    Mode otomatis sengaja TIDAK diberi sufiks: auto-pick bisa berganti setiap
+    kali model lama kena rate limit, dan kalau tiap pergantian memakai namespace
+    baru maka 12 lampiran akan ditranskripsi ulang setiap recovery.
+    """
+    pinned = _pinned_model()
+    # `_sha256` itu untuk BERKAS; id model cuma string, jadi di-hash langsung.
+    tag = hashlib.sha256(pinned.encode("utf-8")).hexdigest()[:8] if pinned else ""
+    return _TRANSKRIP_DIR / f"{_sha256(path)}{tag}{path.suffix.lower()}.md"
 
 
 def _cache_get(path: Path) -> str:

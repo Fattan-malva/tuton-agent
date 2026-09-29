@@ -136,6 +136,12 @@ export interface AppConfig {
    * auto-pilih akan ikut ter-save sebagai pilihan manual.
    */
   helper_model_configured?: string;
+  /**
+   * Model vision transkripsi yang tersimpan di `.env`
+   * (`OPENCODE_MODEL_TRANSCRIBE`). Bedanya dengan mode otomatis: yang ini
+   * pilihan manual. Kosong = sistem yang memilih model vision sendiri.
+   */
+  transcribe_model_configured?: string;
 }
 
 export interface ModelOption {

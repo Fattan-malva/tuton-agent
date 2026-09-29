@@ -435,6 +435,66 @@ def test_kelas_pixel() -> None:
     check("kelas pixel-textarea benar-benar ada di CSS", ".pixel-textarea" in css)
 
 
+def test_chrome_mobile_tidak_tertimbun() -> None:
+    """Header/nav mobile harus punya z-index di atas `.pixel-world`.
+
+    `.pixel-world` (page.tsx) adalah `position: fixed; z-index: 0` dengan
+    background OPAQUE. Dalam urutan paint CSS, elemen *positioned* selalu
+    menggambar di atas elemen in-flow yang statis -- jadi chrome mobile yang
+    tidak punya positioning/z-index akan terkubur sepenuhnya di baliknya:
+    tidak terlihat, dan tidak bisa diklik (`pixel-world` juga
+    `pointer-events: none`).
+
+    Bug ini pernah nyata: header mobile punya profil + logout tapi sama sekali
+    tidak muncul karena `<aside>` (z-30) dan nav bawah (z-30) sudah aman,
+    sedangkan header satu-satunya yang lupa. Karena itu diuji di sini, bukan
+    hanya mengandalkan descubrimiento manual.
+    """
+    nav = Path("web/src/components/Navigation.tsx").read_text(encoding="utf-8")
+
+    header = re.search(r"<header\b(.*?)>", nav, re.S)
+    check("header mobile ditemukan di Navigation.tsx", header is not None)
+    if header is None:
+        return
+    kelas = header.group(1)
+    check("header mobile punya z-30 (di atas .pixel-world z-0)", "z-30" in kelas, kelas[:90])
+    check("header mobile positioned (fixed/sticky/relative)",
+          any(p in kelas for p in ("fixed", "sticky", "relative")), kelas[:90])
+    check("header mobile disembunyikan di desktop (md:hidden)", "md:hidden" in kelas)
+
+    aside = re.search(r"<aside\b(.*?)>", nav, re.S)
+    check("sidebar desktop tetap z-30", aside is not None and "z-30" in aside.group(1))
+    bottom = re.search(r"<nav\b[^>]*aria-label=\"Navigasi mobile\"", nav)
+    check("nav bawah mobile tetap ada", bottom is not None)
+    if bottom is not None:
+        check("nav bawah mobile tetap z-30", "z-30" in bottom.group(0))
+
+    # Padding konten wajib mengikuti, karena header-nya `fixed`.
+    page = Path("web/src/app/page.tsx").read_text(encoding="utf-8")
+    check("konten main memakai app-main-top-pad", "app-main-top-pad" in page)
+    css = Path("web/src/app/globals.css").read_text(encoding="utf-8")
+    check("variabel --app-header-h ada di CSS", "--app-header-h" in css)
+    check("padding mobile dibatasi max-width (tidak mengalahkan md:pt-8)",
+          "app-main-top-pad" in css and "max-width: 47.999rem" in css)
+    check("tinggi header aman untuk notch iOS",
+          "env(safe-area-inset-top" in css or "env(safe-area-inset-top" in nav)
+
+    # Komentar CSS yang tidak tertutup membuat SEMUA aturan setelahnya ikut
+    # ter-comment dan hilang diam-diam dari hasil build. Gejalanya sangat
+    # menyesatkan: pemeriksaan sebelumnya hanya mencari kata kunci
+    # `--app-header-h` di file sumber -- dan itu LOLOS padahal aturannya sudah
+    # tidak pernah sampai ke CSS ter-build. Yang diuji di sini keseimbangan
+    # pembuka/penutup, plus isi `:root` harus benar-benar ada di luar komentar.
+    check("jumlah /* sama dengan */ di globals.css (tidak ada komentar tak tertutup)",
+          css.count("/*") == css.count("*/"),
+          f"/*={css.count('/*')} */={css.count('*/')}")
+    tanpa_komentar = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    check("definisi --app-header-h berada di luar komentar",
+          "--app-header-h:" in tanpa_komentar)
+    check("aturan .app-main-top-pad berada di luar komentar",
+          ".app-main-top-pad" in tanpa_komentar)
+
+
 def main() -> int:
     scratch = Path("output") / ".testformat"
     if scratch.exists():
@@ -454,6 +514,7 @@ def main() -> int:
     test_output_dir()
     test_gitignore()
     test_kelas_pixel()
+    test_chrome_mobile_tidak_tertimbun()
 
     print(f"\nLULUS: {len(PASS)}   GAGAL: {len(FAIL)}")
     for name, detail in FAIL:
