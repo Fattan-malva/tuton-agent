@@ -1,29 +1,20 @@
 import type { Metadata, Viewport } from 'next';
-import { Outfit } from 'next/font/google';
-import { Press_Start_2P } from 'next/font/google';
-import { Silkscreen } from 'next/font/google';
+import { Inter, Fira_Code } from 'next/font/google';
 import type { ReactNode } from 'react';
 import './globals.css';
 
-const body = Outfit({
+const body = Inter({
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-body',
   weight: ['300', '400', '500', '600', '700'],
 });
 
-const display = Press_Start_2P({
+const mono = Fira_Code({
   subsets: ['latin'],
   display: 'swap',
-  variable: '--font-pixel',
-  weight: ['400'],
-});
-
-const terminal = Silkscreen({
-  subsets: ['latin'],
-  display: 'swap',
-  variable: '--font-terminal',
-  weight: ['400', '700'],
+  variable: '--font-mono',
+  weight: ['400', '500'],
 });
 
 export const metadata: Metadata = {
@@ -43,12 +34,15 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   // Warna address bar di iOS & Android. Tanpa ini, iOS memakai putih default
   // sehingga Home Screen "kedip putih" setiap kali app dibuka.
-  themeColor: '#07090d',
+  themeColor: '#f8fafc',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="id" className={`${body.variable} ${display.variable} ${terminal.variable}`}>
+    <html lang="id" className={`${body.variable} ${mono.variable}`}>
+      <head>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+      </head>
       <body className={body.className}>{children}</body>
     </html>
   );
