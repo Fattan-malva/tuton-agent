@@ -541,6 +541,13 @@ select.pixel-input {
   color: #ffc2ca;
 }
 
+/* Peringatan, bukan kegagalan: reset berfungsi, tapi tidak bisa dibatalkan. */
+.pixel-alert-warning {
+  border-color: var(--accent-dark);
+  background: rgba(120, 92, 24, 0.24);
+  color: #ffe29a;
+}
+
 .pixel-stat {
   display: flex;
   align-items: center;
