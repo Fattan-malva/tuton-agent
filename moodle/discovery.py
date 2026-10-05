@@ -78,6 +78,7 @@ class SoalSource:
     attachments: list[str] = field(default_factory=list)
     primary_url: str = ""
     soal_text: str = ""          # markdown halaman utama (untuk bagian Soal di docx)
+    section_text: str = ""       # materi resmi dari halaman sesi Moodle
     attempts: int = 0
     note: str = ""
 
@@ -307,6 +308,13 @@ class SourceDiscovery:
             source.primary_url = ok[0].url
             md, _ = self.reader.render(ok[0].url, kind=source.kind)
             source.soal_text = md
+            section = next(
+                (link for link in ok if link.role == ROLE_SECTION), None
+            )
+            if section:
+                source.section_text, _ = self.reader.render(
+                    section.url, kind="section"
+                )
             source.note = source.summary()
         else:
             source.note = _failure_note(source)

@@ -762,6 +762,8 @@ def _teks_materi_sesi(record: Prefetched) -> str:
     parts: list[str] = []
     if record.source is not None and record.source.soal_text:
         parts.append(record.source.soal_text)
+    if record.source is not None and record.source.section_text:
+        parts.append(record.source.section_text)
     if record.petak_text:
         parts.append(record.petak_text)
     if record.transcripts:
@@ -1929,6 +1931,7 @@ def _process_record(record: Prefetched, *, force: bool, mode: str) -> bool:
             agent_can_read_files=can_read_files,
             petak_path=record.petak,
             pustaka_path=record.referensi,
+            materi_sesi=(source.section_text or ""),
         )
     else:
         # Mode file: susun soal.md dari konten Reader supaya tetap konsisten.

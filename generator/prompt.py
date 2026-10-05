@@ -314,6 +314,7 @@ def build_writer_prompt(
     agent_can_read_files: bool = False,
     petak_path: Path | None = None,
     pustaka_path: Path | None = None,
+    materi_sesi: str = "",
 ) -> str:
     """Prompt agen penulis: baca peta soal + daftar pustaka, lalu susun jawaban.
 
@@ -388,6 +389,20 @@ def build_writer_prompt(
             "karena butuh cookie):"
         )
         lines.extend(f"- {url}" for url in source_urls)
+
+    if materi_sesi.strip():
+        lines.extend(
+            [
+                "",
+                "## Materi resmi sesi terpilih (WAJIB jadi dasar jawaban)",
+                "Gunakan konsep dan langkah dari materi sesi ini sebelum sumber lain. "
+                "Jika ada tautan Reader ke BMP atau Materi Inisiasi/Pengayaan, buka "
+                "dan baca bagian yang relevan. Jangan gunakan balasan mahasiswa di "
+                "forum sebagai sumber.",
+                "",
+                materi_sesi.strip()[:12000],
+            ]
+        )
 
     if attachments or transcript_path:
         lines.extend(["", "## Lampiran"])

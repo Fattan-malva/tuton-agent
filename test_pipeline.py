@@ -462,6 +462,9 @@ def main() -> int:
               str(src_f.attachments))
         check("tugas: rubrik jadi markdown",
               "Pedoman Penilaian" in src_a.soal_text and "| Aspek | Bobot |" in src_a.soal_text)
+        check("materi halaman seksi disimpan terpisah",
+              "Values are 3NF" in src_a.section_text,
+              src_a.section_text[:160])
         check("tugas: instruksi khusus tutor terbaca",
               "minimal 500 kata" in src_a.soal_text)
         check("tugas: tabel status BUKAN dianggap rubrik",
@@ -545,6 +548,8 @@ def main() -> int:
         if writer_p:
             p = writer_p[0]
             check("prompt memuat URL Reader", "http://127.0.0.1:" in p and "/soal?u=" in p)
+            check("prompt memakai materi resmi sesi sebagai dasar",
+                "Materi resmi sesi terpilih" in p and "Values are 3NF" in p)
             check("prompt menyebut webfetch sebagai cadangan", "webfetch" in p)
             check("prompt TIDAK menempel soal.md", "soal.md" not in p)
             check("prompt menekankan rubrik", "Rubrik" in p or "rubrik" in p)
