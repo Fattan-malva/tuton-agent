@@ -1,0 +1,7 @@
+{
+  "/apple-icon.png/route": "app/apple-icon.png/route.js",
+  "/icon.svg/route": "app/icon.svg/route.js",
+  "/_not-found/page": "app/_not-found/page.js",
+  "/manifest.webmanifest/route": "app/manifest.webmanifest/route.js",
+  "/page": "app/page.js"
+}

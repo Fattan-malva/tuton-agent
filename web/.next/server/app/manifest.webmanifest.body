@@ -1,0 +1,1 @@
+{"name":"Tuton Agent","short_name":"Tuton","description":"Auto-Grader and submission controller","start_url":"/","display":"standalone","orientation":"portrait","background_color":"#07090d","theme_color":"#07090d","icons":[{"src":"/icon.png","sizes":"512x512","type":"image/png"},{"src":"/apple-icon.png","sizes":"180x180","type":"image/png"}]}

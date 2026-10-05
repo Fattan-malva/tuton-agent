@@ -1,0 +1,7 @@
+{
+  "/apple-icon.png/route": "/apple-icon.png",
+  "/icon.svg/route": "/icon.svg",
+  "/_not-found/page": "/_not-found",
+  "/manifest.webmanifest/route": "/manifest.webmanifest",
+  "/page": "/"
+}

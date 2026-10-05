@@ -40,7 +40,7 @@ from moodle.reader import MoodleReader
 from moodle.reader_server import ensure_reader, handle_file, handle_soal, soalu
 from moodle.scraper import Activity, CourseScraper
 
-app = Flask(__name__, static_folder="frontend", static_url_path="")
+app = Flask(__name__, static_folder=str(Path(__file__).resolve().parent.parent / "frontend"), static_url_path="")
 CORS(app)
 
 # Soal sering dilampirkan sebagai PDF/gambar besar. Batas default Flask tak ada,
@@ -263,7 +263,7 @@ def _siapkan_folder_keluaran():
 
 @app.route("/")
 def index():
-    return send_from_directory("frontend", "index.html")
+    return send_from_directory(str(Path(__file__).resolve().parent.parent / "frontend"), "index.html")
 
 
 @app.route("/api/health")
@@ -413,7 +413,7 @@ def save_config():
     if data.get("moodle_session"):
         Config.save_moodle_session(str(data["moodle_session"]))
 
-    env_path = Path(__file__).parent / ".env"
+    env_path = Path(__file__).resolve().parent.parent / ".env"
     env_lines = []
 
     # Read existing .env
