@@ -849,6 +849,7 @@ def reset_results():
             "files": 0,
             "bytes": 0,
             "items": 0,
+            "failed": [],
         })
 
     root = OUTPUT_DIR.resolve()
@@ -864,6 +865,12 @@ def reset_results():
         except (OSError, ValueError):
             continue  # symlink keluar output/ atau tidak bisa dibaca: jangan sentuh
         target.append((child, resolved.is_dir()))
+
+    # Jumlah item dihitung SEBELUM dihapus. `state.json` ikut terhapus (reset
+    # total harus mengembalikan pipeline ke kondisi nol), jadi kalau dihitung
+    # sesudahnya angkanya selalu nol -- dan laporan yang selalu nol tidak
+    # bisa dipakai pengguna untuk memastikan apa yang hilang.
+    st_items = state._load().get("items", {})
 
     total_files = 0
     total_bytes = 0
@@ -891,19 +898,6 @@ def reset_results():
         except OSError as exc:
             gagal.append(f"{child.name}: {exc}")
 
-    # `state.json` ditulis ulang oleh pipeline nanti; yang perlu sekarang hanya
-    # memastikan tidak ada item `done` yang menunjuk berkas yang sudah hilang.
-    items_removed = 0
-    st = state._load()
-    items = st.get("items", {})
-    for k in list(items.keys()):
-        outputs = items[k].get("outputs") or []
-        if not outputs or not any(Path(o).exists() for o in outputs):
-            del items[k]
-            items_removed += 1
-    if items_removed:
-        state.save()
-
     # Folder keluaran harus hidup lagi sebelum request berikutnya, kalau tidak
     # `before_request` akan mengembalikan 503 ke semua endpoint.
     ensure_output_dirs(force=True)
@@ -911,16 +905,18 @@ def reset_results():
     pesan = f"{dihapus} entri dihapus dari output/ ({total_files} berkas"
     if keep_cache:
         pesan += ", cache halaman dipertahankan"
-    pesan += ")."
+    pesan += f", {len(st_items)} item status dihapus."
     if gagal:
-        pesan += f" {len(gagal)} gagal."
+        # Kegagalan tidak ditelan: yang tersisa hanya bisa diperbaiki dari
+        # server (`sudo chown`), jadi pesannya harus menyebut nama foldernya.
+        pesan += f" {len(gagal)} gagal: " + ", ".join(gagal[:3])
     return jsonify({
         "success": not gagal,
         "message": pesan,
         "deleted": dihapus,
         "files": total_files,
         "bytes": total_bytes,
-        "items": items_removed,
+        "items": len(st_items),
         "failed": gagal,
     })
 
