@@ -114,13 +114,23 @@ export default function Results({ courses, loading, onRefresh, onNotify }: Resul
     setResetBusy(true);
     try {
       const response = await apiClient.resetResults(keepCache);
-      if (!response.success) throw new Error(response.error || 'Gagal membersihkan output.');
       const files = response.files ?? 0;
       const items = response.items ?? 0;
+      const gagal = response.failed ?? [];
+      const ringkas =
+        (files ? ` (${files} berkas, ${items} item status)` : '')
+        + (gagal.length ? ` — ${gagal.length} GAGAL: ${gagal.join(', ')}` : '');
+      if (!response.message && response.error) {
+        // Gagal total (mis. masih ada run yang jalan). Tidak ada yang terhapus,
+        // jadi cukup tampilkan alasannya.
+        throw new Error(response.error);
+      }
       onNotify(
-        `${response.message ?? 'Output dibersihkan.'}`
-        + (files ? ` (${files} berkas${items ? `, ${items} item status` : ''})` : ''),
-        'success',
+        `${response.message ?? 'Output dibersihkan.'}${ringkas}`,
+        // `success: false` berarti ada yang tidak terhapus. Menampilkannya
+        // sebagai sukses akan membuat pengguna mengira output sudah bersih
+        // padahal masih ada folder yang tersisa.
+        gagal.length ? 'error' : 'success',
       );
       setPreviewPath(null);
       await onRefresh();
