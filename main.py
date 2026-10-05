@@ -770,6 +770,41 @@ def _teks_materi_sesi(record: Prefetched) -> str:
         parts.extend(record.transcripts.values())
     return "\n".join(parts)
 
+def _muat_materi_sesi(records: list[Prefetched], sections: list, reader: MoodleReader) -> None:
+    """Baca resource resmi sesi secara langsung, tanpa panggilan model."""
+    material_by_section: dict[int, str] = {}
+    material_title = re.compile(
+        r"\b(?:materi|bmp|modul|bahan ajar|inisiasi|pengayaan)\b", re.I
+    )
+    for section in sections:
+        parts: list[str] = []
+        for activity in section.activities:
+            if activity.mod_type not in {"resource", "page"}:
+                continue
+            if not material_title.search(activity.title):
+                continue
+            try:
+                text, fetched = reader.render(activity.url, kind="material")
+            except Exception as exc:  # noqa: BLE001
+                log(f"  · materi sesi tidak terbaca ({activity.title}): {exc}")
+                continue
+            if not text.strip() or not fetched.ok:
+                continue
+            parts.append(
+                f"## Materi sesi: {activity.title}\n"
+                f"URL Reader: {soalu(activity.url, kind='file')}\n\n"
+                f"{text.strip()[:8000]}"
+            )
+        if parts:
+            material_by_section[section.number] = "\n\n".join(parts)[:8000]
+
+    for record in records:
+        material = material_by_section.get(record.section_num)
+        if material and record.source is not None:
+            record.source.section_text = "\n\n".join(
+                part for part in (material, record.source.section_text) if part
+            )
+
 
 def _referensi_bahan_ajar(records: list[Prefetched]) -> dict[int, dict]:
     """Cari sitasi bahan ajar wajib untuk tiap item, tanpa panggil model.
@@ -935,6 +970,9 @@ def _pustaka_stage(
                 out_path=path,
                 max_refs=Config.TUTON_MAX_PUSTAKA,
                 tahun_min=_tahun_min_referensi(),
+                materi_sesi=(record.source.section_text or "")
+                if record.source is not None
+                else "",
                 bahan_ajar={
                     k: v
                     for k, v in (info.get(id(record), {}).get("bahan") or {}).items()
@@ -2076,13 +2114,17 @@ def _process_course(
     # referensi memakai keduanya untuk memilih sumber.
     sections = [s for s in scraper.get_available_sections(course_id)
                 if s.number in {sec for _, sec, _, _ in pending}]
-    peta_by_section = (
-        _petak_stage(course, sections, force=remap) if mode == "url" else {}
-    )
-
     discovery = SourceDiscovery(reader, make_url=soalu)
-    records = _prefetch_all(discovery, downloader, pending)
-    _transcribe_stage(records)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="map-stage") as map_pool:
+        peta_future = (
+            map_pool.submit(_petak_stage, course, sections, force=remap)
+            if mode == "url"
+            else None
+        )
+        records = _prefetch_all(discovery, downloader, pending)
+        _muat_materi_sesi(records, sections, reader)
+        _transcribe_stage(records)
+        peta_by_section = peta_future.result() if peta_future is not None else {}
 
     # Tahap 1: daftar pustaka per item, memakai peta dan transkrip.
     if mode == "url":

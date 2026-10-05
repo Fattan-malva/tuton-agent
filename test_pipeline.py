@@ -76,6 +76,22 @@ def _make_pdf(path: Path) -> None:
     doc.close()
 
 
+def _make_material_pdf(path: Path) -> None:
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text(
+        (60, 100), "Materi Inisiasi 1 - Normalisasi Basis Data", fontsize=16
+    )
+    page.insert_text(
+        (60, 140), "Materi resmi sesi: bentuk normal pertama, kedua, dan ketiga.",
+        fontsize=11,
+    )
+    doc.save(str(path))
+    doc.close()
+
+
 # ---------------------------------------------------------------------------
 # Fixture: server Moodle tiruan
 # ---------------------------------------------------------------------------
@@ -125,6 +141,10 @@ class MockMoodle(BaseHTTPRequestHandler):
                 <h3>Tugas.1</h3>
                 <a href="{b}/mod/assign/view.php?id=22">Buka tugas</a>
               </div></div>
+                            <div id="module-33" class="activity"><div class="activity-altcontent">
+                                <h3>Materi Inisiasi 1</h3>
+                                <a href="{b}/mod/resource/view.php?id=33">Materi Inisiasi 1</a>
+                            </div></div>
             </div></div>
             <footer class="footer-container">Copyright UT</footer>
             </body></html>
@@ -224,6 +244,11 @@ class MockMoodle(BaseHTTPRequestHandler):
             <div class="footer-container">Copyright</div>
             </body></html>
             """)
+
+        if path == "/mod/resource/view.php":
+            return self._send(
+                200, self.server.material_pdf_bytes, "application/pdf"
+            )  # type: ignore[attr-defined]
 
         if path.startswith("/pluginfile.php"):
             name = path.rsplit("/", 1)[-1]
@@ -377,9 +402,13 @@ def main() -> int:
     pdf_path = fixtures / "dummy.pdf"
     _make_pdf(pdf_path)
     pdf_bytes = pdf_path.read_bytes()
+    material_pdf_path = fixtures / "material.pdf"
+    _make_material_pdf(material_pdf_path)
+    material_pdf_bytes = material_pdf_path.read_bytes()
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), MockMoodle)
     server.pdf_bytes = pdf_bytes  # type: ignore[attr-defined]
+    server.material_pdf_bytes = material_pdf_bytes  # type: ignore[attr-defined]
     port = server.server_address[1]
     base = f"http://127.0.0.1:{port}"
     MockMoodle.base = base
@@ -550,6 +579,8 @@ def main() -> int:
             check("prompt memuat URL Reader", "http://127.0.0.1:" in p and "/soal?u=" in p)
             check("prompt memakai materi resmi sesi sebagai dasar",
                 "Materi resmi sesi terpilih" in p and "Values are 3NF" in p)
+            check("teks PDF materi sesi masuk ke prompt",
+                "Materi Inisiasi 1 - Normalisasi Basis Data" in p)
             check("prompt menyebut webfetch sebagai cadangan", "webfetch" in p)
             check("prompt TIDAK menempel soal.md", "soal.md" not in p)
             check("prompt menekankan rubrik", "Rubrik" in p or "rubrik" in p)
@@ -565,6 +596,11 @@ def main() -> int:
             ref_files = [t for t in p.split("`") if t.endswith(".md") and "referensi_" in t]
             check("prompt menunjuk file peta soal", bool(peta_files), str(peta_files[:1]))
             check("prompt menunjuk file daftar pustaka", bool(ref_files), str(ref_files[:1]))
+            check("peta dan referensi di-inline untuk menghindari read tambahan",
+                bool(peta_files) and bool(ref_files)
+                and f"Baca file `{peta_files[0]}`" not in p
+                and f"Baca file `{ref_files[0]}`" not in p
+                and "disertakan di bawah" in p)
             check("peta dan referensi bukan file yang sama",
                   bool(peta_files) and bool(ref_files) and peta_files[0] != ref_files[0])
             check("petanya benar-benar ada di disk", all(Path(t).is_file() for t in peta_files))
@@ -617,6 +653,8 @@ def main() -> int:
                   f"maksimal" in rp.lower() or "batas" in rp.lower())
             check("prompt referensi memuat isi soal dari peta",
                   "## Isi soal" in rp)
+            check("prompt referensi menerima materi resmi sesi",
+                "## Materi resmi sesi terpilih" in rp)
             check("prompt referensi menyuruh jangan menjawab soal",
                   "Jangan menjawab soal" in rp)
         else:
@@ -625,11 +663,15 @@ def main() -> int:
         diskusi_prompts = [p for p in writer_p if "Jenis pekerjaan: diskusi" in p]
         tugas_prompts = [p for p in writer_p if "Jenis pekerjaan: tugas" in p]
         check("prompt diskusi dapat aturan manfaat",
-              any("Manfaat dan Relevansi" in p for p in diskusi_prompts),
+              any("kecuali soal secara eksplisit memintanya" in p for p in diskusi_prompts),
               f"{len(diskusi_prompts)} prompt diskusi")
         check("prompt tugas tidak dapat aturan manfaat",
-              all("Manfaat dan Relevansi" not in p for p in tugas_prompts),
+              all("kecuali soal secara eksplisit memintanya" not in p for p in tugas_prompts),
               f"{len(tugas_prompts)} prompt tugas")
+        check("gaya tidak memaksa kata saya di setiap paragraf",
+              any("bukan di setiap paragraf" in p for p in writer_p))
+        check("prompt melarang narasi proses AI",
+              any("soal meminta saya" in p and "opini palsu" in p for p in writer_p))
 
         print("\n[6] Sesi kedaluwarsa ditangani")
         import moodle.auth as auth_mod

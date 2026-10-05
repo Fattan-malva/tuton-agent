@@ -21,10 +21,10 @@ from pathlib import Path
 from config import Config
 
 _STYLE_RULES = [
-    "Gaya jawaban yang diharapkan (menguji cara berpikir, bukan sekadar meniru kalimat dosen): "
-    "langsung ke inti, kalimat jelas dan informal-academic. Untuk soal hitungan tulis "
-    "langkah penyelesaian berurutan (Diketahui/ditanya -> penyelesaian -> kesimpulan), "
-    "pakai sub-bagian a/b/c sesuai soal, bahasa formal tapi natural.",
+    "Jawab tepat sesuai permintaan soal dengan bahasa Indonesia yang jelas dan wajar. "
+    "Untuk hitungan, tampilkan operasi penting yang cukup agar langkahnya bisa diikuti. "
+    "Pakai label Diketahui/ditanya hanya jika membantu; jangan mengulang soal atau "
+    "menambahkan metode alternatif yang tidak diminta.",
     "Semua perhitungan/rumus yang memuat simbol dan angka ditulis di baris tersendiri "
     "dibungkus $$ ... $$ (hanya satu persamaan per baris), misal:",
     "  $$ 2A = [[4, 2], [0, 6]] $$",
@@ -123,8 +123,6 @@ _WRITER_SKELETON = [
     "<isi jawaban soal pertama, dengan penomoran yang sama seperti di soal>",
     "### <Sub-bagian berikutnya>",
     "...",
-    "### Kesimpulan",
-    "<kesimpulan akhir>",
     "",
     "## Daftar Pustaka",
     "<salin persis entri pertama dari berkas referensi, satu baris polos tanpa nomor>",
@@ -136,13 +134,19 @@ _WRITER_SKELETON = [
 # adalah tugas mahasiswa. Bukti masalahnya ada di keluaran lama -- satu jawaban
 # 1365 kata tanpa satu pun kata "saya".
 _POV_RULES = [
-    "Tulis sebagai MAHASISWA yang mengerjakan tugas ini, bukan sebagai laporan "
-    "dan bukan sebagai pengamat luar. Pakai kata \"saya\" untuk "
-    "penilaian, pilihan, dan langkah yang diambil: \"saya memakai tabel "
-    "kebenaran karena ...\", \"menurut saya, ...\", \"langkah pertama yang "
-    "saya lakukan adalah ...\".",
-    "Hindari kalimat orang ketiga tanpa pemilik seperti \"penulis membahas "
-    "...\" atau \"pembahasan dilakukan dengan ...\". Tulis \"saya\" di sana.",
+    "Gunakan sudut pandang mahasiswa yang mengerjakan soal. Kata \"saya\" dipakai "
+    "secukupnya untuk menjelaskan pilihan atau kesimpulan pribadi, bukan di setiap "
+    "paragraf. Langkah hitung boleh ditulis langsung tanpa narasi tentang diri sendiri.",
+    "Jangan memberi opini pada fakta matematika yang objektif. Tulis hasilnya langsung, "
+    "bukan \"menurut saya, hasilnya ...\".",
+    "Hindari narasi proses seperti \"soal meminta saya ...\", \"saya akan membahas ...\", "
+    "\"untuk memastikan ...\", atau \"sebagai cek kedua ...\". Tunjukkan perhitungan "
+    "dan hasilnya; satu pemeriksaan singkat cukup bila memang berguna.",
+    "Jangan menambahkan pengantar, rangkuman berulang, atau contoh aplikasi umum yang "
+    "tidak diminta. Variasikan kalimat secara alami dan jangan memakai pola paragraf "
+    "yang sama terus-menerus.",
+    "Hindari kalimat orang ketiga tanpa pemilik seperti \"penulis membahas ...\" atau "
+    "\"pembahasan dilakukan dengan ...\".",
     "Kata \"kamu\" dan \"anda\" tidak boleh muncul sebagai pengganti "
     "\"saya\". Dalam tugas pribadi, kata ganti orang kedua berarti jawaban "
     "ikut menyapa pembaca -- itu langsung terbaca sebagai jawaban mesin.",
@@ -258,23 +262,17 @@ _HUMANIZER_LINE = (
     "dikumpulkan ke tutor akan memuat kerangka kerja agen, bukan tulisan "
     "mahasiswa. "
     "Pertahankan semua fakta, rumus, istilah teknis, dan sitasi. "
-    "Untuk jawaban matematika: berikan langkah penyelesaian sebagai teks + "
-    "notasi matematika teks yang jelas."
+    "Saat me-humanize, utamakan jawaban langsung sebagai mahasiswa: buang narasi "
+    "tentang proses menulis, opini palsu atas fakta objektif, pengulangan kesimpulan, "
+    "dan bagian manfaat yang tidak diminta. Pertahankan langkah matematis penting; "
+    "jangan menghapus penalaran yang diperlukan untuk memeriksa hasil."
 )
 
 _MANFAAT_RULES = [
     "",
-    "9. Argumentasi manfaat (HANYA jika relevan): sebelum menulis, nilai dulu apakah topik "
-    "soal punya aplikasi nyata yang jelas (sistem informasi seperti HRIS, organisasi, "
-    "perusahaan, industri, atau praktik profesional lain).",
-    "   - JIKA relevan: akhiri bagian `## Jawab` dengan sub-bagian `### Manfaat dan Relevansi` "
-    "berisi argumentasi mengapa konsep ini berguna di konteks nyata tersebut "
-    "(mekanisme/alasan logis, bukan klaim kosong), didukung literatur nyata yang "
-    "diverifikasi via websearch/webfetch.",
-    "   - JIKA TIDAK relevan (soal murni teoretis/abstrak/hitungan tanpa konteks aplikatif): "
-    "JANGAN memaksakan bagian ini, langsung ke `## Daftar Pustaka`.",
-    "   - DILARANG menulis tanggapan ke teman/postingan orang lain (tidak ada data "
-    "postingan teman; fiktif dilarang).",
+    "Jangan menambahkan bagian \"Manfaat dan Relevansi\" atau contoh aplikasi umum "
+    "kecuali soal secara eksplisit memintanya. Jangan mengarang tanggapan kepada teman "
+    "atau postingan forum yang tidak tersedia.",
 ]
 
 # Versi aturan manfaat untuk agen PENULIS. Bedanya cuma satu dari
@@ -284,17 +282,9 @@ _MANFAAT_RULES = [
 # `build_file_prompt` (jalur Form Soal) yang memang masih melakukan riset.
 _MANFAAT_RULES_WRITER = [
     "",
-    "9. Argumentasi manfaat (HANYA jika relevan): sebelum menulis, nilai dulu apakah topik "
-    "soal punya aplikasi nyata yang jelas (sistem informasi seperti HRIS, organisasi, "
-    "perusahaan, industri, atau praktik profesional lain).",
-    "   - JIKA relevan: akhiri bagian jawaban dengan sub-bagian "
-    "`### Manfaat dan Relevansi` berisi argumentasi mengapa konsep ini berguna di "
-    "konteks nyata tersebut (mekanisme atau alasan logis, bukan klaim kosong), dan "
-    "merujuk hanya sumber yang sudah ada di Daftar Pustaka.",
-    "   - JIKA TIDAK relevan (soal murni teoretis, abstrak, atau hitungan tanpa konteks "
-    "aplikatif): JANGAN memaksakan bagian ini, langsung ke `## Daftar Pustaka`.",
-    "   - DILARANG menulis tanggapan ke teman atau postingan orang lain (tidak ada "
-    "data postingan teman; fiktif dilarang).",
+    "Jangan menambahkan bagian \"Manfaat dan Relevansi\" atau contoh aplikasi umum "
+    "kecuali soal secara eksplisit memintanya. Jangan mengarang tanggapan kepada teman "
+    "atau postingan forum yang tidak tersedia.",
 ]
 
 
@@ -334,6 +324,12 @@ def build_writer_prompt(
     Jadi kegagalan tahap 0 menurunkan kualitas, bukan menghentikan pipeline.
     """
     pakai_peta = bool(petak_path and Path(petak_path).is_file())
+    petak_text = ""
+    if pakai_peta:
+        try:
+            petak_text = Path(petak_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pakai_peta = False
     lines = [
         f"Kamu adalah asisten pengerjaan {work_kind} tutorial online (tuton).",
         "",
@@ -345,10 +341,10 @@ def build_writer_prompt(
             [
                 "",
                 "## Peta soal (WAJIB dibaca paling dulu)",
-                f"Baca file `{petak_path}` dengan tool `read` SEBELUM melakukan apa pun. "
-                "File itu hasil agen pemetaan yang sudah menelusuri halaman Moodle untuk "
-                "sesi ini, jadi isinya sudah gathered: soal, syarat format, rubrik, "
-                "dan daftar lampiran yang relevan.",
+                f"Isi peta dari `{petak_path}` sudah disertakan di bawah. "
+                "Jangan membaca ulang file atau memetakan ulang halaman.",
+                "",
+                petak_text.strip()[:12000],
                 "",
                 "Isi peta adalah rujukan utama kerjamu. Aturan memakainya:",
                 "  1. Kerjakan SETIAP soal yang tertulis di peta. Soal yang tidak "
@@ -439,13 +435,20 @@ def build_writer_prompt(
         )
 
     if pustaka_path and Path(pustaka_path).is_file():
+        try:
+            pustaka_text = Path(pustaka_path).read_text(
+                encoding="utf-8", errors="replace"
+            ).strip()
+        except OSError:
+            pustaka_text = ""
         lines.extend(
             [
                 "",
                 "## Referensi (WAJIB dipakai, jangan dicari ulang)",
-                f"Baca file `{pustaka_path}` dengan tool `read`. Isinya adalah Daftar "
-                "Pustaka final untuk soal ini, sudah diverifikasi oleh agen terpisah. "
-                "Salin persis ke bagian `## Daftar Pustaka` pada file jawabanmu.",
+                f"Isi dari `{pustaka_path}` sudah disiapkan di bawah. Salin persis "
+                "ke bagian `## Daftar Pustaka` pada file jawabanmu.",
+                "",
+                pustaka_text,
             ]
         )
     else:
@@ -492,11 +495,10 @@ def build_writer_prompt(
             "semua soal yang harus dijawab, termasuk setiap persyaratan format. Jangan "
             "tulis daftar ini ke file jawaban; ini catatan internal kamu.",
             "",
-            "LANGKAH 2 - JAWAB. Jawab SETIAP soal dari langkah 1, tidak ada yang "
-            "dilewati. Untuk setiap soal: (a) kerjakan langkahnya, (b) cek ulang hasil "
-            "hitungannya secara independen (hitung ulang dengan cara lain, cek satuan, "
-            "cek masuk akal terhadap besaran soal), (c) tulis jawaban akhirnya di bawah "
-            "sub-bagian dengan label soal yang sama dengan soal.",
+            "LANGKAH 2 - JAWAB. Jawab setiap soal dari langkah 1. Kerjakan perhitungannya, "
+            "lakukan satu pemeriksaan internal yang sesuai, lalu tampilkan langkah penting "
+            "dan hasilnya di bawah label soal yang sama. Jangan menyajikan metode kedua "
+            "atau pemeriksaan berulang kecuali diminta.",
             "",
             "LANGKAH 3 - AUDIT SEBELUM MENULIS. Periksa daftar berikut satu per satu, "
             "dan perbaiki sebelum menulis file:",
@@ -531,9 +533,8 @@ def build_writer_prompt(
     lines.extend(
         [
             "",
-            "Penting: AKURASI lebih penting daripada kecepatan. Kerjakan langkah 1-4 "
-            "sesuai urutan, dan pastikan jawaban menjawab SEMUA soal dengan Daftar "
-            "Pustaka yang persis sama seperti berkas referensi.",
+            "Penting: jawab semua bagian yang diminta, tetap akurat, dan jangan menambah "
+            "penjelasan di luar kebutuhan soal. Salin Daftar Pustaka persis dari referensi.",
         ]
     )
     return "\n".join(lines)
@@ -726,6 +727,7 @@ def build_referensi_prompt(
     max_refs: int,
     tahun_min: int | None = None,
     bahan_ajar: dict | None = None,
+    materi_sesi: str = "",
 ) -> str:
     """Prompt untuk agen `pencari-pustaka`: daftar referensi untuk satu item.
 
@@ -755,6 +757,18 @@ def build_referensi_prompt(
                 "membaca topik sebenarnya, bukan hanya judulnya.",
                 "",
                 petak_digest.strip(),
+            ]
+        )
+    if materi_sesi.strip():
+        lines.extend(
+            [
+                "",
+                "## Materi resmi sesi terpilih",
+                "Gunakan dokumen ini sebagai sumber utama. Ambil referensi yang "
+                "memang tercantum di materi; pencarian internet hanya pelengkap "
+                "bila materi tidak menyediakan sitasi yang cukup.",
+                "",
+                materi_sesi.strip()[:12000],
             ]
         )
     if attachment_names:
@@ -820,10 +834,11 @@ def build_referensi_prompt(
         )
     lines.extend(
         [
-            "- **Prioritaskan yang ada di materi sesi.** Baca `## Isi soal` dan "
-            "transkrip lampiran di bawah, lalu ambil buku, modul, atau dokumen "
-            "yang NAMANYA disebut di sana. Referensi yang benar-benar bagian dari "
-            "sesi ini selalu lebih tepat daripada hasil pencarian di luar.",
+            "- **Prioritaskan yang ada di materi sesi.** Baca `## Isi soal`, "
+            "`## Materi resmi sesi terpilih`, dan transkrip lampiran di bawah, "
+            "lalu ambil buku, modul, atau dokumen yang NAMANYA disebut di sana. "
+            "Referensi yang benar-benar bagian dari sesi ini selalu lebih tepat "
+            "daripada hasil pencarian di luar.",
             "- Pencarian di luar (websearch/webfetch) bersifat OPSIONAL, hanya "
             "untuk melengkapi. Jangan mencari kalau materi sesi sudah memberi "
             "sumber yang cukup.",
