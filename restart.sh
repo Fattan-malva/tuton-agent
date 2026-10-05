@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Redeploy tuton-agent secara penuh sekali jalan:
-#   1. build frontend web/ (Next.js static export -> web/out)
-#   2. stop container, copy hasil build ke frontend/ (bind-mount container)
+#   1-2. frontend UI statis di frontend/ (index.html), tidak perlu build
 #   3. rebuild + restart container (--build: image ikut menangkap perubahan
 #      file .py/kode)
 #   4. re-attach ke app-network
@@ -11,26 +10,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# 1) Build frontend (static export web/out). Gagal build => hentikan restart.
-echo "=== [1/5] Building frontend (npm run build) ==="
-(
-  cd web
-  if [ ! -d node_modules ]; then
-    echo "node_modules tidak ada, jalankan npm install dulu..."
-    npm install
-  fi
-  npm run build
-)
-echo "Build frontend selesai -> web/out"
-
-# 2) Stop container dulu, lalu copy hasil build ke folder yang di-mount
-#    ke container (/app/frontend) supaya tidak menulis ke mount yang aktif.
-echo "=== [2/5] Stopping containers & copying frontend ==="
-podman-compose down 2>/dev/null || true
-rm -rf frontend
-mkdir -p frontend
-cp -r web/out/. frontend/
-echo "Frontend baru disalin ke frontend/"
+echo "=== [1-2/5] Frontend statis (frontend/index.html), build Next.js dilewati ==="
 
 # 3) Rebuild + start container (--build: memuat perubahan Python/kode)
 echo "=== [3/5] Rebuilding & starting containers ==="

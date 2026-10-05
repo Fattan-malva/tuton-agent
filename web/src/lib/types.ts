@@ -111,8 +111,6 @@ export interface RuntimeConfig {
   vision_tries: number;
   /** Batas keras jumlah referensi per jawaban. Batas biaya, bukan selera. */
   max_pustaka: number;
-  /** Model murah untuk pemetaan soal dan pencarian referensi. Kosong = otomatis. */
-  helper_model: string;
 }
 
 export interface AppConfig {
@@ -129,13 +127,6 @@ export interface AppConfig {
   has_session: boolean;
   output_dir: string;
   runtime?: RuntimeConfig;
-  /**
-   * Model pembantu yang tersimpan di `.env` (`OPENCODE_MODEL_HELPER`).
-   * Bedanya dengan `runtime.helper_model`: yang itu hasil auto-pilih kalau
-   * field dikosongkan. Form harus memakai nilai ini, kalau tidak model
-   * auto-pilih akan ikut ter-save sebagai pilihan manual.
-   */
-  helper_model_configured?: string;
   /**
    * Model vision transkripsi yang tersimpan di `.env`
    * (`OPENCODE_MODEL_TRANSCRIBE`). Bedanya dengan mode otomatis: yang ini

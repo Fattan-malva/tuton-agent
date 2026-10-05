@@ -243,6 +243,16 @@ def cari_opencode() -> Path | None:
     """
     ditemukan = shutil.which("opencode")
     if not ditemukan:
+        for fallback in (
+            Path("/usr/local/bin/opencode"),
+            Path("/usr/bin/opencode"),
+            Path("/usr/lib/node_modules/@opencode/cli/bin/opencode.exe"),
+            Path("C:\\Program Files\\nodejs\\opencode.exe"),
+        ):
+            if fallback.is_file():
+                ditemukan = str(fallback)
+                break
+    if not ditemukan:
         return None
     shim = Path(ditemukan)
     if shim.suffix.lower() in (".exe", ".com"):

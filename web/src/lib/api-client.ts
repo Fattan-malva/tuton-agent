@@ -40,7 +40,6 @@ export type SettingsPayload = Partial<AppConfig> & {
    * berarti "pilih otomatis" -- server sengaja TIDAK mempertahankan nilai
    * lama supaya mode otomatis bisa dipulihkan.
    */
-  opencode_model_helper?: string;
   /**
    * Model vision untuk transkripsi lampiran gambar/PDF scan. Dikirim datar
    * (bukan di `runtime`) karena server menyimpannya ke `.env` sebagai

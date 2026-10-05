@@ -271,9 +271,7 @@ def get_config():
         "runtime": {
             "jobs": 4, "timeout": cfg.TIMEOUT_AGENT_DETIK, "retries": cfg.MAX_Coba_AGENT,
             "transcribe": "auto", "vision_tries": 2, "max_pustaka": cfg.MAX_REFERENSI,
-            "helper_model": cfg.VISION_MODEL,
         },
-        "helper_model_configured": "",
         "transcribe_model_configured": cfg.VISION_MODEL,
     })
 

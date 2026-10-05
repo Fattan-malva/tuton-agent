@@ -18,8 +18,6 @@ interface SettingsForm {
   moodle_session: string;
   moodle_url: string;
   opencode_model: string;
-  /** Model agen pembantu. Kosong = auto-pilih + uji dulu (lihat generator/models.py). */
-  opencode_model_helper: string;
   /**
    * Model vision untuk transkripsi lampiran. Kosong = auto-pilih dari
    * `opencode models` (perilaku bawaan, tidak berubah).
@@ -43,7 +41,6 @@ const emptyForm: SettingsForm = {
   moodle_session: '',
   moodle_url: '',
   opencode_model: '',
-  opencode_model_helper: '',
   opencode_model_transcribe: '',
   output_dir: './output',
   jobs: '4',
@@ -340,12 +337,6 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
       moodle_session: '',
       moodle_url: config?.base_url ?? '',
       opencode_model: config?.model && config.model !== '(default)' ? config.model : '',
-      // WAJIB `helper_model_configured` (nilai yang tersimpan di .env), bukan
-      // `runtime.helper_model` (hasil auto-pilih). Kalau yang latter dipakai,
-      // model auto-pilih ikut tersimpan begitu form dikirim -- jadi model yang
-      // tadinya "otomatis" terkunci jadi manual tanpa pernah disentuh user.
-      // Kosong = otomatis, dan itu yang harus tampil saat field di .env kosong.
-      opencode_model_helper: config?.helper_model_configured ?? '',
       // Sama seperti helper: WAJIB nilai yang tersimpan di .env, bukan model
       // hasil auto-pilih, supaya auto-pick tidak ikut ter-save sebagai
       // pilihan manual begitu form dikirim.
@@ -483,31 +474,6 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
               onChange={(value) => updateField('opencode_model', value)}
               onRefresh={() => void loadModels(true)}
             />
-            <div className="md:col-span-2">
-              <ModelPicker
-                value={form.opencode_model_helper}
-                groups={modelGroups}
-                loading={modelLoading}
-                total={modelTotal}
-                defaultModel={defaultModel}
-                onChange={(value) => updateField('opencode_model_helper', value)}
-                onRefresh={() => void loadModels(true)}
-                label="Model OpenCode untuk Pembantu (peta soal & daftar pustaka)"
-                idSuffix="helper"
-                defaultOptionLabel="Pilih otomatis (diuji satu per satu)"
-                // Kosongkan field, bukan diisi model default penulis: "otomatis"
-                // berarti membiarkan generator/models.py memilih. Mengisi
-                // `defaultModel` di sini akan memaksa model penulis jadi model
-                // pembantu -- mahal, dan bukan yang jobless clicked.
-                defaultOptionValue=""
-                emptyHint="pilih otomatis"
-              />
-              <span className="pixel-helper">
-                Dipakai langsung setelah disimpan, untuk memetakan soal dan mencari
-                daftar pustaka. Kosongkan agar sistem memilih model opencode zen
-                termurah yang benar-benar merespons.
-              </span>
-            </div>
             <label className="pixel-field">
               <span className="pixel-label">Output Directory</span>
               <input className="pixel-input pixel-input-readonly font-terminal" name="output_dir" value={form.output_dir} readOnly />

@@ -18,4 +18,9 @@ COPY . .
 
 EXPOSE 5000
 
+
+# opencode dipasang via bind-mount /usr/lib/node_modules/@opencode/cli saat runtime;
+# buat symlink-nya lebih awal supaya `which opencode` ketemu di dalam container.
+RUN ln -sf /usr/lib/node_modules/@opencode/cli/bin/opencode.exe /usr/local/bin/opencode
+
 CMD ["python", "-u", "server.py"]

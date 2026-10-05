@@ -1,1 +1,649 @@
-<!DOCTYPE html><!--q2_k9MiwdnulC_RtT7E8J--><html lang="id" class="__variable_60a407 __variable_6d0c14 __variable_7611f3"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="preload" href="/_next/static/media/7b0b24f36b1a6d0b-s.p.woff2" as="font" crossorigin="" type="font/woff2"/><link rel="preload" href="/_next/static/media/966913bad25267a8-s.p.woff2" as="font" crossorigin="" type="font/woff2"/><link rel="preload" href="/_next/static/media/cd21efaca8026c00-s.p.woff2" as="font" crossorigin="" type="font/woff2"/><link rel="preload" href="/_next/static/media/db234bd00cda6a96-s.p.woff2" as="font" crossorigin="" type="font/woff2"/><link rel="stylesheet" href="/_next/static/css/ad99f817db501498.css" data-precedence="next"/><link rel="preload" as="script" fetchPriority="low" href="/_next/static/chunks/webpack-9223c78d97992bea.js"/><script src="/_next/static/chunks/4bd1b696-c023c6e3521b1417.js" async=""></script><script src="/_next/static/chunks/255-f7c4c205ddd80098.js" async=""></script><script src="/_next/static/chunks/main-app-e0b8279070070b3e.js" async=""></script><script src="/_next/static/chunks/105-24e95b66c4b317c5.js" async=""></script><script src="/_next/static/chunks/app/page-6803d8cb3d308381.js" async=""></script><meta name="next-size-adjust" content=""/><meta name="theme-color" content="#07090d"/><title>Tuton Agent</title><meta name="description" content="Tuton Agent - Auto-Grader and submission controller"/><link rel="manifest" href="/manifest.webmanifest"/><meta name="format-detection" content="telephone=no"/><meta name="mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-title" content="Tuton Agent"/><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/><link rel="icon" href="/icon.svg?0ab9eca921cff479" type="image/svg+xml" sizes="any"/><link rel="apple-touch-icon" href="/apple-icon.png?155031c0ed65751e" type="image/png" sizes="180x180"/><script src="/_next/static/chunks/polyfills-42372ed130431b0a.js" noModule=""></script></head><body class="__className_60a407"><div hidden=""><!--$--><!--/$--></div><main class="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-primary px-4 py-10"><div class="pixel-world" aria-hidden="true"></div><div class="relative z-10 w-full max-w-md"><div class="pixel-panel-strong px-6 py-8 sm:px-9 sm:py-10"><div class="mb-8 text-center"><div class="pixel-logo-large mx-auto mb-5" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-cpu" aria-hidden="true"><path d="M12 20v2"></path><path d="M12 2v2"></path><path d="M17 20v2"></path><path d="M17 2v2"></path><path d="M2 12h2"></path><path d="M2 17h2"></path><path d="M2 7h2"></path><path d="M20 12h2"></path><path d="M20 17h2"></path><path d="M20 7h2"></path><path d="M7 20v2"></path><path d="M7 2v2"></path><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="8" y="8" width="8" height="8" rx="1"></rect></svg></div><h1 class="font-display text-xl leading-snug text-text sm:text-2xl">Tuton Agent</h1><p class="mt-2 font-terminal text-[10px] uppercase tracking-[0.16em] text-accent">Auto-Grader &amp; Submission Controller</p></div><form class="space-y-5"><div><label for="username" class="pixel-label">Username Moodle / Admin</label><div class="relative"><svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-user pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg><input id="username" type="text" autoComplete="username" placeholder="Masukkan username" class="pixel-input pixel-input-icon w-full" name="username" value=""/></div></div><div><label for="password" class="pixel-label">Kata Sandi</label><div class="relative"><svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-lock-keyhole pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true"><circle cx="12" cy="16" r="1"></circle><rect x="3" y="10" width="18" height="12" rx="2"></rect><path d="M7 10V7a5 5 0 0 1 10 0v3"></path></svg><input id="password" type="password" autoComplete="current-password" placeholder="Masukkan kata sandi" class="pixel-input pixel-input-icon w-full" name="password" value=""/></div></div><button type="submit" class="pixel-button pixel-button-primary w-full justify-center"><span>Akses Sistem</span><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-right" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg></button></form><div class="mt-7 border-t-2 border-border pt-4 text-center"><p class="font-terminal text-[9px] uppercase tracking-[0.14em] text-muted">Secure local controller</p></div></div></div></main><!--$--><!--/$--><script src="/_next/static/chunks/webpack-9223c78d97992bea.js" id="_R_" async=""></script><script>(self.__next_f=self.__next_f||[]).push([0])</script><script>self.__next_f.push([1,"1:\"$Sreact.fragment\"\n2:I[9766,[],\"\"]\n3:I[8924,[],\"\"]\n4:I[1959,[],\"ClientPageRoot\"]\n5:I[9198,[\"105\",\"static/chunks/105-24e95b66c4b317c5.js\",\"974\",\"static/chunks/app/page-6803d8cb3d308381.js\"],\"default\"]\n8:I[4431,[],\"OutletBoundary\"]\na:I[5278,[],\"AsyncMetadataOutlet\"]\nc:I[4431,[],\"ViewportBoundary\"]\ne:I[4431,[],\"MetadataBoundary\"]\nf:\"$Sreact.suspense\"\n11:I[7150,[],\"\"]\n:HL[\"/_next/static/media/7b0b24f36b1a6d0b-s.p.woff2\",\"font\",{\"crossOrigin\":\"\",\"type\":\"font/woff2\"}]\n:HL[\"/_next/static/media/966913bad25267a8-s.p.woff2\",\"font\",{\"crossOrigin\":\"\",\"type\":\"font/woff2\"}]\n:HL[\"/_next/static/media/cd21efaca8026c00-s.p.woff2\",\"font\",{\"crossOrigin\":\"\",\"type\":\"font/woff2\"}]\n:HL[\"/_next/static/media/db234bd00cda6a96-s.p.woff2\",\"font\",{\"crossOrigin\":\"\",\"type\":\"font/woff2\"}]\n:HL[\"/_next/static/css/ad99f817db501498.css\",\"style\"]\n"])</script><script>self.__next_f.push([1,"0:{\"P\":null,\"b\":\"q2_k9MiwdnulC-RtT7E8J\",\"p\":\"\",\"c\":[\"\",\"\"],\"i\":false,\"f\":[[[\"\",{\"children\":[\"__PAGE__\",{}]},\"$undefined\",\"$undefined\",true],[\"\",[\"$\",\"$1\",\"c\",{\"children\":[[[\"$\",\"link\",\"0\",{\"rel\":\"stylesheet\",\"href\":\"/_next/static/css/ad99f817db501498.css\",\"precedence\":\"next\",\"crossOrigin\":\"$undefined\",\"nonce\":\"$undefined\"}]],[\"$\",\"html\",null,{\"lang\":\"id\",\"className\":\"__variable_60a407 __variable_6d0c14 __variable_7611f3\",\"children\":[\"$\",\"body\",null,{\"className\":\"__className_60a407\",\"children\":[\"$\",\"$L2\",null,{\"parallelRouterKey\":\"children\",\"error\":\"$undefined\",\"errorStyles\":\"$undefined\",\"errorScripts\":\"$undefined\",\"template\":[\"$\",\"$L3\",null,{}],\"templateStyles\":\"$undefined\",\"templateScripts\":\"$undefined\",\"notFound\":[[[\"$\",\"title\",null,{\"children\":\"404: This page could not be found.\"}],[\"$\",\"div\",null,{\"style\":{\"fontFamily\":\"system-ui,\\\"Segoe UI\\\",Roboto,Helvetica,Arial,sans-serif,\\\"Apple Color Emoji\\\",\\\"Segoe UI Emoji\\\"\",\"height\":\"100vh\",\"textAlign\":\"center\",\"display\":\"flex\",\"flexDirection\":\"column\",\"alignItems\":\"center\",\"justifyContent\":\"center\"},\"children\":[\"$\",\"div\",null,{\"children\":[[\"$\",\"style\",null,{\"dangerouslySetInnerHTML\":{\"__html\":\"body{color:#000;background:#fff;margin:0}.next-error-h1{border-right:1px solid rgba(0,0,0,.3)}@media (prefers-color-scheme:dark){body{color:#fff;background:#000}.next-error-h1{border-right:1px solid rgba(255,255,255,.3)}}\"}}],[\"$\",\"h1\",null,{\"className\":\"next-error-h1\",\"style\":{\"display\":\"inline-block\",\"margin\":\"0 20px 0 0\",\"padding\":\"0 23px 0 0\",\"fontSize\":24,\"fontWeight\":500,\"verticalAlign\":\"top\",\"lineHeight\":\"49px\"},\"children\":404}],[\"$\",\"div\",null,{\"style\":{\"display\":\"inline-block\"},\"children\":[\"$\",\"h2\",null,{\"style\":{\"fontSize\":14,\"fontWeight\":400,\"lineHeight\":\"49px\",\"margin\":0},\"children\":\"This page could not be found.\"}]}]]}]}]],[]],\"forbidden\":\"$undefined\",\"unauthorized\":\"$undefined\"}]}]}]]}],{\"children\":[\"__PAGE__\",[\"$\",\"$1\",\"c\",{\"children\":[[\"$\",\"$L4\",null,{\"Component\":\"$5\",\"searchParams\":{},\"params\":{},\"promises\":[\"$@6\",\"$@7\"]}],null,[\"$\",\"$L8\",null,{\"children\":[\"$L9\",[\"$\",\"$La\",null,{\"promise\":\"$@b\"}]]}]]}],{},null,false]},null,false],[\"$\",\"$1\",\"h\",{\"children\":[null,[[\"$\",\"$Lc\",null,{\"children\":\"$Ld\"}],[\"$\",\"meta\",null,{\"name\":\"next-size-adjust\",\"content\":\"\"}]],[\"$\",\"$Le\",null,{\"children\":[\"$\",\"div\",null,{\"hidden\":true,\"children\":[\"$\",\"$f\",null,{\"fallback\":null,\"children\":\"$L10\"}]}]}]]}],false]],\"m\":\"$undefined\",\"G\":[\"$11\",[]],\"s\":false,\"S\":true}\n"])</script><script>self.__next_f.push([1,"6:{}\n7:\"$0:f:0:1:2:children:1:props:children:0:props:params\"\n"])</script><script>self.__next_f.push([1,"d:[[\"$\",\"meta\",\"0\",{\"charSet\":\"utf-8\"}],[\"$\",\"meta\",\"1\",{\"name\":\"viewport\",\"content\":\"width=device-width, initial-scale=1\"}],[\"$\",\"meta\",\"2\",{\"name\":\"theme-color\",\"content\":\"#07090d\"}]]\n9:null\n"])</script><script>self.__next_f.push([1,"12:I[622,[],\"IconMark\"]\n"])</script><script>self.__next_f.push([1,"b:{\"metadata\":[[\"$\",\"title\",\"0\",{\"children\":\"Tuton Agent\"}],[\"$\",\"meta\",\"1\",{\"name\":\"description\",\"content\":\"Tuton Agent - Auto-Grader and submission controller\"}],[\"$\",\"link\",\"2\",{\"rel\":\"manifest\",\"href\":\"/manifest.webmanifest\",\"crossOrigin\":\"$undefined\"}],[\"$\",\"meta\",\"3\",{\"name\":\"format-detection\",\"content\":\"telephone=no\"}],[\"$\",\"meta\",\"4\",{\"name\":\"mobile-web-app-capable\",\"content\":\"yes\"}],[\"$\",\"meta\",\"5\",{\"name\":\"apple-mobile-web-app-title\",\"content\":\"Tuton Agent\"}],[\"$\",\"meta\",\"6\",{\"name\":\"apple-mobile-web-app-status-bar-style\",\"content\":\"black-translucent\"}],[\"$\",\"link\",\"7\",{\"rel\":\"icon\",\"href\":\"/icon.svg?0ab9eca921cff479\",\"type\":\"image/svg+xml\",\"sizes\":\"any\"}],[\"$\",\"link\",\"8\",{\"rel\":\"apple-touch-icon\",\"href\":\"/apple-icon.png?155031c0ed65751e\",\"type\":\"image/png\",\"sizes\":\"180x180\"}],[\"$\",\"$L12\",\"9\",{}]],\"error\":null,\"digest\":\"$undefined\"}\n"])</script><script>self.__next_f.push([1,"10:\"$b:metadata\"\n"])</script></body></html>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tuton Agent - Mission Control Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brandBg: '#f8fafc', sidebarBg: '#ffffff', cardBg: '#ffffff', cardBorder: '#e2e8f0',
+                        accentPrimary: '#f59e0b', accentHover: '#d97706', accentLight: 'rgba(245, 158, 11, 0.12)',
+                        terminalBg: '#0f172a', terminalGreen: '#34d399'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['Fira Code', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-brandBg text-slate-700 font-sans min-h-screen md:h-screen flex flex-col md:overflow-hidden select-none">
+
+    <!-- Mobile top nav -->
+    <nav class="md:hidden flex overflow-x-auto bg-sidebarBg border-b border-cardBorder text-xs font-semibold shrink-0">
+        <button onclick="switchTab('status')" id="mnav-status" class="mnav px-4 py-3 whitespace-nowrap text-slate-500">Status</button>
+        <button onclick="switchTab('result')" id="mnav-result" class="mnav px-4 py-3 whitespace-nowrap text-slate-500">Result</button>
+        <button onclick="switchTab('run')" id="mnav-run" class="mnav px-4 py-3 whitespace-nowrap text-amber-600">Run</button>
+        <button onclick="switchTab('form')" id="mnav-form" class="mnav px-4 py-3 whitespace-nowrap text-slate-500">Form Soal</button>
+        <button onclick="switchTab('settings')" id="mnav-settings" class="mnav px-4 py-3 whitespace-nowrap text-slate-500">Settings</button>
+    </nav>
+
+    <div class="flex flex-1 overflow-hidden">
+        <!-- SIDEBAR (desktop) -->
+        <aside class="hidden md:flex w-72 bg-sidebarBg border-r border-cardBorder flex-col justify-between shrink-0 shadow-sm z-20">
+            <div>
+                <div class="p-6 flex items-center space-x-3.5 border-b border-cardBorder">
+                    <div class="w-10 h-10 rounded-2xl bg-accentLight text-amber-600 flex items-center justify-center font-bold text-lg shadow-sm border border-accentPrimary/20">
+                        <i class="fa-solid fa-cube"></i>
+                    </div>
+                    <div>
+                        <h1 class="font-bold tracking-tight text-slate-900 text-base">Tuton Agent</h1>
+                        <span class="text-[10px] font-semibold text-amber-600 bg-accentLight px-2 py-0.5 rounded-full inline-block mt-0.5 uppercase tracking-wider">Light Web UI</span>
+                    </div>
+                </div>
+                <div class="p-4">
+                    <p class="px-3 text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-3">Main Menu</p>
+                    <nav class="space-y-1.5 font-medium text-sm">
+                        <button onclick="switchTab('status')" id="nav-status" class="nav-btn w-full flex items-center space-x-3 px-4 py-3 rounded-2xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all text-left">
+                            <i class="fa-solid fa-chart-pie w-5 text-center"></i><span>Status Pekerjaan</span>
+                        </button>
+                        <button onclick="switchTab('result')" id="nav-result" class="nav-btn w-full flex items-center space-x-3 px-4 py-3 rounded-2xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all text-left">
+                            <i class="fa-solid fa-folder-open w-5 text-center"></i><span>Result Dokumen</span>
+                        </button>
+                        <button onclick="switchTab('run')" id="nav-run" class="nav-btn w-full flex items-center space-x-3 px-4 py-3 rounded-2xl bg-accentLight text-amber-600 font-semibold transition-all text-left shadow-sm border border-accentPrimary/20">
+                            <i class="fa-solid fa-play w-5 text-center"></i><span>Run Agent</span>
+                        </button>
+                        <button onclick="switchTab('form')" id="nav-form" class="nav-btn w-full flex items-center space-x-3 px-4 py-3 rounded-2xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all text-left">
+                            <i class="fa-solid fa-file-pen w-5 text-center"></i><span>Form Soal</span>
+                        </button>
+                        <button onclick="switchTab('settings')" id="nav-settings" class="nav-btn w-full flex items-center space-x-3 px-4 py-3 rounded-2xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all text-left">
+                            <i class="fa-solid fa-sliders w-5 text-center"></i><span>Settings</span>
+                        </button>
+                    </nav>
+                </div>
+            </div>
+            <div class="p-4 border-t border-cardBorder">
+                <button onclick="checkSession()" class="w-full bg-cardBg border border-cardBorder rounded-2xl p-3.5 flex items-center justify-between shadow-sm hover:bg-slate-50">
+                    <div class="flex items-center space-x-3 overflow-hidden">
+                        <div class="w-9 h-9 rounded-2xl bg-amber-500 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-sm">AD</div>
+                        <div class="truncate text-left">
+                            <p class="text-xs font-bold text-slate-900 truncate" id="user-name">Moodle</p>
+                            <div class="flex items-center space-x-1.5 mt-0.5">
+                                <span id="session-dot" class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                                <span id="session-label" class="text-[10px] font-medium text-emerald-600 uppercase tracking-wide">Terhubung</span>
+                            </div>
+                        </div>
+                    </div>
+                    <i class="fa-solid fa-arrow-right-from-bracket text-slate-400"></i>
+                </button>
+            </div>
+        </aside>
+
+        <!-- MAIN -->
+        <main class="flex-1 flex flex-col overflow-hidden">
+            <header class="px-4 md:px-8 py-4 border-b border-cardBorder bg-sidebarBg flex items-center justify-between shrink-0 shadow-xs">
+                <div>
+                    <p class="text-[10px] md:text-xs font-semibold text-amber-600 uppercase tracking-wider mb-0.5">Mission Control Center</p>
+                    <h2 id="page-title" class="text-lg md:text-2xl font-bold tracking-tight text-slate-900">Agent Runner</h2>
+                </div>
+                <div class="flex items-center space-x-3 text-sm">
+                    <span class="hidden sm:flex px-3.5 py-1.5 bg-cardBg border border-cardBorder text-slate-600 rounded-2xl font-medium text-xs items-center space-x-2 shadow-xs">
+                        <i class="fa-regular fa-clock text-amber-600"></i><span id="clock-display">00:00:00</span>
+                    </span>
+                    <button onclick="triggerQuickRun()" class="px-3 md:px-4 py-2 md:py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-2xl transition shadow-md shadow-amber-500/20 flex items-center space-x-2 text-xs">
+                        <i class="fa-solid fa-bolt"></i><span>Quick Run</span>
+                    </button>
+                </div>
+            </header>
+
+            <div class="flex-1 overflow-y-auto p-4 md:p-8 relative">
+
+                <!-- PAGE: RUN AGENT -->
+                <section id="page-run" class="page-view grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    <div class="lg:col-span-5 bg-cardBg border border-cardBorder rounded-3xl p-6 flex flex-col justify-between shadow-sm">
+                        <div class="space-y-5">
+                            <div class="flex items-center space-x-2.5 border-b border-cardBorder pb-3">
+                                <i class="fa-solid fa-sliders text-amber-600 text-base"></i>
+                                <h3 class="font-bold text-base text-slate-900 tracking-wide">Parameter Eksekusi</h3>
+                            </div>
+                            <div class="space-y-1.5">
+                                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Mata Kuliah</label>
+                                <select id="matkul-select" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-sm text-slate-800 appearance-none focus:outline-none focus:border-amber-500 shadow-inner"></select>
+                            </div>
+                            <div class="space-y-1.5">
+                                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Sesi</label>
+                                <input type="number" id="filter-sesi" placeholder="Contoh: 3" min="0" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-sm text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner">
+                            </div>
+                            <div class="space-y-1.5">
+                                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Jenis Pekerjaan</label>
+                                <select id="jenis-pekerjaan" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-sm text-slate-800 appearance-none focus:outline-none focus:border-amber-500 shadow-inner">
+                                    <option value="all">Tugas &amp; Diskusi</option>
+                                    <option value="diskusi">Diskusi Saja</option>
+                                    <option value="tugas">Tugas Saja</option>
+                                </select>
+                                <span class="text-[11px] text-slate-400 block">Dipakai bersama filter sesi di atas.</span>
+                            </div>
+                            <div class="bg-slate-50 border border-cardBorder rounded-2xl p-4 flex items-start space-x-3.5">
+                                <input type="checkbox" id="force-run" class="mt-0.5 w-4 h-4 rounded-xl bg-white border-cardBorder text-amber-500 focus:ring-amber-500">
+                                <div>
+                                    <label for="force-run" class="text-xs font-bold text-slate-800 block cursor-pointer">Force Run (--force)</label>
+                                    <span class="text-[11px] text-slate-500 block mt-0.5">Ulangi item yang sudah selesai sebelumnya.</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="pt-6">
+                            <button onclick="startExecution()" id="btn-jalankan" class="w-full py-4 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-2xl transition shadow-md shadow-amber-500/20 flex items-center justify-center space-x-2 text-sm tracking-wide">
+                                <i class="fa-solid fa-play"></i><span>Jalankan Sekarang</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="lg:col-span-7 bg-terminalBg border border-slate-800 rounded-3xl flex flex-col shadow-xl overflow-hidden font-mono text-xs text-slate-200 min-h-[420px]">
+                        <div class="bg-slate-900 px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
+                            <div class="flex items-center space-x-2">
+                                <span class="w-3 h-3 rounded-full bg-rose-500 inline-block"></span>
+                                <span class="w-3 h-3 rounded-full bg-amber-400 inline-block"></span>
+                                <span class="w-3 h-3 rounded-full bg-emerald-400 inline-block"></span>
+                                <span id="terminal-status-title" class="text-slate-200 ml-3 text-xs font-bold tracking-wide truncate max-w-[180px]">ALJABAR</span>
+                            </div>
+                            <div class="flex items-center space-x-4 text-xs">
+                                <span id="task-counter" class="text-slate-400">-/-</span>
+                                <button onclick="stopExecution()" class="text-slate-400 hover:text-rose-400 transition flex items-center space-x-1">
+                                    <i class="fa-solid fa-stop"></i><span class="hidden sm:inline">STOP</span>
+                                </button>
+                                <button onclick="clearTerminal()" class="text-slate-400 hover:text-amber-400 transition flex items-center space-x-1">
+                                    <i class="fa-solid fa-trash-can"></i><span class="hidden sm:inline">CLEAR</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="px-5 py-3 bg-slate-900/50 border-b border-slate-800 space-y-2">
+                            <div class="flex justify-between text-xs text-slate-400">
+                                <span id="progress-status-text" class="font-semibold text-terminalGreen">SIAP</span>
+                                <span id="progress-timer">00:00</span>
+                            </div>
+                            <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800">
+                                <div id="progress-bar-fill" class="bg-amber-500 h-full w-0 transition-all duration-300"></div>
+                            </div>
+                        </div>
+                        <div id="terminal-logs" class="flex-1 p-5 overflow-y-auto space-y-1.5 text-slate-300 text-[11px] leading-relaxed">
+                            <p class="text-slate-500">[siap] Pilih mata kuliah dan sesi, lalu Jalankan Sekarang.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- PAGE: STATUS PEKERJAAN -->
+                <section id="page-status" class="page-view hidden space-y-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="text-xl font-bold text-slate-900">Status Pekerjaan</h3>
+                            <p class="text-xs text-slate-500">Monitor pekerjaan agent secara real-time.</p>
+                        </div>
+                        <button onclick="loadStatus()" class="px-4 py-2 bg-cardBg border border-cardBorder hover:bg-slate-100 text-xs font-semibold rounded-2xl transition flex items-center space-x-2 text-slate-700 shadow-xs">
+                            <i class="fa-solid fa-rotate mr-1 text-amber-600"></i> Refresh
+                        </button>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="bg-cardBg border border-cardBorder rounded-3xl p-6 shadow-sm">
+                            <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Selesai</p>
+                            <h4 id="stat-done" class="text-3xl font-bold text-emerald-600 mt-2">0</h4>
+                        </div>
+                        <div class="bg-cardBg border border-cardBorder rounded-3xl p-6 shadow-sm">
+                            <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Pending</p>
+                            <h4 id="stat-pending" class="text-3xl font-bold text-amber-600 mt-2">0</h4>
+                        </div>
+                        <div class="bg-cardBg border border-cardBorder rounded-3xl p-6 shadow-sm">
+                            <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Gagal</p>
+                            <h4 id="stat-failed" class="text-3xl font-bold text-rose-500 mt-2">0</h4>
+                        </div>
+                        <div class="bg-cardBg border border-cardBorder rounded-3xl p-6 shadow-sm">
+                            <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total</p>
+                            <h4 id="stat-total" class="text-3xl font-bold text-slate-900 mt-2">0</h4>
+                        </div>
+                    </div>
+                    <div class="bg-cardBg border border-cardBorder rounded-3xl overflow-hidden shadow-sm">
+                        <div class="p-5 border-b border-cardBorder font-bold text-slate-900 text-sm">Riwayat</div>
+                        <div id="status-list" class="divide-y divide-cardBorder text-sm">
+                            <p class="p-5 text-xs text-slate-400">Memuat...</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- PAGE: RESULT -->
+                <section id="page-result" class="page-view hidden space-y-6">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div>
+                            <h3 class="text-xl font-bold text-slate-900">Hasil Dokumen per Mata Kuliah</h3>
+                            <p class="text-xs text-slate-500">Kelola file jawaban: preview, unduh, atau hapus.</p>
+                        </div>
+                        <input type="text" id="result-search" oninput="filterResults()" placeholder="Cari file dokumen..." class="bg-cardBg border border-cardBorder rounded-2xl px-4 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner w-full md:w-64">
+                    </div>
+                    <div id="result-courses-container" class="space-y-6">
+                        <p class="text-xs text-slate-400">Memuat...</p>
+                    </div>
+                </section>
+
+                <!-- PAGE: FORM SOAL -->
+                <section id="page-form" class="page-view hidden space-y-6 max-w-4xl mx-auto">
+                    <div class="border-b border-cardBorder pb-4">
+                        <h3 class="text-xl font-bold text-slate-900">Kerjakan Soal</h3>
+                        <p class="text-xs text-slate-500 mt-1">Masukkan soal sendiri (teks atau file) untuk dikerjakan agent.</p>
+                    </div>
+                    <div class="bg-cardBg border border-cardBorder rounded-3xl p-6 md:p-8 space-y-6 shadow-sm text-sm">
+                        <div class="space-y-1.5">
+                            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Mata Kuliah</label>
+                            <select id="form-matkul" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"></select>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="space-y-1.5">
+                                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Sesi</label>
+                                <select id="form-sesi" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"></select>
+                            </div>
+                            <div class="space-y-1.5">
+                                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Jenis Pekerjaan</label>
+                                <select id="form-kind" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner">
+                                    <option value="tugas">Tugas</option>
+                                    <option value="diskusi">Diskusi</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="space-y-1.5">
+                            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Judul Aktivitas (Opsional)</label>
+                            <input id="form-title" type="text" placeholder="Contoh: Diskusi 1 / Tugas 2" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner">
+                        </div>
+                        <div class="space-y-1.5">
+                            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Soal (Teks)</label>
+                            <textarea id="form-soal" rows="4" placeholder="Tulis soal yang ingin dikerjakan di sini..." class="w-full bg-slate-50 border border-cardBorder rounded-2xl p-4 text-slate-800 focus:outline-none focus:border-amber-500 leading-relaxed shadow-inner"></textarea>
+                        </div>
+                        <div class="space-y-1.5">
+                            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Unggah File Soal</label>
+                            <div class="border-2 border-dashed border-cardBorder hover:border-amber-500 rounded-3xl p-6 text-center cursor-pointer bg-slate-50 transition" onclick="document.getElementById('form-file').click()">
+                                <input type="file" id="form-file" class="hidden">
+                                <i class="fa-solid fa-cloud-arrow-up text-2xl text-amber-500 mb-2"></i>
+                                <p class="text-xs font-bold text-slate-800">KLIK UNTUK MEMILIH FILE (PDF, GAMBAR, DOCX, dll)</p>
+                                <div id="form-file-name" class="mt-3 text-xs text-emerald-600 font-medium"></div>
+                            </div>
+                        </div>
+                        <div class="pt-4">
+                            <button onclick="submitSoal()" class="w-full py-4 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-2xl transition shadow-md shadow-amber-500/20 flex items-center justify-center space-x-2 text-sm tracking-wide">
+                                <i class="fa-solid fa-bolt"></i><span>Kerjakan Soal Sekarang</span>
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- PAGE: SETTINGS -->
+                <section id="page-settings" class="page-view hidden space-y-6 max-w-4xl mx-auto">
+                    <div class="border-b border-cardBorder pb-4">
+                        <h3 class="text-xl font-bold text-slate-900">Control Room — Settings</h3>
+                        <p class="text-xs text-slate-500 mt-1">Atur identitas mahasiswa, sesi Moodle, dan model OpenCode.</p>
+                    </div>
+                    <div class="bg-cardBg border border-cardBorder rounded-3xl p-6 md:p-8 space-y-8 shadow-sm text-sm">
+                        <div class="space-y-4">
+                            <div class="flex items-center space-x-2 text-amber-600 border-b border-cardBorder pb-2">
+                                <i class="fa-solid fa-user-graduate"></i><h4 class="font-bold text-slate-900">Data Mahasiswa</h4>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="space-y-1"><label class="block text-xs font-semibold text-slate-500 uppercase">Nama Lengkap</label><input id="set-nama" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"></div>
+                                <div class="space-y-1"><label class="block text-xs font-semibold text-slate-500 uppercase">NIM</label><input id="set-nim" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"></div>
+                                <div class="space-y-1"><label class="block text-xs font-semibold text-slate-500 uppercase">Program Studi (Prodi)</label><input id="set-prodi" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"></div>
+                                <div class="space-y-1"><label class="block text-xs font-semibold text-slate-500 uppercase">Semester</label><input id="set-semester" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"></div>
+                            </div>
+                            <div class="space-y-1"><label class="block text-xs font-semibold text-slate-500 uppercase">UT Daerah</label><input id="set-ut" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"></div>
+                        </div>
+                        <div class="space-y-4 pt-2">
+                            <div class="flex items-center space-x-2 text-amber-600 border-b border-cardBorder pb-2">
+                                <i class="fa-solid fa-key"></i><h4 class="font-bold text-slate-900">Kredensial Moodle</h4>
+                            </div>
+                            <div class="space-y-1"><label class="block text-xs font-semibold text-slate-500 uppercase">Moodle Cookie</label><input id="set-cookie" type="password" placeholder="MoodleSession=..." class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"></div>
+                            <div class="space-y-1"><label class="block text-xs font-semibold text-slate-500 uppercase">Moodle URL</label><input id="set-url" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"></div>
+                        </div>
+                        <div class="space-y-4 pt-2">
+                            <div class="flex items-center space-x-2 text-amber-600 border-b border-cardBorder pb-2">
+                                <i class="fa-solid fa-microchip"></i><h4 class="font-bold text-slate-900">Model Configuration</h4>
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-xs font-semibold text-slate-500 uppercase">Model OpenCode (Utama)</label>
+                                <div class="flex space-x-2">
+                                    <select id="set-model" class="flex-1 bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"></select>
+                                    <button onclick="loadModels(true)" class="px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl"><i class="fa-solid fa-rotate"></i></button>
+                                </div>
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-xs font-semibold text-slate-500 uppercase">Model Vision (Transkripsi Lampiran)</label>
+                                <select id="set-vision" class="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"></select>
+                            </div>
+                        </div>
+                        <div class="flex justify-end pt-4">
+                            <button onclick="saveSettings()" class="px-6 py-3.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-2xl transition shadow-md shadow-amber-500/20 flex items-center space-x-2 text-sm tracking-wide">
+                                <i class="fa-solid fa-floppy-disk"></i><span>Simpan Settings</span>
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- PREVIEW MODAL -->
+    <div id="preview-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-cardBg border border-cardBorder w-full max-w-4xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div class="px-6 py-4 bg-slate-100 border-b border-cardBorder flex items-center justify-between">
+                <h4 id="preview-filename" class="font-bold text-slate-900 text-sm">Preview</h4>
+                <button onclick="closeDocumentPreview()" class="text-slate-400 hover:text-slate-700 p-2 rounded-2xl hover:bg-slate-200 transition"><i class="fa-solid fa-xmark text-base"></i></button>
+            </div>
+            <iframe id="preview-frame" class="flex-1 min-h-[60vh] bg-white"></iframe>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="fixed bottom-6 right-6 bg-slate-900 border border-slate-800 text-white px-5 py-3.5 rounded-2xl shadow-xl flex items-center space-x-3 transform translate-y-20 opacity-0 transition-all duration-300 z-50 text-xs font-medium">
+        <div class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
+        <span id="toast-message">Notifikasi</span>
+    </div>
+
+    <script>
+        const API = '';
+        let runPoller = null;
+        let currentRunLines = 0;
+
+        setInterval(() => { document.getElementById('clock-display').innerText = new Date().toTimeString().split(' ')[0]; }, 1000);
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.page-view').forEach(el => el.classList.add('hidden'));
+            document.getElementById('page-' + tabId).classList.remove('hidden');
+            document.querySelectorAll('.nav-btn').forEach(b => { b.className = "nav-btn w-full flex items-center space-x-3 px-4 py-3 rounded-2xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all text-left"; });
+            document.querySelectorAll('.mnav').forEach(b => { b.className = "mnav px-4 py-3 whitespace-nowrap text-slate-500"; });
+            const active = document.getElementById('nav-' + tabId); if (active) active.className = "nav-btn w-full flex items-center space-x-3 px-4 py-3 rounded-2xl bg-accentLight text-amber-600 font-semibold transition-all text-left shadow-sm border border-accentPrimary/20";
+            const mactive = document.getElementById('mnav-' + tabId); if (mactive) mactive.className = "mnav px-4 py-3 whitespace-nowrap text-amber-600";
+            const titles = { status: 'Status Pekerjaan', result: 'Result Dokumen', run: 'Agent Runner', form: 'Form Soal', settings: 'Settings Sistem' };
+            document.getElementById('page-title').innerText = titles[tabId] || 'Dashboard';
+            if (tabId === 'status') loadStatus();
+            if (tabId === 'result') loadResults();
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toast-message').innerText = msg;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 3000);
+        }
+
+        async function api(path, opts) {
+            const res = await fetch(API + path, opts);
+            return res.json().catch(() => ({}));
+        }
+
+        async function loadCourses() {
+            const data = await api('/api/courses');
+            const courses = data.courses || [];
+            [['matkul-select'], ['form-matkul']].forEach(([id]) => {
+                const el = document.getElementById(id);
+                el.innerHTML = courses.map(c => `<option value="${c.id}">${c.name}</option>`).join('') || '<option value="">(tidak ada)</option>';
+            });
+            const fm = document.getElementById('form-matkul');
+            if (fm) fm.onchange = loadFormSections;
+            loadFormSections();
+            document.getElementById('terminal-status-title').innerText = courses[0] ? courses[0].name : '-';
+        }
+
+        async function loadFormSections() {
+            const matkul = document.getElementById('form-matkul').value;
+            const sel = document.getElementById('form-sesi');
+            if (!matkul) { sel.innerHTML = '<option value="">-</option>'; return; }
+            const data = await api(`/api/courses/${matkul}/sections`);
+            const sections = data.sections || [];
+            sel.innerHTML = sections.map(s => `<option value="${s.number}">Sesi ${s.number}</option>`).join('');
+        }
+
+        async function checkSession() {
+            const cfg = await api('/api/config');
+            const dot = document.getElementById('session-dot');
+            const label = document.getElementById('session-label');
+            const ok = !!cfg.has_session;
+            dot.className = 'w-2 h-2 rounded-full ' + (ok ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500');
+            label.innerText = ok ? 'Terhubung' : 'Sesi tidak ada';
+            label.className = 'text-[10px] font-medium uppercase tracking-wide ' + (ok ? 'text-emerald-600' : 'text-rose-600');
+            document.getElementById('user-name').innerText = cfg.nama || 'Moodle';
+            showToast(ok ? 'Sesi Moodle aktif' : 'Isi cookie Moodle di Settings');
+        }
+
+        // ---------- RUN ----------
+        async function startExecution() {
+            const btn = document.getElementById('btn-jalankan');
+            const course = document.getElementById('matkul-select').value;
+            const sesi = document.getElementById('filter-sesi').value;
+            const kind = document.getElementById('jenis-pekerjaan').value;
+            if (!course || !sesi) { showToast('Pilih mata kuliah dan isi sesi'); return; }
+            btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i><span>Sedang Berjalan...</span>';
+            document.getElementById('progress-status-text').innerText = 'BERJALAN';
+            document.getElementById('progress-bar-fill').style.width = '30%';
+            const r = await api('/api/run', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ course_id: Number(course), sesi: Number(sesi), kind })
+            });
+            const sel = document.getElementById('matkul-select');
+            document.getElementById('terminal-status-title').innerText = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : '-';
+            if (!r.success) {
+                showToast(r.error || 'Gagal memulai');
+                btn.innerHTML = '<i class="fa-solid fa-play"></i><span>Jalankan Sekarang</span>';
+                return;
+            }
+            const logs = document.getElementById('terminal-logs');
+            logs.innerHTML = '';
+            currentRunLines = 0;
+            runPoller = setInterval(pollRun, 1000);
+        }
+
+        async function pollRun() {
+            const [out, st] = await Promise.all([api('/api/run/output'), api('/api/run/status')]);
+            const logs = document.getElementById('terminal-logs');
+            const lines = out.output || [];
+            if (lines.length > currentRunLines) {
+                for (const l of lines.slice(currentRunLines)) {
+                    const p = document.createElement('p');
+                    p.className = l.startsWith('[OK]') || /berhasil/i.test(l) ? 'text-terminalGreen' : 'text-slate-300';
+                    p.innerText = l;
+                    logs.appendChild(p);
+                }
+                currentRunLines = lines.length;
+                logs.scrollTop = logs.scrollHeight;
+                document.getElementById('progress-bar-fill').style.width = Math.min(90, 30 + lines.length) + '%';
+            }
+            const t = Math.floor(st.elapsed || 0);
+            document.getElementById('progress-timer').innerText = String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+            document.getElementById('task-counter').innerText = st.line_count + ' baris';
+            if (!out.running) {
+                clearInterval(runPoller); runPoller = null;
+                document.getElementById('progress-bar-fill').style.width = out.returncode === 0 ? '100%' : '100%';
+                document.getElementById('progress-status-text').innerText = out.returncode === 0 ? 'SELESAI' : 'GAGAL';
+                document.getElementById('btn-jalankan').innerHTML = '<i class="fa-solid fa-play"></i><span>Jalankan Sekarang</span>';
+                const p = document.createElement('p');
+                p.className = out.returncode === 0 ? 'text-terminalGreen font-bold' : 'text-rose-400 font-bold';
+                p.innerText = out.returncode === 0 ? '[READY] Selesai. Cek menu Result Dokumen.' : '[ERROR] Proses gagal, kode ' + out.returncode;
+                logs.appendChild(p);
+                loadStatus();
+            }
+        }
+
+        async function stopExecution() {
+            const r = await api('/api/run/stop', { method: 'POST' });
+            showToast(r.success ? 'Eksekusi dihentikan' : (r.error || 'Tidak ada proses'));
+        }
+
+        function clearTerminal() {
+            document.getElementById('terminal-logs').innerHTML = '<p class="text-slate-500">[DIHAPUS]</p>';
+            currentRunLines = 0;
+        }
+
+        function triggerQuickRun() { switchTab('run'); setTimeout(startExecution, 300); }
+
+        // ---------- STATUS ----------
+        async function loadStatus() {
+            const data = await api('/api/status');
+            const items = data.items || [];
+            document.getElementById('stat-done').innerText = data.stats ? data.stats.done : 0;
+            document.getElementById('stat-pending').innerText = data.stats ? data.stats.pending : 0;
+            document.getElementById('stat-failed').innerText = data.stats ? data.stats.failed : 0;
+            document.getElementById('stat-total').innerText = data.stats ? data.stats.total : 0;
+            const list = document.getElementById('status-list');
+            if (!items.length) { list.innerHTML = '<p class="p-5 text-xs text-slate-400">Belum ada riwayat.</p>'; return; }
+            list.innerHTML = items.map(it => {
+                const color = it.status === 'done' ? 'bg-emerald-500' : it.status === 'failed' ? 'bg-rose-500' : 'bg-amber-400 animate-pulse';
+                const badge = it.status === 'done' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : it.status === 'failed' ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-amber-50 text-amber-600 border-amber-200';
+                return `<div class="p-5 flex items-center justify-between hover:bg-slate-50 transition">
+                    <div class="flex items-center space-x-3.5">
+                        <span class="w-3 h-3 rounded-full ${color}"></span>
+                        <div><p class="font-bold text-slate-900">${it.matkul} - Sesi ${it.sesi ?? '-'}</p>
+                        <p class="text-xs text-slate-500 mt-0.5">${it.created_at || ''} ${it.duration_sec ? '• ' + it.duration_sec + 's' : ''}</p></div>
+                    </div>
+                    <span class="px-3 py-1 ${badge} font-semibold rounded-full text-xs border uppercase">${it.status}</span>
+                </div>`;
+            }).join('');
+        }
+
+        // ---------- RESULTS ----------
+        let lastResults = [];
+        async function loadResults() {
+            const data = await api('/api/results');
+            lastResults = data.courses || [];
+            renderResults(lastResults);
+        }
+
+        function renderResults(courses) {
+            const c = document.getElementById('result-courses-container');
+            if (!courses.length) { c.innerHTML = '<p class="text-xs text-slate-400">Belum ada dokumen.</p>'; return; }
+            c.innerHTML = courses.map(course => `
+                <div class="bg-cardBg border border-cardBorder rounded-3xl p-6 shadow-sm space-y-4 course-card">
+                    <div class="flex items-center justify-between border-b border-cardBorder pb-4">
+                        <div><h4 class="font-bold text-slate-900 text-base">${course.name}</h4>
+                        <span class="text-xs text-slate-500">${(course.files || []).length} file • ${course.folder || ''}</span></div>
+                        ${course.folder ? `<button onclick="deleteCourse('${course.folder}')" class="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-semibold rounded-2xl transition">Hapus Mata Kuliah</button>` : ''}
+                    </div>
+                    <div class="space-y-3">
+                        ${(course.files || []).map(f => `
+                        <div class="bg-slate-50 border border-cardBorder rounded-2xl p-4 flex items-center justify-between hover:border-amber-400 transition doc-item-row">
+                            <div class="flex items-center space-x-3.5 overflow-hidden">
+                                <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-base border border-blue-200"><i class="fa-solid fa-file-word"></i></div>
+                                <div class="overflow-hidden"><h5 class="text-sm font-bold text-slate-900 truncate">${f.name}</h5>
+                                <p class="text-xs text-slate-400">${(f.size/1024).toFixed(1)} KB • ${f.sesi ? 'Sesi ' + f.sesi + ' • ' : ''}${f.finished_at || ''}</p></div>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <button onclick="openPreview('${f.path}')" title="Preview" class="p-2.5 bg-white border border-cardBorder hover:bg-slate-100 text-slate-600 rounded-xl transition shadow-xs"><i class="fa-solid fa-eye text-xs"></i></button>
+                                <a href="/api/download/${encodeURI(f.path)}" title="Download" class="p-2.5 bg-white border border-cardBorder hover:bg-amber-500 hover:text-white text-slate-600 rounded-xl transition shadow-xs inline-block"><i class="fa-solid fa-download text-xs"></i></a>
+                                <button onclick="deleteFile('${f.path}')" title="Hapus" class="p-2.5 bg-white border border-cardBorder hover:bg-rose-500 hover:text-white text-slate-400 rounded-xl transition shadow-xs"><i class="fa-solid fa-trash text-xs"></i></button>
+                            </div>
+                        </div>`).join('')}
+                    </div>
+                </div>`).join('');
+        }
+
+        function filterResults() {
+            const q = document.getElementById('result-search').value.toLowerCase();
+            renderResults(lastResults.map(c => ({ ...c, files: (c.files || []).filter(f => f.name.toLowerCase().includes(q)) })).filter(c => c.files.length));
+        }
+
+        async function deleteFile(path) {
+            if (!confirm('Hapus file?')) return;
+            const r = await api('/api/results/' + encodeURI(path), { method: 'DELETE' });
+            showToast(r.success ? 'File dihapus' : (r.error || 'Gagal'));
+            loadResults();
+        }
+
+        async function deleteCourse(folder) {
+            if (!confirm('Hapus seluruh folder ' + folder + '?')) return;
+            const r = await api('/api/courses/' + encodeURIComponent(folder), { method: 'DELETE' });
+            showToast(r.success ? 'Folder dihapus' : (r.error || 'Gagal'));
+            loadResults();
+        }
+
+        function openPreview(path) {
+            document.getElementById('preview-filename').innerText = path.split('/').pop();
+            document.getElementById('preview-frame').src = '/api/preview/' + encodeURI(path);
+            document.getElementById('preview-modal').classList.remove('hidden');
+            document.getElementById('preview-modal').classList.add('flex');
+        }
+
+        function closeDocumentPreview() {
+            document.getElementById('preview-modal').classList.add('hidden');
+            document.getElementById('preview-modal').classList.remove('flex');
+            document.getElementById('preview-frame').src = '';
+        }
+
+        // ---------- FORM SOAL ----------
+        document.getElementById('form-file').addEventListener('change', function () {
+            document.getElementById('form-file-name').innerText = this.files.length ? this.files.length + ' file: ' + [...this.files].map(f => f.name).join(', ') : '';
+        });
+
+        async function submitSoal() {
+            const fd = new FormData();
+            const matkul = document.getElementById('form-matkul');
+            fd.append('title', document.getElementById('form-title').value || (matkul.options[matkul.selectedIndex] ? matkul.options[matkul.selectedIndex].text : 'Soal Kustom'));
+            fd.append('sesi', document.getElementById('form-sesi').value || '0');
+            fd.append('kind', document.getElementById('form-kind').value);
+            fd.append('soal_text', document.getElementById('form-soal').value);
+            const f = document.getElementById('form-file').files[0];
+            if (f) fd.append('file', f);
+            const r = await api('/api/solve', { method: 'POST', body: fd });
+            showToast(r.success ? 'Soal dikirim ke agent. Lihat menu Status.' : (r.error || 'Gagal'));
+        }
+
+        // ---------- SETTINGS ----------
+        async function loadConfigForm() {
+            const cfg = await api('/api/config');
+            document.getElementById('set-nama').value = cfg.nama || '';
+            document.getElementById('set-nim').value = cfg.nim || '';
+            document.getElementById('set-prodi').value = cfg.prodi || '';
+            document.getElementById('set-semester').value = cfg.semester || '';
+            document.getElementById('set-ut').value = cfg.ut_daerah || '';
+            document.getElementById('set-url').value = cfg.base_url || '';
+            const m = document.getElementById('set-model');
+            if (!m.dataset.loaded) {
+                await loadModels();
+            }
+            m.value = cfg.model || '';
+            document.getElementById('set-vision').value = cfg.transcribe_model_configured || '';
+        }
+
+        async function loadModels(refresh) {
+            const data = await api('/api/models' + (refresh ? '?refresh=1' : ''));
+            const m = document.getElementById('set-model');
+            const v = document.getElementById('set-vision');
+            if (!data.success) { showToast('Model gagal dimuat'); return; }
+            const options = (data.groups || []).map(g => `<optgroup label="${g.provider}">${g.models.map(x => `<option value="${x.id}">${x.id}</option>`).join('')}</optgroup>`).join('');
+            m.innerHTML = options; v.innerHTML = options;
+            m.dataset.loaded = '1';
+            m.value = data.current || '';
+        }
+
+        async function saveSettings() {
+            const body = {
+                nama: document.getElementById('set-nama').value,
+                nim: document.getElementById('set-nim').value,
+                prodi: document.getElementById('set-prodi').value,
+                semester: document.getElementById('set-semester').value,
+                ut_daerah: document.getElementById('set-ut').value,
+                moodle_url: document.getElementById('set-url').value,
+                opencode_model: document.getElementById('set-model').value,
+                opencode_model_transcribe: document.getElementById('set-vision').value,
+            };
+            const cookie = document.getElementById('set-cookie').value;
+            if (cookie) body.moodle_session = cookie;
+            const r = await api('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            showToast(r.success ? 'Pengaturan disimpan' : (r.error || 'Gagal'));
+        }
+
+        loadCourses();
+        loadStatus();
+        checkSession();
+        loadConfigForm();
+    </script>
+</body>
+</html>
