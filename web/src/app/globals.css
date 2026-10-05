@@ -512,6 +512,22 @@ select.pixel-input {
   color: var(--accent);
 }
 
+/* Varian merusak: dipakai hanya untuk aksi yang tidak bisa dibatalkan
+   (Reset Hasil). Tombol bahaya yang biasa -- hapus satu berkas -- tetap
+   `pixel-icon-button` supaya tidak bersaing dengan aksi utama. */
+.pixel-button-danger {
+  border-color: var(--danger);
+  background: transparent;
+  color: var(--danger);
+  box-shadow: 3px 3px 0 var(--danger-dark);
+}
+
+.pixel-button-danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: #171106;
+  box-shadow: 4px 4px 0 var(--danger-dark);
+}
+
 .pixel-alert {
   border: 2px solid;
   padding: 10px 12px;

@@ -23,6 +23,12 @@ from config import OUTPUT_DIR
 
 STATE_FILE = OUTPUT_DIR / "state.json"
 
+# Versi kerangka keluaran. Naikkan setiap kali gaya jawaban, Daftar Pustaka,
+# atau tata letak docx berubah sedari Radikal. Item yang tercatat selesai
+# dengan versi lebih lama otomatis dianggap belum selesai (lihat `is_done`),
+# jadi pengguna tidak perlu `--force` setiap kali pipeline diperbaiki.
+OUTPUT_VERSION = 2
+
 _LOCK = threading.RLock()
 _STATE: dict | None = None
 # Cap file yang jadi asal _STATE: (mtime_ns, ukuran). None = belum pernah dibaca.
@@ -109,8 +115,20 @@ def set_item(k: str, data: dict) -> None:
 
 
 def is_done(k: str) -> bool:
+    """True kalau item sudah jadi DANVERSI kerangkanya masih yang sekarang.
+
+    Tanpa cek versi, memperbaiki pipeline hampir tidak berdaya: item lama tetap
+    ditandai selesai karena file .docx-nya masih ada di disk, padahal isinya
+    dibuat dengan gaya lama (bukan orang pertama, daftar pustaka bernomor,
+    indent 0,25 inci). Menaikkan angka di `OUTPUT_VERSION` membuat semua item
+    yang dibuat dengan kerangka lama otomatis dihitung belum selesai, jadi
+    perbaikan benar-benar sampai ke dokumen pengguna tanpa perlu `--force`
+    di setiap course.
+    """
     item = get_item(k)
     if not item:
+        return False
+    if item.get("version") != OUTPUT_VERSION:
         return False
     return item.get("status") == "done" and all(
         Path(p).exists() for p in item.get("outputs", [])

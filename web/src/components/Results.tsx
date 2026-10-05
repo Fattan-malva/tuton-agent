@@ -1,4 +1,4 @@
-import { BookOpen, Download, Eye, FileText, Inbox, RefreshCw, Trash2, X } from 'lucide-react';
+import { AlertTriangle, BookOpen, Download, Eye, FileText, Inbox, RefreshCw, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { ResultCourse, ResultFile } from '../lib/types';
 import apiClient from '../lib/api-client';
@@ -85,6 +85,52 @@ export default function Results({ courses, loading, onRefresh, onNotify }: Resul
     }
   };
 
+  const [resetBusy, setResetBusy] = useState(false);
+
+  /**
+   * Reset Hasil menghapus SELURUH isi `output/`: jawaban, peta, transkrip,
+   * dan cache halaman. Cache ikut dihapus karena sekarang transkrip lampiran
+   * ikut dibersihkan dari jawaban mahasiswa lain -- kalau cache-nya masih ada,
+   * isi yang bocor itu akan terbaca lagi pada run berikutnya, dan "reset"
+   * hanya jadi metade jadi.
+   *
+   * `keepCache` sengaja menjadi pilihan, bukan default: transkripsi ulang
+   * memanggil model vision dan mahal, jadi untuk sekadar mengulang satu
+   * worksheet karena soal berubah, cache justru yang ingin disimpan.
+   */
+  const handleReset = async (keepCache: boolean) => {
+    const cacheNote = keepCache
+      ? 'Cache halaman dan transkripsi AKAN TETAP ADA.'
+      : 'Semua cache halaman dan transkrip juga ikut terhapus.';
+    const confirmed = window.confirm(
+      'Kosongkan SELURUH folder output/?\n\n'
+      + 'Termasuk jawaban, peta soal, transkrip lampiran, dan state.json.\n'
+      + `${cacheNote}\n\n`
+      + 'Berkas di template/ dan Settings tidak terpengaruh.\n\n'
+      + 'Lanjut?',
+    );
+    if (!confirmed) return;
+
+    setResetBusy(true);
+    try {
+      const response = await apiClient.resetResults(keepCache);
+      if (!response.success) throw new Error(response.error || 'Gagal membersihkan output.');
+      const files = response.files ?? 0;
+      const items = response.items ?? 0;
+      onNotify(
+        `${response.message ?? 'Output dibersihkan.'}`
+        + (files ? ` (${files} berkas${items ? `, ${items} item status` : ''})` : ''),
+        'success',
+      );
+      setPreviewPath(null);
+      await onRefresh();
+    } catch (caught) {
+      onNotify(caught instanceof Error ? caught.message : 'Gagal membersihkan output.', 'error');
+    } finally {
+      setResetBusy(false);
+    }
+  };
+
   return (
     <section aria-labelledby="results-heading">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -93,11 +139,49 @@ export default function Results({ courses, loading, onRefresh, onNotify }: Resul
           <h1 id="results-heading" className="mt-1 font-display text-2xl leading-snug text-text sm:text-3xl">Hasil Pekerjaan</h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">Unduh file jawaban DOCX yang telah selesai dibuat oleh agent.</p>
         </div>
-        <button type="button" onClick={onRefresh} disabled={loading} className="pixel-button pixel-button-secondary w-full sm:w-auto">
-          <RefreshCw className={loading ? 'animate-spin' : ''} size={16} aria-hidden="true" />
-          <span>{loading ? 'Memuat...' : 'Refresh Data'}</span>
-        </button>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <button type="button" onClick={onRefresh} disabled={loading || resetBusy} className="pixel-button pixel-button-secondary w-full sm:w-auto">
+            <RefreshCw className={loading ? 'animate-spin' : ''} size={16} aria-hidden="true" />
+            <span>{loading ? 'Memuat...' : 'Refresh Data'}</span>
+          </button>
+          <div className="pixel-panel flex flex-col gap-2 p-2 sm:flex-row sm:items-center">
+            <span className="px-1 font-terminal text-[9px] uppercase tracking-[0.14em] text-muted">
+              Reset Hasil
+            </span>
+            <button
+              type="button"
+              onClick={() => handleReset(true)}
+              disabled={loading || resetBusy}
+              className="pixel-button pixel-button-secondary w-full sm:w-auto"
+              title="Kosongkan output/, tapi pertahankan cache halaman dan transkrip"
+            >
+              <RefreshCw size={15} aria-hidden="true" />
+              <span>Reset (cache aman)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleReset(false)}
+              disabled={loading || resetBusy}
+              className="pixel-button pixel-button-danger w-full sm:w-auto"
+              title="Kosongkan output/ beserta seluruh cache"
+            >
+              <AlertTriangle size={15} aria-hidden="true" />
+              <span>{resetBusy ? 'Membersihkan...' : 'Reset Total'}</span>
+            </button>
+          </div>
+        </div>
       </div>
+
+      {courses.length > 0 ? (
+        <div className="pixel-alert pixel-alert-warning mb-6 flex items-start gap-2" role="note">
+          <AlertTriangle size={15} className="mt-px shrink-0" aria-hidden="true" />
+          <span>
+            Reset menghapus isi <code className="pixel-code">output/</code> juga untuk
+            mata kuliah yang tidak terlihat di daftar ini, karena yang dihapus adalah
+            seluruh foldernya, bukan hanya berkas yang tampil.
+          </span>
+        </div>
+      ) : null}
 
       {loading && !courses.length ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">

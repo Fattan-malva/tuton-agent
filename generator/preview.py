@@ -281,7 +281,14 @@ def _inline(el, depth: int = 0) -> str:
     return "".join(out)
 
 
-def _para_html(p_el) -> str:
+def _para_html(p_el, *, indent: str = "", tag: str = "p") -> str:
+    """Satu blok paragraf sebagai HTML.
+
+    `tag` dipakai untuk butir daftar: isinya harus dibungkus `<li>`, bukan
+    `<p>`. Browser akan memindahkan `<p>` keluar dari `<ol>` karena HTML itu
+    tidak mengizinkan paragraf langsung di dalam daftar -- akibatnya nomornya
+    hilang dan Daftar Pustaka/daftar bernomor tampil berantakan di preview.
+    """
     ppr = p_el.find(f"{_WM}pPr")
     align = None
     style = None
@@ -305,7 +312,123 @@ def _para_html(p_el) -> str:
     if not inner:
         inner = "&nbsp;"
     class_attr = f' class="{" ".join(cls)}"' if cls else ""
-    return f"<p{class_attr}>{inner}</p>"
+    style_attr = f' style="{indent}"' if indent else ""
+    return f"<{tag}{class_attr}{style_attr}>{inner}</{tag}>"
+
+
+def _twip(el, nama: str) -> int | None:
+    """Nilai atribut `w:<nama>` sebagai bilangan bulat, atau None."""
+    v = el.get(f"{_WM}{nama}")
+    if v is None:
+        return None
+    try:
+        return int(float(v))
+    except ValueError:
+        return None
+
+
+def _ind_css(p_el) -> str:
+    """Terjemahkan `w:ind` paragraf menjadi CSS, dalam satuan titik.
+
+    Dipakai untuk indentasi gantung Daftar Pustaka. Tanpa ini, dokumen yang
+    ditampilkan di layar terlihat tanpa indentasi gantung sama sekali --
+    padahal berkas yang diunduh memakainya, jadi yang dilihat pengguna di
+    preview bukan dokumen yang dia terima.
+    """
+    ppr = p_el.find(f"{_WM}pPr")
+    if ppr is None:
+        return ""
+    ind = ppr.find(f"{_WM}ind")
+    if ind is None:
+        return ""
+    bagian: list[str] = []
+    kiri = _twip(ind, "left") or _twip(ind, "start")
+    kanan = _twip(ind, "right")
+    gantung = _twip(ind, "hanging")
+    if gantung is None:
+        # `firstLine` negatif berarti indentasi gantung dalam bentuk lain.
+        first = _twip(ind, "firstLine")
+        gantung = -first if first is not None and first < 0 else None
+    if kiri:
+        bagian.append(f"padding-left:{kiri / 20:g}pt")
+    if kanan:
+        bagian.append(f"padding-right:{kanan / 20:g}pt")
+    if gantung:
+        bagian.append(f"text-indent:{-gantung / 20:g}pt")
+    return ";".join(bagian)
+
+
+def _numbering_info(path) -> tuple[dict[str, str], dict[str, int]]:
+    """Baca `numbering.xml`: peta `w:numId` -> format, dan -> nomor awal.
+
+    Penomoran native Word tidak ada di `document.xml`; yang ada di sana hanya
+    rujukan `w:numId`, sedangkan jenis angka dan titik mulainya disimpan di
+    `numbering.xml`. Tanpa dua peta ini, semua butir akan tampil sama -- padahal
+    dokumen aslinya membedakan butir bernomor dari butir bertanda, dan daftar
+    kedua dimulai dari nomor yang ditulis agen, bukan dari kelanjutan butir
+    sebelumnya.
+    """
+    fmt: dict[str, str] = {}
+    mulai: dict[str, int] = {}
+    try:
+        root = etree.fromstring(Document(str(path)).part.numbering_part.blob)
+    except Exception:  # noqa: BLE001 - dokumen tanpa numbering.xml tetap bisa dipratinjau
+        return fmt, mulai
+
+    abstract_fmt: dict[str, str] = {}
+    for abstract in root.findall(f"{_WM}abstractNum"):
+        aid = abstract.get(f"{_WM}abstractNumId")
+        lvl = abstract.find(f"{_WM}lvl")
+        if aid is None or lvl is None:
+            continue
+        node = lvl.find(f"{_WM}numFmt")
+        abstract_fmt[aid] = (
+            node.get(f"{_WM}val") if node is not None else "decimal"
+        ) or "decimal"
+
+    for num in root.findall(f"{_WM}num"):
+        nid = num.get(f"{_WM}numId")
+        ref = num.find(f"{_WM}abstractNumId")
+        if nid is None:
+            continue
+        if ref is not None:
+            fmt[nid] = abstract_fmt.get(ref.get(f"{_WM}val") or "", "decimal")
+        override = num.find(f"{_WM}lvlOverride")
+        if override is not None:
+            start = override.find(f"{_WM}startOverride")
+            angka = _twip(start, "val") if start is not None else None
+            if angka:
+                mulai[nid] = angka
+    return fmt, mulai
+
+
+def _info_daftar(p_el, num_fmt: dict[str, str]) -> tuple[str | None, str]:
+    """Tag daftar (`ol`/`ul`) dan `w:numId` untuk satu paragraf.
+
+    `(None, "")` kalau paragraf ini bukan butir daftar. Penanda gaya
+    `ListNumber` pada style tidak dipakai sebagai penentu, karena pipeline
+    memasang `w:numPr` langsung pada paragraf -- dan gaya saja tetap dibaca
+    sebagai cadangan oleh `_gaya_daftar`.
+    """
+    ppr = p_el.find(f"{_WM}pPr")
+    if ppr is not None:
+        numpr = ppr.find(f"{_WM}numPr")
+        if numpr is not None:
+            node = numpr.find(f"{_WM}numId")
+            num_id = node.get(f"{_WM}val") or "" if node is not None else ""
+            if num_id:
+                return ("ul" if num_fmt.get(num_id) == "bullet" else "ol"), num_id
+    # Cadangan: dokumen yang butir daftarnya cuma Bringing style `ListNumber`
+    # tanpa `w:numPr`. Tanpa ini, butir seperti itu tampil sebagai paragraf
+    # biasa -- persis-butir yang paling sering dilihat pengguna.
+    ps = ppr.find(f"{_WM}pStyle") if ppr is not None else None
+    if ps is not None:
+        gaya = (ps.get(f"{_WM}val") or "").replace(" ", "").lower()
+        if gaya == "listnumber":
+            return "ol", "style:ListNumber"
+        if gaya == "listbullet":
+            return "ul", "style:ListBullet"
+    return None, ""
 
 
 def _tbl_html(tbl_el) -> str:
@@ -320,15 +443,48 @@ def _tbl_html(tbl_el) -> str:
 
 
 def docx_to_html(path) -> str:
-    """Konversi .docx hasil agent menjadi dokumen HTML (dengan equation MathML)."""
+    """Konversi .docx hasil agent menjadi dokumen HTML (dengan equation MathML).
+
+    Butir daftar dikelompokkan jadi `<ol>`/`<ul>` sungguhan, bukan ditulis
+    sebagai paragraf biasa. Word menghitung penomorannya sendiri, jadi angka
+    yang tampil di preview harus dihitung ulang di sini juga; kalau tidak,
+    butir kedua tampil tanpa nomor dan yang dilihat pengguna berbeda dari
+    berkas yang dia unduh.
+    """
     doc = Document(str(path))
     body = doc.element.body
+    num_fmt, num_mulai = _numbering_info(path)
     blocks: list[str] = []
+    tag_aktif: str | None = None
+
+    def tutup() -> None:
+        if tag_aktif:
+            blocks.append(f"</{tag_aktif}>")
+
     for child in body.iterchildren():
         n = _local(child)
-        if n == "p":
-            blocks.append(_para_html(child))
-        elif n == "tbl":
+        if n == "tbl":
+            tutup()
+            tag_aktif = None
             blocks.append(_tbl_html(child))
+            continue
+        if n != "p":
+            continue
+
+        tag, kunci = _info_daftar(child, num_fmt)
+        if tag is None:
+            tutup()
+            tag_aktif = None
+            blocks.append(_para_html(child, indent=_ind_css(child)))
+            continue
+
+        if tag != tag_aktif:
+            tutup()
+            tag_aktif = tag
+            mulai = num_mulai.get(kunci)
+            attr = f' start="{mulai}"' if tag == "ol" and mulai and mulai != 1 else ""
+            blocks.append(f"<{tag}{attr}>")
+        blocks.append(_para_html(child, indent=_ind_css(child), tag="li"))
+    tutup()
     content = "\n".join(b for b in blocks if b.strip())
     return _HTML_DOC.replace("{content}", content)

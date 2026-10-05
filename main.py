@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import re
 import shutil
+import signal
 import sys
 import threading
 import time
+from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,14 +57,20 @@ for _stream in (sys.stdout, sys.stderr):
         except Exception:  # noqa: BLE001
             pass
 
-from config import Config, OUTPUT_DIR, now_stamp
-from generator import models, state
-from generator.docx import save_doc
+from config import Config, OUTPUT_DIR, ensure_dir, now_stamp
+from generator import models, opencode_runner, state
+from generator.docx import _soal_bersih, save_doc
 from generator.opencode_runner import run_opencode
 from generator.prompt import (
+    _ORANG_LAIN_RE,
     build_petak_prompt,
     build_prompt,
     build_referensi_prompt,
+)
+from moodle import bahan_ajar
+from moodle.lampiran_mahasiswa import (
+    looks_like_student_submission,
+    pisahkan_lampiran,
 )
 from moodle.auth import MoodleSession
 from moodle.discovery import SoalSource, SourceDiscovery
@@ -206,11 +215,29 @@ class Prefetched:
     # `None`: pipeline lalu memakai jalur cadangan, bukan berhenti.
     petak: Path | None = None
     referensi: Path | None = None
+    # Isi peta sesi, dibaca sekali saat Tahap 1. Dicaching di sini supaya
+    # pencarian bahan ajar tidak membaca berkas yang sama berulang-ulang untuk
+    # tiap item dalam satu sesi.
+    petak_text: str = ""
+    # Metadata bahan ajar wajib sesi untuk item ini, kalau ada. `{}` berarti
+    # sesi tidak menunjuk buku resmi, jadi Daftar Pustaka Searching adalah
+    # temuan agen `pencari-pustaka`, bukan rujukan yang diminta tutor.
+    referensi_bahan: dict = field(default_factory=dict)
     # Dokumen dasar untuk .docx. `None` berarti pakai template standar.
     # Form Soal mengisinya dengan berkas "Format Jawaban" milik pengguna bila
     # field itu diisi, sehingga hasil dokumennya mengikuti tata letak yang
     # benar-benar dipakai, bukan template bawaan.
     template: Path | None = None
+    # Lampiran yang terbukti kiriman mahasiswa lain: [(berkas, alasan)].
+    # Isi lampiran seperti ini TIDAK ikut transkrip dan tidak ikut jadi bahan
+    # jawaban. Dari run sungguhan: dua PDF jawaban mahasiswa ikut ter-transkrip
+    # dan jawabannya memakai angka yang sama persis dengan salah satunya --
+    # jadi tanpa daftar ini, tugasnya tidak dikerjakan sama sekali.
+    lampiran_mahasiswa: list[tuple[Path, str]] = field(default_factory=list)
+    # Lampiran gambar yang berisi soal (mis. screenshot). Dipakai untuk
+    # menyisipkan soal ke depan jawaban di .docx -- kalau soalnya cuma gambar,
+    # mengetik ulang dari transkripsi bisa saja keliru.
+    gambar_soal: list[Path] = field(default_factory=list)
 
 
 def _display_index(item: Activity, kind: str, section_num: int) -> int:
@@ -398,6 +425,7 @@ def _run_helper(
     model: str,
     label: str,
     min_chars: int,
+    jejak: list[str] | None = None,
 ) -> bool:
     """Jalankan satu agen pembantu dan tunggu berkas yang dijanjikannya.
 
@@ -405,12 +433,23 @@ def _run_helper(
     `answer_quality_issues`: isinya bukan jawaban melainkan artefak. Yang
     diperiksa hanya benar-benar tertulis dan cukup berisi. Mengembalikan
     `False` membuat pemanggil memakai jalur cadangan.
+
+    `jejak` diisi dengan keluaran percobaan terakhir. `_petak_stage` memakainya
+    untuk mengenali model yang tidak punya webfetch -- penyebab kegagalan yang
+    tidak bisa ditebak dari kode exit, dan yang kalau tidak dikenali akan
+    terulang di setiap run.
     """
     path.unlink(missing_ok=True)
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Jejak keluaran terakhir, supaya pemanggil bisa membaca alasan
+    # kegagalan yang sebenarnya (mis. tool webfetch tidak ada).
+    jejak: list[str] = []
+
     attempts = max(1, Config.TUTON_HELPER_RETRIES)
     for attempt in range(1, attempts + 1):
+        if _stop_diminta():
+            raise DihentikanUser("stop diminta sebelum agen pembantu dijalankan")
         try:
             result = run_opencode(
                 prompt,
@@ -418,6 +457,11 @@ def _run_helper(
                 model=model or None,
                 timeout=Config.TUTON_TIMEOUT_HELPER,
             )
+        except opencode_runner.RunStopped as exc:
+            # Stop harus naik ke atas, bukan ditelan jadi "gagal" lalu dicoba
+            # lagi. Kalau diteruskan sebagai galat biasa, pipeline masuk retry
+            # dan memanggil agen-agen baru justru saat pengguna menekan stop.
+            raise DihentikanUser(str(exc)) from exc
         except TimeoutError:
             log(f"  ! {label}: timeout (percobaan {attempt}/{attempts})")
             continue
@@ -428,6 +472,8 @@ def _run_helper(
         if _artifact_ok(path, min_chars):
             return True
         output = ((result.stdout or "") + (result.stderr or "")).strip()
+        if jejak is not None:
+            jejak.append(output)
         if result.returncode != 0 and output:
             tail = " | ".join(output.splitlines()[-3:])[:280]
             log(f"  ! {label}: opencode exit {result.returncode} ({tail})")
@@ -452,6 +498,48 @@ def writer_model() -> str:
     from generator import models  # noqa: PLC0415
 
     return models.resolve(models.ROLE_WRITER)
+
+
+# Bukti model pembantu tidak bisa membuka URL. Ditandai dari keluarannya sendiri,
+# bukan dari tebakan: model yang memang tidak punya tool itu menyebut tool itu
+# tidak ada.
+#
+# Dari run sungguhan: `ollama-cloud/gemma4:31b` berjalan di Code Mode yang
+# hanya menyingkalkan `browser` dan `opencode`, jadi `tools.webfetch()` selalu
+# "Unknown tool". Akibatnya tahap peta gagal setiap kali -- 35 detik terpakai
+# untuk NOTHING, lalu agen penulis melakukan dua pekerjaan sekaligus (baca
+# halaman + jawab). Menandainya membuat run berikutnya langsung melewati peta.
+_BUKAN_WEBFETCH_RE = re.compile(
+    r"unknown tool [\"']?webfetch"
+    r"|webfetch[^\n]{0,40}(?:is |tidak |not )?(?:available|defined|listed|found)"
+    r"|(?:tidak tersedia|tidak ada|not available|no such tool)[^\n]{0,30}webfetch"
+    r"|only\s+`?(?:browser|opencode)`?\s+(?:and|are|is)\s+present",
+    re.IGNORECASE,
+)
+
+# Berkas penanda di cache. Satu berkas per model, jadi ganti model di Settings
+# langsung mengembalikan perilaku peta.
+_TANPA_WEBFETCH_DIR = OUTPUT_DIR / ".cache" / "helper_tanpa_webfetch"
+
+
+def _tandai_tanpa_webfetch(model: str) -> None:
+    """Catat bahwa model pembantu ini tidak bisa membuka URL."""
+    if not model:
+        return
+    try:
+        ensure_dir(_TANPA_WEBFETCH_DIR)
+        (_TANPA_WEBFETCH_DIR / f"{model.replace('/', '_')}.flag").write_text(
+            now_stamp(), encoding="utf-8"
+        )
+    except OSError:
+        pass  # cache tidak bisa ditulis: cukup kehilangan penghematan sekali
+
+
+def _sudah_tanpa_webfetch(model: str) -> bool:
+    """True kalau model ini sudah pernah terbukti tidak bisa membuka URL."""
+    if not model:
+        return False
+    return (_TANPA_WEBFETCH_DIR / f"{model.replace('/', '_')}.flag").is_file()
 
 
 def _petak_stage(
@@ -486,13 +574,26 @@ def _petak_stage(
             )
         return done
 
+    model = helper_model()
+    if _sudah_tanpa_webfetch(model):
+        log(
+            f"  · peta soal dilewati: model pembantu `{model}` tidak punya tool "
+            "webfetch, jadi tidak bisa membuka halaman. Set "
+            "OPENCODE_MODEL_HELPER ke model lain untuk menghidupkan tahap ini.",
+            prefix="  ",
+        )
+        return done
+
     log(
         f"  · memetakan soal {len(pending)} sesi dengan model kecil "
         "(mencari sekaligus memahami soal, rubrik, dan lampiran)...",
         prefix="  ",
     )
-    model = helper_model()
-    for sec, path in pending:
+
+    jejak: list[str] = []
+
+    def petakan_sesi(sec, path: Path) -> tuple[object, Path, bool]:
+        """Satu sesi = satu pemanggilan agen. Berjalan di worker sendiri."""
         started = time.monotonic()
         try:
             prompt = build_petak_prompt(
@@ -501,7 +602,7 @@ def _petak_stage(
                 section_title=sec.title,
                 # WAJIB lewat `soalu()`. Agen `pemetak-soal` tidak punya cookie
                 # MoodleSession, jadi URL Moodle mentah membawanya ke halaman
-                # login.(Itu yang membuat agent lama berputar-putar: mencoba
+                # login. (Itu yang membuat agent lama berputar-putar: mencoba
                 # browser, menggali source code, lalu menggali cache halaman --
                 # semua karena URL yang dikirimi tidak bisa dia buka sendiri.)
                 # `fresh=True` = abaikan cache, baca Moodle versi terbaru.
@@ -519,23 +620,67 @@ def _petak_stage(
                 model=model,
                 label=f"{course.name} sesi {sec.number}",
                 min_chars=_MIN_PETAK_CHARS,
+                jejak=jejak,
             )
+        except DihentikanUser:
+            raise
         except Exception as exc:  # noqa: BLE001
             log(f"  ! peta sesi {sec.number} gagal: {type(exc).__name__}: {exc}")
-            continue
-        if ok:
-            done[sec.number] = path
-            log(
-                f"  ✓ peta sesi {sec.number} "
-                f"({time.monotonic() - started:.1f}s, {path.stat().st_size} byte)",
-                prefix="  ",
-            )
-        else:
-            log(
-                f"  · peta sesi {sec.number} tidak terbentuk. Agen penulis akan "
-                "membaca halaman sumber sendiri: lebih mahal, tapi tetap jalan.",
-                prefix="  ",
-            )
+            return sec, path, False
+        return sec, path, ok
+
+    # Sesi-sesi saling bebas: tiap satu menulis `sesi<N>.md` yang berbeda dan
+    # tidak membaca keluaran sesi lain. Karena itu pemetaan berjalan paralel,
+    # bukan satu per satu -- dengan model sekecil apa pun, satu `opencode run`
+    # tetap memerlukan detik, jadi tiga sesi berurutan berarti tiga kali
+    # menunggu.
+    workers = max(1, min(Config.TUTON_MAP_WORKERS, len(pending)))
+    started_all = time.monotonic()
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="petak") as pool:
+        futures = [
+            pool.submit(petakan_sesi, sec, path) for sec, path in pending
+        ]
+        for future in as_completed(futures):
+            try:
+                sec, path, ok = future.result()
+            except DihentikanUser:
+                # Stop: bukan kegagalan peta. Menghitungnya sebagai gagal akan
+                # membuat pipeline mencoba jalur cadangan (baca URL tanpa peta),
+                # yaitu memulai pekerjaan baru justru saat pengguna berhenti.
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log(f"  ! peta gagal: {type(exc).__name__}: {exc}")
+                continue
+            if ok:
+                done[sec.number] = path
+                log(
+                    f"  ✓ peta sesi {sec.number} "
+                    f"({path.stat().st_size} byte)",
+                    prefix="  ",
+                )
+            else:
+                log(
+                    f"  · peta sesi {sec.number} tidak terbentuk. Agen penulis akan "
+                    "membaca halaman sumber sendiri: lebih mahal, tapi tetap jalan.",
+                    prefix="  ",
+                )
+    log(
+        f"  · pemetaan selesai dalam {time.monotonic() - started_all:.1f}s "
+        f"({len(done)}/{len(pending) + len(done)} sesi terpetakan)",
+        prefix="  ",
+    )
+
+    # Kalau modelnya ternyata tidak punya webfetch, tandai sekarang. Tanpa ini
+    # run berikutnya mengulang percobaan yang pasti gagal -- dan percobaan itu
+    # bukan murah: dari run sungguhan, 35 detik untuk peta yang tidak terbentuk.
+    if not done and jejak and _BUKAN_WEBFETCH_RE.search("\n".join(jejak)):
+        _tandai_tanpa_webfetch(model)
+        log(
+            f"  ! model pembantu `{model}` tidak punya tool webfetch. Peta soal "
+            "dilewati pada run berikutnya; agen penulis membaca halaman sumber "
+            "sendiri. Ganti OPENCODE_MODEL_HELPER supaya peta soal dihitung lagi.",
+            prefix="  ",
+        )
     return done
 
 
@@ -595,18 +740,129 @@ def _pustaka_digest(petak: Path | None, record: Prefetched) -> str:
     return (header + "".join(chunks))[:_MAX_PETAK_DIGIT_CHARS]
 
 
+def _petak_text(path: Path | None) -> str:
+    """Isi peta soal, atau string kosong bila petanya tidak ada."""
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _teks_materi_sesi(record: Prefetched) -> str:
+    """Semua teks halaman yang relevan untuk satu item.
+
+    Bahan ajar wajib biasanya disebut di halaman SEKSI ("silakan pelajari
+    BMP ... Modul 4"), bukan di halaman aktivitas. Jadi teks yang dikumpulkan
+    di sini bukan hanya `soal_text` item, tapi juga peta sesi: peta itu dibaca
+    agen dari halaman seksi, dan apa pun yang ia tulis balik ke sana ikut
+    terbaca di sini.
+    """
+    parts: list[str] = []
+    if record.source is not None and record.source.soal_text:
+        parts.append(record.source.soal_text)
+    if record.petak_text:
+        parts.append(record.petak_text)
+    if record.transcripts:
+        parts.extend(record.transcripts.values())
+    return "\n".join(parts)
+
+
+def _referensi_bahan_ajar(records: list[Prefetched]) -> dict[int, dict]:
+    """Cari sitasi bahan ajar wajib untuk tiap item, tanpa panggil model.
+
+    Halaman sesi UT hampir selalu menunjuk satu buku resmi dan menautkan
+    katalognya. Satu GET ke tautan itu sudah menghasilkan sitasi lengkap yang
+    bisa diperiksa dosen -- jadi untuk kasus umum (buku yang memang diminta
+    tutor) Tahap 1 tidak perlu dijalankan sama sekali.
+
+    Mengembalikan `{id(record): {"sitasi", "url", "bahan", "siap"}}`.
+
+    `siap` True berarti sitasinya lengkap dan boleh langsung ditulis ke berkas
+    referensi. `siap` False dengan `bahan` yang tidak kosong berarti peta knows
+    WHICH book the session mandates, but the catalog could not be fetched --
+    entri itu tidak boleh dikarang sendiri, tapi konteksnya wajib diteruskan ke
+    agen `pencari-pustaka`. Tanpa penerusan itu, agen tidak tahu buku mana yang
+    dituju dan berakhir mencari buku topik-topiknya yang mirip, yang justru
+    kelihatan sebagai daftar di luar sesi.
+    """
+    hasil: dict[int, dict] = {}
+    # Satu sesi punya satu bahan ajar; jangan ambil halaman yang sama berulang.
+    per_url: dict[str, dict] = {}
+
+    for record in records:
+        text = _teks_materi_sesi(record)
+        if not text:
+            continue
+        try:
+            ditemukan = bahan_ajar.referensi_dari_materi(text)
+        except Exception:  # noqa: BLE001 - jalur cepat tidak boleh mematikan pipeline
+            continue
+        bahan = ditemukan.get("bahan", {}) or {}
+        sitasi = ditemukan.get("sitasi", "")
+        url = ditemukan.get("url", "")
+        if sitasi:
+            if url not in per_url:
+                per_url[url] = {
+                    "sitasi": sitasi,
+                    "url": url,
+                    "bahan": bahan,
+                    "siap": True,
+                }
+            hasil[id(record)] = per_url[url]
+        elif bahan.get("kalimat") or bahan.get("kode"):
+            hasil[id(record)] = {
+                "sitasi": "",
+                "url": url,
+                "bahan": bahan,
+                "siap": False,
+            }
+    return hasil
+
+
+def _tulis_referensi_bahan_ajar(record: Prefetched, info: dict) -> bool:
+    """Tulis entri bahan ajar ke berkas referensi item. True bila berhasil.
+
+    Formatnya persis sama dengan yang diminta agen `pencari-pustaka`: satu baris
+    per entri, tanpa nomor, tanpa bullet. URL katalog ditambahkan di akhir
+    entri karena dua alasan sekaligus: itu bentuk APA 7 yang sah untuk sumber
+    daring, dan itulah yang membuat daftar ini bisa diperiksa dosen. `answer_
+    quality_issues` juga memakainya untuk mengecualikan bahan ajar wajib dari
+    aturan batas 10 tahun -- jadi URL ini bukan hiasan.
+    """
+    path = _pustaka_path(record)
+    entri = f"{info['sitasi'].rstrip()} {info['url']}".strip()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(entri + "\n", encoding="utf-8")
+    except OSError as exc:
+        log(f"  ! gagal menulis referensi bahan ajar: {exc}")
+        return False
+    return True
+
+
+def _tahun_min_referensi() -> int:
+    """Tahun tertua yang boleh dipakai untuk referensi dari luar sesi."""
+    return date.today().year - max(1, Config.TUTON_PUSTAKA_TAHUN_MAX)
+
+
 def _pustaka_stage(
     records: list[Prefetched],
     peta_by_section: dict[int, Path],
     *,
     force: bool,
 ) -> dict[int, Path]:
-    """Cari referensi per item, sekali saja, memakai model pembantu.
+    """Daftar Pustaka per item: bahan ajar dulu, model sebagai cadangan.
 
-    Dijalankan setelah `_petak_stage` selesai, bukan paralel dengannya: referensi
-    yang baik bergantung pada pemahaman soalnya, dan dua tahap yang
-    keduanya memanggil model secara bersamaan hanya memperpanjang waktu tunggu
-    tanpa menambah hasil per menit.
+    Urutannya penting. Halaman sesi hampir selalu menunjuk buku yang harus
+    dipakai, jadi langkah pertama membaca metadata katalog UT secara langsung
+    (`moodle.bahan_ajar`) dan menulis Daftar Pustaka tanpa memanggil model sama
+    sekali. Hanya item yang bahannya tidak ditemukan yang diteruskan ke agen
+    `pencari-pustaka` untuk mencari referensi pelengkap.
+
+    Jalur model berjalan paralel antar item: tiap item menulis berkas berbeda dan
+    hanya membaca peta sesi yang sudah selesai ditulis pada tahap sebelumnya.
     """
     todo = [r for r in records if r.source is not None and r.source.ok_links]
     if not todo:
@@ -625,13 +881,43 @@ def _pustaka_stage(
         log(f"  · daftar pustaka: {len(out)} item dari cache.", prefix="  ")
         return out
 
+    # Tahap 1a: bahan ajar wajib sesi, deterministik dan tanpa model.
+    for record in pending:
+        record.petak_text = _petak_text(peta_by_section.get(record.section_num))
+    info = _referensi_bahan_ajar(pending)
+    if info:
+        for record in pending:
+            entry = info.get(id(record))
+            if not entry or not entry.get("siap"):
+                # Sitasi tidak lengkap. Jangan dikarang di sini; konteksnya
+                # tetap diteruskan ke agen di tahap 2.
+                continue
+            if _tulis_referensi_bahan_ajar(record, entry):
+                out[id(record)] = _pustaka_path(record)
+                record.referensi_bahan = entry
+                log(
+                    f"  ✓ bahan ajar sesi: {(entry['bahan'].get('judul') or '')[:60]!r}",
+                    prefix=f"  [{record.kind} {record.index}] ",
+                )
+
+    pending = [r for r in pending if id(r) not in out]
+    if not pending:
+        log(
+            f"  · daftar pustaka: {len(out)} item selesai dari bahan ajar sesi, "
+            "tanpa satu pun panggilan model.",
+            prefix="  ",
+        )
+        return out
+
     model = helper_model()
     log(
-        f"  · mencari referensi {len(pending)} item (maksimal "
-        f"{Config.TUTON_MAX_PUSTAKA} per item, tanpa riset di model utama)...",
+        f"  · mencari referensi {len(pending)} item di luar bahan ajar sesi "
+        f"(maksimal {Config.TUTON_MAX_PUSTAKA} per item, tahun "
+        f"{_tahun_min_referensi()}-{date.today().year})...",
         prefix="  ",
     )
-    for record in pending:
+
+    def cari_referensi(record: Prefetched) -> tuple[Prefetched, Path | None]:
         path = _pustaka_path(record)
         digest = _pustaka_digest(peta_by_section.get(record.section_num), record)
         try:
@@ -646,6 +932,12 @@ def _pustaka_stage(
                 attachment_names=[p.name for p in record.attachments],
                 out_path=path,
                 max_refs=Config.TUTON_MAX_PUSTAKA,
+                tahun_min=_tahun_min_referensi(),
+                bahan_ajar={
+                    k: v
+                    for k, v in (info.get(id(record), {}).get("bahan") or {}).items()
+                    if v
+                },
             )
             ok = _run_helper(
                 prompt,
@@ -655,11 +947,25 @@ def _pustaka_stage(
                 label=f"{record.kind} {record.index}",
                 min_chars=_MIN_PUSTAKA_CHARS,
             )
+        except DihentikanUser:
+            raise
         except Exception as exc:  # noqa: BLE001
             log(f"  ! referensi {record.kind} {record.index} gagal: {exc}")
-            continue
-        if ok:
-            out[id(record)] = path
+            return record, None
+        return record, path if ok else None
+
+    workers = max(1, min(Config.TUTON_HELPER_WORKERS, len(pending)))
+    started_all = time.monotonic()
+    with ThreadPoolExecutor(
+        max_workers=workers, thread_name_prefix="pustaka"
+    ) as pool:
+        for record, path in pool.map(cari_referensi, pending):
+            if path is not None:
+                out[id(record)] = path
+    log(
+        f"  · pencarian referensi selesai dalam {time.monotonic() - started_all:.1f}s",
+        prefix="  ",
+    )
     return out
 
 
@@ -682,11 +988,67 @@ def _needs_transcription(record: Prefetched) -> bool:
 
 def _write_transcript_file(record: Prefetched, lamp_dir: Path) -> Path | None:
     """Gabungkan semua transkripsi ke satu file markdown yang mudah dibaca AI."""
-    if not record.transcripts:
+    # Folder dibuat di sini, bukan hanya di pemanggil transkripsi. Fungsi ini
+    # dipanggil juga oleh Form Soal dan oleh jalur tanpa transkripsi vision --
+    # dan dua pemanggil itu tidak pernah menyentuh folder lampiran, sehingga
+    # penulisan berakhir dengan `FileNotFoundError` yang tidak menyuruh siapa pun
+    # membuat folder.
+    ensure_dir(lamp_dir)
+
+    # Klasifikasi diulang di sini kalau pemanggil belum melakukannya. Agen
+    # penulis punya `read`: kalau transkrip masih memuat isi jawaban mahasiswa,
+    # isinya akan terbaca hanya dengan satu panggilan. Jadi pengecualian tidak
+    # boleh bergantung pada pengingat di pemanggil -- harus aman kalau
+    # diabaikan.
+    # `transitive` = daftar (Path, alasan). Nama berkas diturunkan dari Path
+    # supaya satu bentuk saja yang dipakai di seluruh fungsi ini.
+    transitive: list[tuple[Path, str]] = [
+        (Path(n), a) for n, a in record.lampiran_mahasiswa
+    ]
+    for name, text in (record.transcripts or {}).items():
+        if any(name == b.name for b, _ in transitive):
+            continue
+        alasan = looks_like_student_submission(Path(name), text)
+        if alasan:
+            transitive.append((Path(name), alasan))
+            record.lampiran_mahasiswa = [(b.name, a) for b, a in transitive]
+
+    # Transkrip lampiran mahasiswa lain dihapus dari disk, bukan cuma tidak
+    # dipakai. Ada satu sub-bagian di bawah yang menyebut berkasnya, dan agent
+    # yang punya `read` bisa saja tetap membukanya -- dan isinya jawaban jadi.
+    # Hanya transkrip turunannya yang dihapus, BUKAN berkas lampiran aslinya:
+    # lampiran ada di folder karena di situ tutor bisa memverifikasi
+    # sendiri; menghapusnya berarti isi aslinya hilang tanpa jejak.
+    for berkas, _alasan in transitive:
+        sisa = lamp_dir / f"transkrip_{berkas.stem}.md"
+        if not sisa.is_file():
+            continue
+        try:
+            sisa.unlink()
+        except OSError:
+            pass
+
+    bagian_soal = {
+        nama: teks
+        for nama, teks in (record.transcripts or {}).items()
+        if not any(nama == b.name for b, _ in transitive)
+    }
+    if not bagian_soal:
         return None
     parts: list[str] = []
-    for name, text in record.transcripts.items():
+    for name, text in bagian_soal.items():
         parts.append(f"## {name}\n\n{text}")
+    if transitive:
+        # Disebut agar agent tahu lampirannya ADA dan sengaja dilewati, bukan
+        # lupa. Tanpa ini, agent akan mencari-cari dan mengarang sendiri.
+        daftar = ", ".join(berkas.name for berkas, _ in transitive)
+        parts.append(
+            "## Lampiran yang TIDAK dipakai (jawabannya)\n\n"
+            f"Ada {len(transitive)} lampiran: {daftar}.\n"
+            "Lampiran ini kiriman mahasiswa lain, bukan soal. Isinya jawaban "
+            "yang sudah jadi. JANGAN dibaca, jangan diringkas, jangan dijadikan "
+            "kerangka jawaban. Kerjakan soal sendiri dari materi di atas."
+        )
     # Nama WAJIB per-item. Folder lampiran dipakai bersama oleh semua item dalam
     # satu sesi, jadi nama tetap "transkrip.md" berarti dua item yang jalan
     # paralel menulis berkas yang sama dan salah satunya hilang tanpa jejak.
@@ -712,13 +1074,27 @@ def _transcribe_stage(records: list[Prefetched]) -> None:
     if not todo:
         return
     from moodle.transcribe import transcribe_many
+    from moodle.ocr import IMAGE_EXT as _IMAGE_EXT
 
     workers = max(1, min(Config.TUTON_TRANSCRIBE_WORKERS, len(todo)))
     log(f"  · transkripsi lampiran {len(todo)} item ({workers} worker)...")
 
     def work(record: Prefetched) -> None:
         lamp_dir = (record.out_dir or Path(".")) / "lampiran"
-        record.transcripts = transcribe_many(record.attachments, lamp_dir)
+        # Pisahkan dulu: lampiran mahasiswa lain tidak boleh ikut transkrip,
+        # karena isinya adalah jawaban -- dan agent yang membacanya akan
+        # mengikuti. Pemisahan dilakukan SEBELUM transkripsi supaya tidak ada
+        # satu pun karakter jawaban orang lain yang masuk ke prompt.
+        lampiran_soal, record.lampiran_mahasiswa = pisahkan_lampiran(
+            [Path(p) for p in record.attachments]
+        )
+        if record.lampiran_mahasiswa:
+            for nama, alasan in record.lampiran_mahasiswa:
+                log(f"    · tidak dipakai: {nama} ({alasan})")
+        record.gambar_soal = [
+            p for p in lampiran_soal if p.suffix.lower() in _IMAGE_EXT
+        ]
+        record.transcripts = transcribe_many(lampiran_soal, lamp_dir)
         record.transcript_path = _write_transcript_file(record, lamp_dir)
 
     started = time.monotonic()
@@ -734,8 +1110,14 @@ def _transcribe_stage(records: list[Prefetched]) -> None:
             if record.transcripts:
                 log(
                     f"  ✓ {record.item.title}: "
-                    f"{len(record.transcripts)} lampiran terbaca "
+                    f"{len(record.transcripts)} lampiran soal terbaca "
                     f"({sum(len(v) for v in record.transcripts.values())} karakter)"
+                    + (
+                        f", {len(record.lampiran_mahasiswa)} lampiran mahasiswa lain "
+                        "dilewati"
+                        if record.lampiran_mahasiswa
+                        else ""
+                    )
                 )
             else:
                 log(f"  · {record.item.title}: tidak ada lampiran yang bisa dibaca")
@@ -831,13 +1213,148 @@ def _custom_index(title: str, kind: str) -> int:
     return int(m.group(1)) if m else 1
 
 
+# Frasa yang membuat jawaban terdengar seperti hasil model, bukan tulisan
+# mahasiswa. Daftar ini bukan soal selera; tiap entri pernah muncul di
+# keluaran nyata dan langsung dibaca dosen. "bayangkan" masuk daftar karena
+# kata itu dipakai ulang sebagai jeda di hampir semua jawaban -- satu kata
+# yang terlihat di tiap paragraf langsung menutup credibilitas tulisan.
+_AI_TELL_RE = re.compile(
+    r"\bbayangkan\b"
+    r"|\bsaya\s+akan\s+(?:membahas|menguraikan|membahaskan)\b"
+    r"|\bsebagai\s+(?:seorang\s+)?(?:AI|asisten|pembantu)\b"
+    r"|\bdalam\s+konteks\s+(?:ini|today|hari\s+ini)\s*,?\s*(?:kita|saya)\b"
+    r"|\bdi\s+dalam\s+era\s+digital\b"
+    r"|\bsalah\s+satu\s+hal\s+yang\s+(?:penting|menarik)\b"
+    r"|\btidak\s+kurang(?:an)?\s+(?:untuk\s+)?(?:membahas|menguraikan)\b"
+    r"|\bmenurut\s+penulis\b"
+    r"|\bkesimpulan\s+nya\b"
+    r"|\b(?:penting\s+untuk\s+)?dicatat\s+bahwa\b",
+    re.IGNORECASE,
+)
+
+# Sisa kerangka kerja skill `humanizer` yang bocor ke jawaban. Skill itu punya
+# dua mode; mode "pasted" mengembalikan draft mentah beserta daftar pola yang
+# masih tersisa. Kalau isinya tidak dibuang utuh, "Draft:", "**Before:**", dan
+# daftar "Remaining patterns" ikut masuk ke dokumen dan langsung kelihatan.
+_HUMANIZER_SCAFFOLD_RE = re.compile(
+    r"^\s*(?:draft|before|after)\s*:"
+    r"|\*\*\s*(?:before|after)\s*\*\*"
+    r"|remaining\s+patterns?"
+    r"|^\s*-\s*\|\s*\^?(?:AI|pattern)\s+phrase",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Kata kerja orang pertama yang harus muncul. Tanpa ini jawaban bisa lolos
+# seluruh gate lain dan tetap impersonal: evidence-nya ada di keluaran lama,
+# `jawaban_diskusi_4.md` punya 1365 kata dan nol kemunculan "saya".
+_SAYA_RE = re.compile(r"\bsaya\b", re.IGNORECASE)
+
+# Entri referensi boleh menyebut ISBN, jumlah halaman, atau catatan penerbit
+# hanya kalau ia berasal dari katalog resmi UT. Untuk sumber lain, metadata
+# seperti itu tidak bisa dicek dan sering dikarang model.
+_METADATA_KATALOG_RE = re.compile(r"\bISBN\b|\b\d{1,4}\s*hlm\.?\b", re.IGNORECASE)
+_URL_UT_RE = re.compile(r"https?://\S*\.?ut\.ac\.id", re.IGNORECASE)
+
+
+def _tahun_dalam_referensi(entri: str) -> int | None:
+    """Tahun terbit dari satu entri referensi, atau None kalau tidak ada.
+
+    Yang dibaca pertama kali adalah tahun di dalam kurung -- `Suprapto. (2025).`
+    -- karena itu satu-satunya tahun yang pasti menunjuk tanggal terbit.
+    Tahun empat digit lain di entri (mis. dalam judul atau catatan penerbit)
+    bisa apa saja, jadi tidak dipakai.
+    """
+    dalam_kurung = re.search(r"\((?:[^()]{0,40}?)\b(1[5-9]\d{2}|20\d{2}|21\d{2})\b", entri)
+    if dalam_kurung:
+        return int(dalam_kurung.group(1))
+    return None
+
+
+def _entri_referensi(tail: str) -> list[str]:
+    """Daftar entri dari isi bagian 'Daftar Pustaka'.
+
+    Tiga bentuk diterima, karena tiga hal menulis Daftar Pustaka di pipeline ini:
+    pipeline sendiri (satu baris polos), agen `pencari-pustaka` (satu baris polos),
+    dan jawaban versi lama (nomor atau bullet di depan). Bentuk polos harus
+    tetap diterima -- kalau tidak, Daftar Pustaka yang justru paling sesuai
+    aturan APA 7 akan dianggap kosong dan item ditolak.
+
+    Yang bukan entri: heading, baris kosong, baris placeholder
+    'TIDAK ADA REFERENSI YANG TERVERIFIKASI', dan baris yang jelas kerangka
+    kerja (lihat `_HUMANIZER_SCAFFOLD_RE`).
+
+    Placeholder harus dibuang di sini, bukan nanti. Kalau ia ikut terhitung
+    sebagai entri, pemanggil sekaligus melihat "ada entri" dan "ada
+    placeholder", lalu menyimpulkan agen menulis keduanya padahal tidak --
+    padahal satu-satunya isi Daftar Pustaka itu placeholder-nya sendiri.
+    """
+    entries: list[str] = []
+    for raw in (tail or "").splitlines():
+        baris = raw.strip()
+        if not baris or baris.startswith("#"):
+            continue
+        if _HUMANIZER_SCAFFOLD_RE.match(baris):
+            continue
+        # Buang penanda markdown di depan entri: bullet, nomor, atau bold.
+        baris = re.sub(r"^(?:[-*+]|\[?\d+\]?[.)]?)\s+", "", baris)
+        baris = baris.strip("*_ ").strip()
+        if not baris or _NO_REFERENSI_RE.search(baris):
+            continue
+        entries.append(baris)
+    return entries
+
+
+def _cek_entri_referensi(entries: list[str]) -> list[str]:
+    """Periksa entri Daftar Pustaka: boleh dari mana, dan harus bisa dicek.
+
+    Dua aturan yang ditegakkan di sini. Pertama, rujukan yang dicari sendiri
+    harus masuk 10 tahun terakhir -- dua entri dalam jawaban produksi yang lalu
+    berasal dari luar sesi sama sekali (1966 dan 2010), dan itu terlihat langsung
+    oleh dosen. Kedua, ISBN dan jumlah halaman hanya boleh muncul pada entri
+    katalog resmi UT, karena di luar itu metadata seperti itu tidak bisa diperiksa
+    dan justru sering dikarang model.
+    """
+    issues: list[str] = []
+    tahun_min = _tahun_min_referensi()
+    terlalu_lama: list[str] = []
+    metadata_ngarang: list[str] = []
+
+    for entri in entries:
+        # Entri katalog UT: pipeline menuliskannya langsung dari halaman
+        # pustaka.ut.ac.id, jadi isinya terverifikasi dan exempt dari batas
+        # tahun -- bahan ajar yang ditunjuk tutor memang boleh tua.
+        dari_katalog_ut = bool(_URL_UT_RE.search(entri))
+        tahun = _tahun_dalam_referensi(entri)
+        if (
+            not dari_katalog_ut
+            and tahun is not None
+            and tahun < tahun_min
+        ):
+            terlalu_lama.append(f"{entri[:60]} (tahun {tahun})")
+        if not dari_katalog_ut and _METADATA_KATALOG_RE.search(entri):
+            metadata_ngarang.append(entri[:60])
+
+    if terlalu_lama:
+        issues.append(
+            f"referensi di luar batas {Config.TUTON_PUSTAKA_TAHUN_MAX} tahun "
+            f"terakhir: {'; '.join(terlalu_lama[:2])}"
+        )
+    if metadata_ngarang:
+        issues.append(
+            "referensi non-katalog UT menyebut ISBN/jumlah halaman yang tidak "
+            f"bisa diverifikasi: {'; '.join(metadata_ngarang[:2])}"
+        )
+    return issues
+
+
 def answer_quality_issues(text: str) -> list[str]:
-    """Deteksi jawaban yang korup/tidak lengkap sebelum masuk ke docx.
+    """Deteksi jawaban yang korup, tidak lengkap, atau terdengar seperti model.
 
     Mengembalikan daftar masalah (kosong = jawaban lolos). Ini pagar terhadap
-    dua kegagalan yang pernah terjadi: agent menulis jawaban berisi fragmen
-    karakter acak setelah beberapa kali edit, dan jawaban tanpa Daftar Pustaka
-    padahal sitasi adalah bagian wajib.
+    kegagalan yang pernah terjadi: karakter korup setelah beberapa kali edit,
+    jawaban tanpa Daftar Pustaka padahal sitasi bagian wajib, jawaban yang
+    berbahasa orang ketiga padahal harus ditulis sebagai "saya", dan referensi
+    yang mengarang ISBN atau terlalu lama untuk dipakai.
     """
     issues: list[str] = []
     body = (text or "").strip()
@@ -858,11 +1375,7 @@ def answer_quality_issues(text: str) -> list[str]:
             r"^#+\s*daftar\s+pustaka", body, maxsplit=1,
             flags=re.IGNORECASE | re.MULTILINE,
         )[-1]
-        refs = [
-            ln for ln in tail.splitlines()
-            if re.match(r"\s*(?:\[?\d+\]?[-.)]?|\*)\s+\S", ln)
-            and not re.match(r"\s*#+\s", ln)
-        ]
+        refs = _entri_referensi(tail)
         # Placeholder "TIDAK ADA REFERENSI YANG TERVERIFIKASI" adalah jawaban
         # yang jujur, bukan kegagalan. Prompt (generator/prompt.py) menyuruh
         # agent menulis baris itu persis ketika tahap `pencari-pustaka` gagal
@@ -894,12 +1407,90 @@ def answer_quality_issues(text: str) -> list[str]:
                 f"Daftar Pustaka berisi {len(refs)} entri, "
                 f"melebihi batas {Config.TUTON_MAX_PUSTAKA}"
             )
+        else:
+            issues.extend(_cek_entri_referensi(refs))
 
     jawab = re.search(r"^#+\s*jawab", body, re.IGNORECASE | re.MULTILINE)
     isi = body[jawab.end():] if jawab else body
     if len(isi.strip()) < 120:
         issues.append("isi jawaban terlalu pendek (<120 karakter)")
+
+    # Bahasa orang pertama. Ini yang paling sering hilang tanpa kelihatan: jawaban
+    # boleh lengkap, referensinya boleh sah, tapi tetap impersonal karena ditulis
+    # sebagai laporan. Yang diminta tutor adalah tulisan mahasiswa, jadi "saya"
+    # wajib muncul.
+    if len(isi.split()) >= 40 and not _SAYA_RE.search(isi):
+        issues.append('tidak ada kata "saya" (jawaban harus ditulis orang pertama)')
+
+    tell = _AI_TELL_RE.search(body)
+    if tell:
+        issues.append(f'berbahasa model: memakai frasa "{tell.group(0).strip()}"')
+    scaffold = _HUMANIZER_SCAFFOLD_RE.search(body)
+    if scaffold:
+        issues.append(
+            f'bocor kerangka humanizer: "{scaffold.group(0).strip()[:40]}"'
+        )
+
+    # Menyalin jawaban orang lain. Ini bukan rapa, ini kegagalan tugas: isi
+    # yang diambil dari balasan mahasiswa lain berarti tugas ini tidak dikerjakan
+    # sama sekali. Gate menangkap dua sisi yang berbeda.
+    #
+    # Sisi pertama dan paling penting adalah kesaksian yang benar-benar ada di
+    # teks ("seperti yang ditulis mahasiswa lain", "disalin dari forum"). Kalau
+    # kalimat seperti ini lolos ke berkas yang diserahkan, pengajar langsung
+    # tahu sumbernya -- dan plaintext-nya jadi bukti sendiri.
+    #
+    # Sisi kedua adalah kalimat yang terlalu rapi untuk ditulis sendiri: anak
+    # kosakata seragam, kalimat lengkap, tanpa satu pun kata ganti orang
+    # pertama. Itu ciri teks yang diambil dari dokumen lain, bukan ditulis sambil
+    # mengerjakan. Syaratnya sengaja dibuat ketat supaya teks yang benar-benar
+    # ditulis dengan "saya" tidak ikut tertangkap.
+    curang = _ORANG_LAIN_RE.search(isi)
+    if curang:
+        issues.append(
+            "menyebut atau memakai jawaban orang lain: "
+            f'"{curang.group(0).strip()}"'
+        )
+    elif _terlalu_rapi(isi):
+        issues.append(
+            "teks terlalu serapi dan tanpa kata ganti orang pertama; "
+            "kemungkinan bukan ditulis sendiri"
+        )
     return issues
+
+
+# Kata ganti orang pertama. "Saya" adalah kata yang harus muncul kalau teks itu
+# ditulis sendiri; ketidakhadirannya pada teks panjang yang rapi adalah tanda
+# teks itu diambil dari sumber lain.
+_KORBAN_RE = re.compile(r"\b(saya|aku|gua|kami|kita)\b", re.IGNORECASE)
+
+
+def _terlalu_rapi(isi: str) -> bool:
+    """Deteksi teks yang terlalu rapi untuk hasil kerja sendiri.
+
+    Syaratnya sengaja dibuat pendek dan kasar, karena ini alat bantu keputusan,
+    bukan pembuktian. Yang dipancing bukan "teks bagus", melainkan "teks yang
+    tidak mungkin ditulis orang yang sedang mengerjakan tugas": kalimat lengkap
+    semua, rata, tanpa satu pun kata ganti orang pertama, dalam jawaban yang
+    panjang.
+
+    Dua ambang, keduanya harus terpenuhi:
+
+    - panjang: di bawah 120 kata, teks terlalu pendek untuk penilaian ini.
+    - serapi: minimal 8 kalimat yang masing-masing punya isi, dan nol kata ganti
+      orang pertama di seluruh teks.
+
+    Verifikasi: jawaban yang dikerjakan sendiri hampir selalu memakai "saya" atau
+    "kita" -- itu diminta aturan orang pertama, dan teks yang tidak memakainya
+    sudah ditolak `_SAYA_RE` di atas. Jadi sinyal ini praktis tidak pernah
+    menyalakan gate pada teks yang benar-benar dikerjakan.
+    """
+    if len(isi.split()) < 120:
+        return False
+    if _KORBAN_RE.search(isi):
+        return False
+    kalimat = [k for k in re.split(r"[.!?]\s+", isi.strip()) if len(k.split()) >= 4]
+    return len(kalimat) >= 8
 
 
 def _fail_item(record: Prefetched, key: str, reason: str) -> None:
@@ -945,6 +1536,51 @@ def _is_rate_limit(text: str) -> bool:
     return bool(_RATE_LIMIT_RE.search(text or ""))
 
 
+class DihentikanUser(RuntimeError):
+    """Pengguna menekan Stop; pipeline harus berhenti, bukan mencoba lagi.
+
+    Dipisah dari `TimeoutError` karena akibatnya berbeda. Timeout = "item ini
+    gagal, coba lagi" -- masuk ke antrean retry lalu `state.json` boleh ditulis
+    `failed`. Stop = "berhenti sekarang" -- retry harus dilewati, dan item
+    yang belum selesai TIDAK boleh ditandai `failed`, karena itu akan membuat
+    run berikutnya mengulang pekerjaan yang memang tidak sempat jalan.
+
+    Tanpa pemisahan ini, satu klik Stop cukup untuk mengisi `state.json` dengan
+    `failed` untuk tiap item yang sedang jalan -- persis kondisi yang membuat
+    pengguna mengira pipeline "rusak sendiri".
+    """
+
+
+def _stop_diminta() -> bool:
+    """True kalau pengguna meminta stop (sinyal dari server atau Ctrl-C)."""
+    return opencode_runner.stop_requested()
+
+
+def _pasang_handler_stop() -> None:
+    """Ubah sinyal SIGTERM/SIGINT jadi berhenti bersih, bukan keluar diam-diam.
+
+    Server memanggil proses ini lewat SIGTERM saat tombol Stop ditekan. Tanpa
+    handler, SIGTERM langsung membunuh proses di tengah jalan: worker
+    `opencode` yang sedang jalan menjadi anak yatim yang tidak tercatat, dan
+    buffer log item hilang tanpa sempat dicetak.
+    """
+    def _tangan(signum, _frame):
+        log(f"\n! stop diminta (sinyal {signum}). Menghentikan semua sesi...")
+        opencode_runner.request_stop()
+
+    for nama in ("SIGTERM", "SIGINT", "SIGBREAK"):
+        sig = getattr(signal, nama, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _tangan)
+        except (OSError, ValueError):
+            # Bukan thread utama (mis. di dalam pool), atau sinyal tidak
+            # didukung di OS ini. Tidak apa-apa: `server.py` tetap mematikan
+            # proses lewat grup proses.
+            pass
+
+
 def _run_agent(
     record: Prefetched,
     key: str,
@@ -962,20 +1598,43 @@ def _run_agent(
     started_at = now_stamp()
     started_mono = time.monotonic()
     jawaban_path.unlink(missing_ok=True)
+    # Sisa draf dari versi lama dibersihkan di sini. Prompt sekarang menyuruh
+    # agent me-humanize berkas jawaban itu sendiri, tapi `draf_jawaban.md`
+    # dari run sebelumnya akan tetap tertinggal dan ikut terbawa ke folder yang
+    # dikirim ke tutor.
+    for sisa_draf in jawaban_path.parent.glob("draf_*.md"):
+        try:
+            sisa_draf.unlink()
+        except OSError:
+            pass
 
     retries = max(1, Config.TUTON_RETRIES)
     rate_limited = False
     result = None
     issues: list[str] = []
+    # Catatan hasil gate untuk percobaan berikutnya. Versi lama menulis catatan
+    # ini ke dalam berkas jawaban lalu langsung menghapus berkasnya -- jadi
+    # namanya frasa yang salah, tapi agennya tidak pernah membacanya, dan
+    # percobaan kedua mengulang kesalahan yang sama dengan kalimat yang sama.
+    catatan = ""
     for attempt in range(1, retries + 1):
+        # Cek stop SEBELUM percobaan baru dimulai. Kalau stop terjadi saat
+        # `time.sleep(5)` atau `time.sleep(wait)` di bawah, percobaan berikut
+        # akan berjalan utuh padahal user sudah minta berhenti.
+        if _stop_diminta():
+            log("dihentikan sebelum percobaan berikutnya dimulai.")
+            raise DihentikanUser("stop diminta")
         try:
             log(f"→ opencode run ... (percobaan {attempt}/{retries})")
             result = run_opencode(
-                prompt,
+                prompt + catatan,
                 agent="tuton",
                 model=writer_model() or None,
                 timeout=Config.TUTON_TIMEOUT,
             )
+        except opencode_runner.RunStopped as exc:
+            log(f"dihentikan: {exc}")
+            raise DihentikanUser(str(exc)) from exc
         except TimeoutError:
             log(f"! opencode timeout di percobaan {attempt}/{retries}")
             continue
@@ -1012,16 +1671,17 @@ def _run_agent(
         )
         if attempt < retries:
             # Beri tahu agent apa yang salah supaya tidak mengulang kesalahan.
-            try:
-                existing = jawaban_path.read_text(encoding="utf-8", errors="replace")
-                jawaban_path.write_text(
-                    f"> PERHATIAN: versi sebelumnya bermasalah ({'; '.join(issues)}). "
-                    "Tulis ulang seluruh jawaban dari awal; jangan melakukan edit "
-                    "parsial pada teks yang sudah rusak.\n\n" + existing,
-                    encoding="utf-8",
-                )
-            except OSError:
-                pass
+            # Catatan masuk ke PROMPT, bukan ke berkas jawaban: berkas jawaban
+            # ditulis ulang dari nol pada percobaan berikutnya, jadi catatan
+            # yang disimpan di sana ikut terhapus sebelum sempat dibaca.
+            catatan = (
+                "\n\n---\n\nPERHATIAN, versi sebelumnya ditolak karena:\n"
+                + "\n".join(f"- {masalah}" for masalah in issues)
+                + "\n\nTulis ulang seluruh jawaban dari awal, bukan edit parsial. "
+                "Perbaiki setiap masalah di atas secara harfiah: kalau yang "
+                "disebut adalah frasa yang dilarang, frasa itu harus hilang dari "
+                "teks, bukan hanya dijelaskan ulang.\n"
+            )
             jawaban_path.unlink(missing_ok=True)
     else:
         # `rate_limited` hanya relevan kalau jawaban memang tidak pernah
@@ -1057,6 +1717,54 @@ def _run_agent(
     )
 
 
+def _kode_matkul_item(record: Prefetched) -> str:
+    """Kode mata kuliah item ini, dari mana pun yang menyebutnya.
+
+    Urutan sumber: transkrip lampiran soal, lalu peta sesi, lalu teks Reader.
+    Yang pertama dipilih karena transkrip lampiran soal hampir selalu memuat
+    header dokumen resmi UT yang mencantumkan kodenya.
+    """
+    for teks in (
+        "\n".join((record.transcripts or {}).values()),
+        record.petak_text or "",
+        source_note(record),
+        _teks_referensi_item(record),
+    ):
+        kode = bahan_ajar.find_kode_matkul(teks)
+        if kode:
+            return kode
+    # Terakhir: kode mungkin sudah ada di nama folder/nama course.
+    for sumber in (record.course.name, record.course.folder_name):
+        kode = bahan_ajar.find_kode_matkul(sumber)
+        if kode:
+            return kode
+    return ""
+
+
+def source_note(record: Prefetched) -> str:
+    """Teks sumber Reader milik item ini, kalau sudah diambil."""
+    source = record.source
+    return (getattr(source, "soal_text", "") or "") if source else ""
+
+
+def _teks_referensi_item(record: Prefetched) -> str:
+    """Isi berkas referensi item ini, atau string kosong.
+
+    Dipakai sebagai sumber terakhir untuk kode mata kuliah. Buku ajar resmi
+    selalu mencantumkan kodenya di judul (`Aljabar Linear Elementer 2
+    (MATA4113)`), dan di Diskusi UT kode itu sering TIDAK muncul di halaman
+    sesi maupun di nama course Moodle -- satu-satunya tempat ia muncul resmi
+    adalah katalog, yang dibaca agen saat menyusun Daftar Pustaka.
+    """
+    path = record.referensi
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def _write_docx(
     record: Prefetched,
     key: str,
@@ -1080,6 +1788,10 @@ def _write_docx(
         "semester": Config.SEMESTER,
         "ut_daerah": Config.UT_DAERAH,
         "matkul": record.course.name,
+        # Nama course di Moodle tidak memuat kode ("Aljabar Linear Elementer 95"),
+        # sedangkan kode ada di isi lampiran ("STMA4113"). Ambil dari sana supaya
+        # judul dokumen jadi "Diskusi 4 - Aljabar Linear Elementer 95 (STMA4113)".
+        "matkul_kode": _kode_matkul_item(record),
         "kind_label": "Diskusi" if record.kind == "diskusi" else "Tugas",
         "display_index": record.index,
         "file_base": (
@@ -1087,13 +1799,29 @@ def _write_docx(
             f"{'Diskusi' if record.kind == 'diskusi' else 'Tugas'}{record.index}"
         ),
     }
+    # Soal untuk .docx. Dua sumber, sesuai bentuk aslinya:
+    #   - `soal_text` dari Reader untuk soal yang berupa teks;
+    #   - `gambar_soal` (lampiran gambar yang lolos klasifikasi) untuk soal
+    #     yang berupa screenshot -- dan itu yang terjadi di Diskusi UT, di mana
+    #     halaman forum cuma berisi instruksi umum dan soalnya ada di gambar.
+    # Kalau teks Reader-nya cuma kalimat pengantar, transkripsi lampiran dipakai
+    # sebagai ganti supaya bagian Soal tidak kosong.
+    soal_teks = (source.soal_text if source else "") or ""
+    if not record.gambar_soal and len(_soal_bersih(soal_teks)) < 120:
+        transkrip_soal = "\n\n".join(
+            teks for nama, teks in (record.transcripts or {}).items()
+        )
+        if transkrip_soal.strip():
+            soal_teks = transkrip_soal
     try:
         _, doc_path = save_doc(
             jawaban_md=jawaban_md,
-            soal_text=(source.soal_text if source else ""),
+            soal_text=soal_teks,
             meta=meta,
             out_dir=out_dir,
             template=record.template,
+            include_soal=True,
+            gambar_soal=list(record.gambar_soal),
         )
     except Exception as exc:  # noqa: BLE001
         log(f"✗ gagal membuat docx: {type(exc).__name__}: {exc}")
@@ -1115,6 +1843,7 @@ def _write_docx(
             "duration_sec": round(time.monotonic() - started_mono, 1),
             "urls": [link.url for link in source.ok_links] if source else [],
             "outputs": [str(doc_path), str(jawaban_path)],
+            "version": state.OUTPUT_VERSION,
         },
     )
     log(f"⏱ {started_at} → {finished_at}")
@@ -1141,7 +1870,31 @@ def _process_record(record: Prefetched, *, force: bool, mode: str) -> bool:
         raise SoalNotFound(reason)
 
     lamp_dir = record.out_dir / "lampiran"
-    lampiran = [p.name for p in sorted(lamp_dir.glob("*")) if p.is_file()] if lamp_dir.exists() else []
+    # Lampiran dinormalisasi ke `Path` sekali di sini. Datanya datang dari
+    # beberapa tempat (downloader, jalur file, pemanggilan manual) dan salah
+    # satu bisa memberi string; setelah itu semua pemakai cukup `.name`,
+    # `.stem`, `.suffix` tanpa perlu memastikan tipenya.
+    record.attachments = [Path(p) for p in record.attachments]
+    # Lampiran mahasiswa lain DISEBARKAN dari daftar yang dilihat agent. Daftar
+    # lampiran bukan sekadar informasi: agent yang punya tool `read` bisa
+    # membukanya sendiri, jadi disebut berarti عامًا. Dari run sungguhan, agent
+    # membaca PDF jawaban mahasiswa lalu mengikuti isinya.
+    nama_mahasiswa = {nama for nama, _ in record.lampiran_mahasiswa}
+    # `transcripts` sudah peta {nama_berkas: teks}, jadi kuncinya langsung
+    # berupa nama -- bukan objek Path.
+    transkrip = set(record.transcripts or {})
+    lampiran = (
+        [
+            p.name
+            for p in sorted(lamp_dir.glob("*"))
+            if p.is_file()
+            and p.name not in nama_mahasiswa
+            and not p.name.startswith("transkrip_")
+            and p.name not in transkrip
+        ]
+        if lamp_dir.exists()
+        else []
+    )
     soal_urls = source.reader_urls()
     if not soal_urls:
         reason = "URL sumber tidak bisa disajikan ke agent"
@@ -1150,7 +1903,11 @@ def _process_record(record: Prefetched, *, force: bool, mode: str) -> bool:
         raise SoalNotFound(reason)
 
     jawaban_path = record.out_dir / f"jawaban_{record.kind}_{record.index}.md"
-    attachments = [str(p) for p in record.attachments]
+    # Sama seperti `lampiran` di atas: lampiran mahasiswa lain tidak boleh
+    # disebut sebagai bahan bacaan.
+    attachments = [
+        str(p) for p in record.attachments if p.name not in nama_mahasiswa
+    ]
     can_read_files = _agent_can_read_files()
     if mode == "url":
         # Peta soal dan daftar referensi datang dari tahap sebelumnya. Kalau
@@ -1343,18 +2100,46 @@ def _process_course(
     workers = max(1, min(jobs_workers, len(records)))
     log(f"  · mengerjakan {len(records)} item dengan {workers} worker...")
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="solve") as pool:
+        # Item yang belum dimulai dibatalkan, bukan dijalankan lalu dihentikan
+        # di tengah jalan. Tanpa ini, satu klik Stop tetap membayar token untuk
+        # seluruh antrean yang belum sempat dimulai.
         futures = [
             pool.submit(_safe_process, record, force=force, mode=mode)
             for record in records
         ]
-        for future in as_completed(futures):
-            try:
-                if future.result():
-                    worked += 1
-                else:
+        try:
+            for future in as_completed(futures):
+                try:
+                    if future.result():
+                        worked += 1
+                    else:
+                        skipped += 1
+                except Exception:  # noqa: BLE001 - _safe_process sudah menangani
                     skipped += 1
-            except Exception:  # noqa: BLE001 - _safe_process sudah menangani
-                skipped += 1
+        except KeyboardInterrupt:
+            opencode_runner.request_stop()
+            for future in futures:
+                future.cancel()
+            log("\n! stop diminta: membatalkan item yang belum mulai.")
+        if _stop_diminta():
+            # `as_completed` sudah berhenti, tapi future yang tidak batal masih
+            # bisa punya worker aktif. Tunggu sampai semua worker keluar supaya
+            # tidak ada `opencode run` yang menulis setelah pipeline ditutup.
+            for future in futures:
+                future.cancel()
+                try:
+                    future.result(timeout=Config.TUTON_TIMEOUT + 30)
+                except Exception:  # noqa: BLE001 - hanya untuk menunggu keluar
+                    pass
+
+    if _stop_diminta():
+        log(
+            f"\nBerhenti karena permintaan pengguna. {worked} item sudah selesai "
+            "sebelum stop; sisakan `pending` supaya run berikutnya melanjutkan, "
+            "bukan mengulang dari awal."
+        )
+        return worked
+
     log(f"\nSelesai. {worked} item jadi untuk {course.name}"
         + (f", {skipped} dilewati/gagal." if skipped else "."))
     return worked
@@ -1379,10 +2164,23 @@ def _safe_process(record: Prefetched, *, force: bool, mode: str) -> bool:
     ok = False
     try:
         ok = _process_record(record, force=force, mode=mode)
+    except DihentikanUser as exc:
+        # Jangan tulis `failed`: item ini belum selesai, dan ditandai begitu
+        # akan membuatnya terulang dari nol pada run berikutnya -- persis
+        # pekerjaan yang tidak pernah sempat selesai.
+        log(f"dihentikan: {exc}")
+        ok = False
     except SoalNotFound as exc:
         log(f"dilewati: {exc}")
     except Exception as exc:  # noqa: BLE001 - satu item tidak boleh mematikan batch
         log(f"error tak terduga: {type(exc).__name__}: {exc}")
+        if os.environ.get("TUTON_DEBUG_TRACEBACK"):
+            # Traceback penuh hanya atas permintaan. Jenis galat saja sering
+            # tidak cukup: `AttributeError: 'str' object has no attribute
+            # 'name'` tidak_memberi tahu pemanggil mana yang salah.
+            import traceback
+
+            log(traceback.format_exc())
         state.set_item(
             f"{record.course.id}:{record.item.mod_type}:{record.item.id}",
             {
@@ -1407,6 +2205,12 @@ def _safe_process(record: Prefetched, *, force: bool, mode: str) -> bool:
 
 def cmd_run(args):
     Config.require()
+    # Handler stop dipasang sebelum apa pun yang mungkin berjalan lama, supaya
+    # SIGTERM dari server (tombol Stop) dan Ctrl-C punya akibat yang sama.
+    _pasang_handler_stop()
+    # Run sebelumnya di proses yang sama bisa meninggalkan tanda stop; kalau
+    # tidak dihapus, item pertama akan langsung berhenti.
+    opencode_runner.clear_stop()
     session = MoodleSession()
     session.check_login()
     scraper = CourseScraper(session)
@@ -1447,6 +2251,8 @@ def cmd_run(args):
 def cmd_solve(args):
     """Kerjakan soal dari form (teks manual / file upload) tanpa scrape otomatis."""
     Config.require()
+    _pasang_handler_stop()
+    opencode_runner.clear_stop()
     session = MoodleSession()
     session.check_login()
     scraper = CourseScraper(session)

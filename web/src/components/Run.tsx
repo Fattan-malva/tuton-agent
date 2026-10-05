@@ -72,6 +72,16 @@ export default function Run({ courses, onRefresh, onNotify, terminal }: RunProps
         return;
       }
       terminal.onStopRequested();
+      // Angkanya ditampilkan karena "Stop" yang tidak mematikan semua
+      // prosesnya adalah kegagalan yang tidak terlihat: log berhenti, tapi
+      // sesi agent masih berjalan di belakang layar.
+      const killed = response.killed ?? 0;
+      onNotify(
+        killed > 0
+          ? `${response.message || 'Semua proses dihentikan.'} (${killed} proses)`
+          : response.message || 'Semua proses dihentikan.',
+        'warning',
+      );
     } catch (caught) {
       onNotify(caught instanceof Error ? caught.message : 'Gagal menghentikan run.', 'error');
     }

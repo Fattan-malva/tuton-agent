@@ -16,6 +16,7 @@ import type {
   Section,
   SectionsResponse,
   StatusResponse,
+  ResetResponse,
   StopResponse,
 } from './types';
 
@@ -227,6 +228,13 @@ export const apiClient = {
 
   stopRun(): Promise<StopResponse> {
     return envelope('/api/run/stop', { method: 'POST' });
+  },
+
+  resetResults(keepCache = false): Promise<ResetResponse> {
+    return envelope('/api/results/reset', {
+      method: 'POST',
+      body: JSON.stringify({ keep_cache: keepCache }),
+    });
   },
 };
 

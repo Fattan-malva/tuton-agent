@@ -9,13 +9,22 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Cm, Pt
+from docx.shared import Cm, Pt, RGBColor
 
 # Placeholder "tidak ada referensi yang terverifikasi" (lihat main.py). Bukan
 # entri daftar pustaka, jadi docx merendernya berbeda dari butir bersitasi.
 _NO_REFERENSI_RE = re.compile(
     r"tidak\s+ada\s+referensi\s+yang\s+terverifikasi", re.IGNORECASE
 )
+
+# Hanging indent APA 7, dalam twentieths of a point (unit yang dipakai OOXML).
+# 720 = 720/1440 inci = 0,5 inci, persis angka yang diminta APA 7.
+_APA_HANGING_TWIP = 720
+
+# Ukuran judul "Daftar Pustaka". Di template penanda ini bukan heading, tapi
+# `Normal` bold TNR 14. Dicocokkan di sini supaya bagian yang paling dilihat
+# tutor tampil sama persis dengan contoh.
+_REFERENSI_JUDUK_PT = 14
 
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
@@ -433,9 +442,19 @@ def _parse_latex_math(s: str) -> list[str]:
             i += 1
             continue
 
-        # ASCII arrows & relations → Unicode (jika AI menulis `A -> B`)
-        _ASCII_REPLS = (("<=>", "⟺"), ("<->", "↔"), ("->", "→"), ("<-", "←"),
-                        ("=>", "⇒"), ("<=", "⇐"), (">=", "≥"), ("!=", "≠"))
+        # ASCII arrows & relations → Unicode (jika AI menulis `A -> B`).
+        #
+        # URUTAN WAJIB: yang paling panjang dulu. Versi lama menaruh `<=` setelah
+        # `<-`/`->`, dan `<-` memang tidak menabrak `<=`... tapi `<=` sendiri
+        # dipetakan ke `⇐`, bukan `≤`. Hasilnya `a <= b` tampil sebagai
+        # "a ⇐ b", yang lebih buruk daripada teks mentahnya: terlihat seperti
+        # operator yang berbeda, dan pengajar bisa salah baca.
+        _ASCII_REPLS = (
+            ("<=>", "⟺"), ("<->", "↔"), ("->>", "⟶"), ("-->>", "⟶"),
+            ("-->", "⟶"), ("<--", "⟵"), ("<<-", "⟵"), ("->", "→"), ("<-", "←"),
+            ("=>", "⇒"), ("<=", "≤"), (">=", "≥"), ("!=", "≠"), ("<>", "≠"),
+            ("|-", "∣"), ("|=", "≡"),
+        )
         matched = None
         for ascii_seq, uni in _ASCII_REPLS:
             if s.startswith(ascii_seq, i):
@@ -475,11 +494,25 @@ def _parse_latex_matrix(content: str, env: str) -> str:
 
 
 def _equation_omml(math_str: str) -> str:
-    content = "".join(_parse_latex_math(math_str)) or _omml_run("")
+    content = "".join(_parse_latex_math(math_str))
     return f'<m:oMath xmlns:m="{_MATH_NS}">{content}</m:oMath>'
 
 
 def _append_equation(paragraph, math_str: str):
+    """Tempel satu Word equation (OMML) ke paragraf.
+
+    Kalau tidak ada yang bisa di-parse, JANGAN tempel apa pun. Sebelumnya
+    jalur ini selalu menempel `<m:oMath><m:r><m:t/></m:r></m:oMath>` untuk
+    input kosong, dan itu muncul sebagai baris kosong di Word -- tepat di
+    sebelah teks yang sebenarnya sudah tercetak. Gejalanya: di preview terlihat
+    "-", lalu di Word ada satu baris kosong tambahan setelah tiap blok matematika.
+    """
+    if not (math_str or "").strip():
+        return
+    if not _parse_latex_math(math_str):
+        # Tidak ada satu pun simpul: lebih baik teks biasa daripada kotak kosong.
+        _add_runs(paragraph, math_str.strip())
+        return
     try:
         from lxml import etree
 
@@ -540,6 +573,12 @@ def _add_italic_plain(paragraph, text: str):
 
 
 def _add_italic_plain_runs(paragraph, text: str):
+    # Tanda perbandingan ASCII di prosa --> lambang yang benar. Tanpa ini
+    # "a <= b" dan "a <> b" tercetak apa adanya. Di Times New Roman `<=`
+    # terbaca seperti dua tanda yang berdempet, bukan satu operator, dan itu
+    #itulah yang dikeluhkan tutor: tandanya tidak rapi dan ambigu. Cuma teks prosa --
+    # inline code ditangani terpisah dan tidak boleh berubah.
+    text = _normalisasi_operator(text)
     pos = 0
     for m in _ITALIC_RE.finditer(text):
         if m.start() > pos:
@@ -549,6 +588,28 @@ def _add_italic_plain_runs(paragraph, text: str):
         pos = m.end()
     if pos < len(text):
         paragraph.add_run(text[pos:])
+
+
+# Pasangan tanda perbandingan ASCII --> lambang. Urutan dari yang terpanjang.
+_OPERATOR_PL = (
+    ("<=>", "⟺"), ("<->", "↔"), ("<>", "≠"), ("<=", "≤"), (">=", "≥"),
+    ("!=", "≠"), ("->", "→"), ("<-", "←"), ("=>", "⇒"),
+)
+
+
+def _normalisasi_operator(text: str) -> str:
+    """Ganti tanda perbandingan ASCII dengan lambang matematika.
+
+    Hanya untuk teks prosa. Kode inline dan blok kode tidak boleh tersentuh,
+    karena `a <= b` di dalam contoh kode memang harus tetap seperti itu.
+    """
+    if not text or ("<" not in text and ">" not in text and "!" not in text):
+        return text
+    out = text
+    for ascii_seq, uni in _OPERATOR_PL:
+        if ascii_seq in out:
+            out = out.replace(ascii_seq, uni)
+    return out
 
 
 def _strip_control_chars(text: str) -> str:
@@ -749,6 +810,11 @@ def _render_markdown(doc: Document, md: str):
     # Setelah heading Daftar Pustaka, butir bernomor adalah referensi, bukan
     # butir jawaban -- dan harus dirender berbeda (lihat blok ordered list).
     in_references = False
+    # `w:numId` daftar bernomor yang sedang berjalan. Satu daftar = satu
+    # `w:num`; di-NULL-kan setiap kali daftar selesai (lihat reset di bawah),
+    # supaya daftar berikutnya dimulai dari angka yang ditulis, bukan dari
+    # kelanjutan butir sebelumnya.
+    daftar_num_id: str | None = None
     while i < len(lines):
         line = lines[i].rstrip()
 
@@ -767,6 +833,7 @@ def _render_markdown(doc: Document, md: str):
                 i += 1
             _add_code_block(doc, "\n".join(code_lines))
             ordered_idx = 0
+            daftar_num_id = None
             continue
 
         # Inline math: convert one-line $...$ expressions to Word equations.
@@ -809,23 +876,57 @@ def _render_markdown(doc: Document, md: str):
             i = j
             continue
 
-        # Equation Word (OMML): baris yang memuat $$...$$
+        # Equation Word (OMML): blok $$...$$, boleh satu baris atau banyak baris.
+        #
+        # Bentuk banyak baris WAJIB didukung karena itu yang ditulis model:
+        # `$$` sendiri di satu baris, isi di baris-baris berikutnya, `$$` lagi
+        # di akhir. Versi lama memproses tiap baris terpisah, sehingga baris
+        # penutup `$$` menghasilkan ruas kosong -- dan ruas kosong itulah yang
+        # jadi `<m:oMath>` kosong di dokumen.
         if "$$" in line:
-            m = re.match(r"^([-*])\s+", line)
+            # Kumpulkan sampai jumlah `$$` genap. Yang dihitung TOTAL, bukan
+            # per baris: baris `a < b$$` hanya punya satu, jadi kalau yang
+            # diperiksa cuma baris terakhir, blok berikutnya ikut tersedot dan
+            # seluruh sisa dokumen berakhir jadi satu paragraf.
+            blok = [line]
+            j = i
+            n_dolar = line.count("$$")
+            while n_dolar < 2 and j + 1 < len(lines):
+                j += 1
+                blok.append(lines[j])
+                n_dolar += lines[j].count("$$")
+            # Tanpa pasangan: jangan menelan sisa dokumen. Cukup satu baris.
+            if n_dolar < 2:
+                blok = [line]
+                j = i
+            # `i = j + 1`, bukan `j`: tanpa itu baris penutup `$$` diproses
+            # lagi sebagai blok baru, dan karena penutupnya tidak punya pasangan
+            # lagi, blok itu terus berjalan sampai habis dan seluruh sisa
+            # dokumen hilang.
+            i = j + 1
+
+            m = re.match(r"^([-*])\s+", blok[0])
             style = "List Bullet" if m else None
-            base = re.sub(r"^[-*]\s+", "", line)
             p = doc.add_paragraph(style=style) if style else doc.add_paragraph()
-            parts = base.split("$$")
-            for idx, seg in enumerate(parts):
-                if idx % 2 == 0:
-                    if seg.strip():
-                        _add_runs(p, seg)
-                else:
+
+            # Baris-baris digabung dulu supaya `\begin{matrix} ... \end{matrix}`
+            # yang membentang beberapa baris tidak terpotong di batas baris.
+            # PENTING: `$$` dipakai sebagai PEMBATAS, bukan dihapus -- kalau
+            # delimiter-nya dibuang lebih dulu, seluruh isi blok jadi teks biasa
+            # dan persis tidak terjadi render sebagai Word equation.
+            gabungan = " ".join(blok)
+            bagian = gabungan.split("$$")
+            teks_di_luar = False
+            for idx, seg in enumerate(bagian):
+                if idx % 2:
                     _append_equation(p, seg)
-            if re.fullmatch(r"\$\$.*\$\$", base.strip()):
+                elif seg.strip():
+                    teks_di_luar = True
+                    _add_runs(p, seg)
+            if not teks_di_luar:
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             ordered_idx = 0
-            i += 1
+            daftar_num_id = None
             continue
 
         # Equation LaTeX telanjang (tanpa $): baris seperti
@@ -850,25 +951,61 @@ def _render_markdown(doc: Document, md: str):
             heading_text = m.group(2).strip()
             if heading_text.lower().startswith("daftar pustaka"):
                 in_references = True
+                p = doc.add_paragraph()
+                run = p.add_run(heading_text)
+                run.bold = True
+                # "Daftar Pustaka" di template BUKAN heading: `Normal` bold
+                # TNR 14, sama seperti penanda bagian lain. Memakainya sebagai
+                # Heading 2 membuatnya tampil bergaya heading -- beda dari
+                # contoh, dan ini bagian yang paling dilihat tutor.
+                try:
+                    p.style = doc.styles["Normal"]
+                except KeyError:
+                    pass
+                # Bold hitam Times New Roman, ukuran dari template. Yang lama
+                # hanya `bold` + ukuran, jadi font dan warna ikut bawaan style
+                # dan tampilan "Daftar Pustaka" tidak sama dengan judul lain.
+                _rapikan_heading(run, doc, "Normal", pt=_REFERENSI_JUDUK_PT)
+                daftar_num_id = None
+                i += 1
+                continue
             style_name = _heading_style(doc, level)
             p = doc.add_paragraph()
             run = p.add_run(heading_text)
-            run.bold = True
             if style_name != "Normal":
                 p.style = doc.styles[style_name]
+                # Ukuran diambil dari style template (bukan ditetapkan manual),
+                # jadi mengubah ukuran di template tetap ikut terbawa.
+                _rapikan_heading(run, doc, style_name)
             else:
                 # Tanpa style Heading (dokumen tanpa template), tetap beri
                 # pembedaan visual sesuai tingkatnya.
-                if level == 2:
-                    run.font.size = Pt(14)
-                elif level == 3:
-                    run.font.size = Pt(12)
+                bawaan = 14 if level == 2 else 12
+                _rapikan_heading(run, doc, "Normal", pt=bawaan)
             # Heading berlabel ("### 1. Soal Satu"): judulnya boleh di margin,
             # tapi isi di bawahnya harus rata dengan teks setelah label, bukan
             # dengan angkanya. Catat lebarnya untuk paragraf berikutnya.
             lm = _LABEL_RE.match(heading_text)
             pending_label_pt = _label_indent_pt(lm.group(0), body_font_pt) if lm else None
+            daftar_num_id = None
             i += 1
+            continue
+
+        # Daftar Pustaka: APA 7 murni. Tidak ada nomor di depan dan tidak ada bullet
+        # -- penandanya adalah urutan alfabetis. Nomor otomatis Word justru
+        # merusak di sini: ia menghitung butir jawaban yang mendahuluinya, jadi
+        # referensi bisa mulai dari angka 4 dan angka yang disebut di dalam
+        # teks tidak cocok. Nomor literal yang diketik manual juga dibuang,
+        # karena yang diminta tutor adalah Daftar Pustaka gaya APA 7 yang bersih.
+        if in_references:
+            teks = re.sub(r"^(?:[-*+]|\[?\d+\]?[.)]?)\s+", "", line).strip()
+            if not teks:
+                i += 1
+                continue
+            p = doc.add_paragraph()
+            _add_runs(p, teks)
+            i += 1
+            pending_label_pt = None
             continue
 
         # Bullet list
@@ -879,30 +1016,38 @@ def _render_markdown(doc: Document, md: str):
                 p.paragraph_format.left_indent = Cm(0) + Pt(pending_label_pt)
             i += 1
             ordered_idx = 0
+            daftar_num_id = None
             continue
 
-        # Ordered list -> penomoran asli Word ("List Number"), bukan angka
-        # yang diketik manual. Versi lama menulis "1. " sebagai run biasa, jadi
+        # Ordered list -> penomoran asli Word ("List Number"), bukan angka yang
+        # diketik manual. Versi lama menulis "1. " sebagai run biasa, jadi
         # penomoran tidak pernah menyesuaikan saat butir disisipkan di tengah,
         # dan style-nya tidak sama dengan template.
         #
-        # Pengecualian: isi Daftar Pustaka tetap angka literal + hanging indent
-        # ala APA, sesuai template. Nomor otomatis dari Word akan menghitung
-        # butir jawaban yang mendahuluinya, sehingga referensinya bisa mulai
-        # dari angka 4 -- dan yang dirujuk di dalam teks jadi tidak cocok.
+        # Satu daftar = satu `w:num`, dipasang di semua paragraf butirnya.
+        # Word menghitung per `w:num`, jadi `w:num` baru untuk tiap butir
+        # membuat setiap butir tampil sebagai "1."; Sebaliknya, satu `w:num`
+        # bersama membuat semua daftar di dokumen berbagi hitungan, sehingga
+        # butir "1." di sesi kedua bisa tampil sebagai "4."
+        #
+        # Isi Daftar Pustaka tidak pernah sampai ke sini: blok `in_references`
+        # di atas sudah mengambilnya lebih dulu.
         mo = re.match(r"^(\d+)[.)]\s+(.*)$", line)
         if mo:
             num = mo.group(1).lstrip("0") or "0"
-            if in_references:
+            try:
+                p = doc.add_paragraph(style="List Number")
+            except KeyError:
                 p = doc.add_paragraph()
                 p.add_run(f"{num}. ")
                 _add_runs(p, mo.group(2))
             else:
-                try:
-                    p = doc.add_paragraph(style="List Number")
-                except KeyError:
-                    p = doc.add_paragraph()
-                    p.add_run(f"{num}. ")
+                if daftar_num_id is None:
+                    daftar_num_id = _numbering_restart(
+                        doc.part.numbering_part.element, int(num)
+                    )
+                if daftar_num_id:
+                    _pasang_nomor(p, daftar_num_id)
                 _add_runs(p, mo.group(2))
             if pending_label_pt:
                 p.paragraph_format.left_indent = Cm(0) + Pt(pending_label_pt)
@@ -913,6 +1058,7 @@ def _render_markdown(doc: Document, md: str):
             continue
 
         ordered_idx = 0
+        daftar_num_id = None
         # Empty line → skip; blockquote → plain paragraph
         if not line.strip():
             i += 1
@@ -983,7 +1129,11 @@ def _load_base_document(template_path: Path | None):
             # font isi template tak akan pernah terdeteksi dan `Normal` akan
             # kembali ke default-nya sendiri (Arial, bukan Times New Roman).
             font_name, font_size = _template_body_font(doc)
-            _clear_body(doc)
+            if not _siapkan_lembar(doc):
+                # Bukan template format jawaban (tidak ada `Heading 2` sebagai
+                # penanda contoh). Kosongkan total supaya isinya tidak bocor ke
+                # dokumen hasil.
+                _clear_body(doc)
             return doc, True, font_name, font_size
         except Exception as exc:  # noqa: BLE001 - template tidak boleh mematikan pipeline
             print(f"  ! template tidak bisa dibaca ({Path(template_path).name}): {exc}")
@@ -1001,6 +1151,98 @@ def _load_base_document(template_path: Path | None):
     return doc, False, "Times New Roman", Pt(12)
 
 
+def _numbering_restart(numbering, mulai: int) -> str | None:
+    """Buat `w:num` yang menomori mulai dari `mulai`. Return `w:numId`.
+
+    Word menyimpan penomoran di `numbering.xml`, bukan di paragraf. Style
+    `List Number` hanya memberi arahan "pakai daftar nomor ini"; angka yang
+    muncul di layar berasal dari urutan kemunculan `w:num` itu di seluruh
+    dokumen. Akibatnya daftar kedua melanjutkan hitungan daftar pertama -- butir
+    yang ditulis "1." tampil sebagai "4.".
+
+    Solusinya bukan mengetik angka manual, karena itu mengembalikan masalah
+    lama: angka tidak ikut menyesuaikan saat butir disisipkan di tengah. Yang
+    benar adalah satu `w:num` per daftar, dengan `w:startOverride` berisi
+    angka yang diminta. Format daftar -- jenis angka, indentasi gantung, font --
+    tetap warisan template; hanya titik mulainya yang dipatah.
+
+    Panggil sekali per daftar, lalu pasang `w:numId` hasilnya di SETIAP
+    paragraf butir. Memanggil ulang untuk butir kedua memecah daftar jadi dua
+    `w:num`, dan Word menghitung per `w:num` -- hasilnya butir kedua tampil
+    sebagai "1." lagi.
+    """
+    abstract = _cari_abstract_desimal(numbering)
+    if abstract is None:
+        return None
+    return _buat_num_dengan_start(numbering, abstract, mulai)
+
+
+def _pasang_nomor(paragraf, num_id: str) -> None:
+    """Arahkan satu paragraf ke `w:num` tertentu.
+
+    `w:numPr` disisipkan tepat setelah `w:pStyle`, bukan di posisi nol. Urutan
+    anak `w:pPr` ditentukan skema OOXML, dan `numPr` yang muncul sebelum
+    `pStyle` membuat Word menolak membuka berkas.
+    """
+    pPr = paragraf._p.get_or_add_pPr()
+    lama = pPr.find(qn("w:numPr"))
+    if lama is not None:
+        pPr.remove(lama)
+    numPr = OxmlElement("w:numPr")
+    numId_el = OxmlElement("w:numId")
+    numId_el.set(qn("w:val"), num_id)
+    numPr.append(numId_el)
+    gaya = pPr.find(qn("w:pStyle"))
+    if gaya is not None:
+        gaya.addnext(numPr)
+    else:
+        pPr.insert(0, numPr)
+
+
+
+def _cari_abstract_desimal(numbering) -> str | None:
+    """`abstractNumId` pertama yang formatnya angka desimal, atau None."""
+    for abstract in numbering.findall(qn("w:abstractNum")):
+        lvl = abstract.find(qn("w:lvl"))
+        if lvl is None:
+            continue
+        fmt = lvl.find(qn("w:numFmt"))
+        if fmt is not None and fmt.get(qn("w:val")) == "decimal":
+            return abstract.get(qn("w:abstractNumId"))
+    return None
+
+
+def _buat_num_dengan_start(numbering, abstract_id: str, mulai: int) -> str:
+    """Buat `w:num` baru yang menunjuk `abstract_id` dengan `startOverride`."""
+    dipakai = [
+        int(n.get(qn("w:numId")) or 0)
+        for n in numbering.findall(qn("w:num"))
+        if (n.get(qn("w:numId")) or "").isdigit()
+    ]
+    num_id = str(max(dipakai or [0]) + 1)
+
+    num_el = OxmlElement("w:num")
+    num_el.set(qn("w:numId"), num_id)
+    ref = OxmlElement("w:abstractNumId")
+    ref.set(qn("w:val"), abstract_id)
+    num_el.append(ref)
+    override = OxmlElement("w:lvlOverride")
+    override.set(qn("w:ilvl"), "0")
+    start = OxmlElement("w:startOverride")
+    start.set(qn("w:val"), str(mulai))
+    override.append(start)
+    num_el.append(override)
+
+    # `w:num` harus ditulis setelah semua `w:abstractNum`; skema numbering.xml
+    # menolaknya kalau muncul di tengah.
+    terakhir_abstract = numbering.findall(qn("w:abstractNum"))
+    if terakhir_abstract:
+        terakhir_abstract[-1].addnext(num_el)
+    else:
+        numbering.insert(0, num_el)
+    return num_id
+
+
 def _clear_body(doc: Document) -> None:
     """Kosongkan isi dokumen, pertahankan sectPr (page setup) di akhir body.
 
@@ -1013,6 +1255,50 @@ def _clear_body(doc: Document) -> None:
         if child.tag == qn("w:sectPr"):
             continue
         body.remove(child)
+
+
+def _siapkan_lembar(doc: Document) -> bool:
+    """Bersihkan template jadi lembar jawaban kosong. True kalau berhasil.
+
+    Template `ContohFormatJawaban.docx` bukan sekadar kerangka format; isinya
+    adalah satu contoh jawaban yang sudah jadi lengkap dengan Daftar Pustaka.
+    Versi lama membuang seluruh isi (`_clear_body`) lalu membangun ulang dari
+    nol, sehingga detail yang paling menentukan tampilan -- tinggi baris, jarak
+    antarparagraf, ukuran heading, definisi tabel -- ikut hilang, dan hasilnya
+    cuma "mirip" contoh.
+
+    Yang benar adalah mengisi lembar itu: simpan judul di paling atas dan tabel
+    identitas apa adanya, lalu buang sisanya -- rubrik soal, contoh jawaban, dan
+    Daftar Pustaka contoh -- supaya yang ditulis pipeline masuk persis di tempat
+    yang seharusnya. Titik potongnya adalah `Heading 2` pertama, karena di situ
+    contoh sesi mulai.
+
+    `sectPr` di akhir body tetap utuh. Return False kalau tidak ada `Heading 2`
+    sama sekali (template lain, bukan format jawaban); pemanggil lalu jatuh ke
+    `_clear_body` supaya tetap menghasilkan dokumen yang bisa dibuka.
+    """
+    body = doc.element.body
+    potong = None
+    for child in body:
+        if child.tag != qn("w:p"):
+            continue
+        style = child.find(qn("w:pPr") + "/" + qn("w:pStyle"))
+        nilai = style.get(qn("w:val")) if style is not None else None
+        if nilai and nilai.lower().replace(" ", "") == "heading2":
+            potong = child
+            break
+    if potong is None:
+        return False
+
+    # Sisanya dibuang: dari `Heading 2` pertama sampai sebelum `sectPr`.
+    # Judul dan tabel identitas berada SEBELUM titik potong, jadi tetap utuh.
+    lewat = False
+    for child in list(body):
+        if child is potong:
+            lewat = True
+        if lewat and child.tag != qn("w:sectPr"):
+            body.remove(child)
+    return True
 
 
 def _template_body_font(doc: Document) -> tuple[str, Pt | None]:
@@ -1059,12 +1345,111 @@ def _apply_base_typography(doc: Document, font_name: str, font_size: Pt | None) 
         rf.set(qn("w:eastAsia"), font_name)
 
 
+_IDENTITAS_LABELS = {
+    "nama": "nama",
+    "nim": "nim",
+    "semester": "semester",
+    "ut daerah": "ut_daerah",
+    "program studi": "prodi",
+}
+
+
+def _ganti_teks_paragraf(paragraf, teks: str) -> None:
+    """Tulis ulang teks paragraf tanpa kehilangan format run pertamanya.
+
+    Format itu dibawa oleh run, bukan paragraf: template memberi judul
+    `Times New Roman` 18pt bold lewat run-nya. `paragraf.text = ...` akan
+    membuat python-docx menebus seluruh run dan menaruh format di paragraf,
+    sehingga tampilan berubah -- dan perubahan sekecil apa pun di template
+    akan hilang.
+    """
+    if not paragraf.runs:
+        paragraf.add_run(teks)
+        return
+    paragraf.runs[0].text = teks
+    for sisa in paragraf.runs[1:]:
+        sisa.text = ""
+
+
+def _judul_dokumen(meta: dict) -> str:
+    """`Diskusi 4 - Aljabar Linear Elementer 95 (STMA4113)`.
+
+    Nama matkul dan kodenya ikut karena berkas dari beberapa mata kuliah dikirim
+    ke tutor yang sama. Tanpa nama dan kode, tumpukan berkas itu hanya bisa
+    dicocokkan lewat isi -- dan pengajar tidak mungkin membaca isi setiap berkas.
+    Kode diambil dari isi lampiran karena nama course di Moodle tidak memuatnya.
+    """
+    bagian = f"{meta.get('kind_label', '')} {meta.get('display_index', '')}".strip()
+    matkul = str(meta.get("matkul") or "").strip()
+    kode = str(meta.get("matkul_kode") or "").strip()
+    if matkul:
+        bagian = f"{bagian} - {matkul}".strip(" -")
+    if kode:
+        bagian = f"{bagian} ({kode})"
+    return bagian
+
+
+def _isi_judul(doc: Document, meta: dict) -> bool:
+    """Isi paragraf judul yang sudah ada di template. True kalau ketemu.
+
+    Ukuran font TIDAK ditulis ulang di sini. Template yang menentukan
+    Ukuran, jadi menyalin `Pt(18)` ke kode hanya mengunci nilai sekarang:
+    begitu tutor menggeser judul jadi 16pt di template, hasil pipeline tetap
+    18pt -- persis ketidakcocokan yang harus dihindari. Yang ditulis hanya
+    teksnya; format run template dibiarkan apa adanya.
+    """
+    judul = _judul_dokumen(meta)
+    for paragraf in doc.paragraphs:
+        if paragraf.text.strip():
+            if judul:
+                _ganti_teks_paragraf(paragraf, judul)
+            return True
+    return False
+
+
+def _isi_tabel_identitas(doc: Document, meta: dict) -> bool:
+    """Isi tabel identitas yang sudah ada di template.
+
+    Dua aturan, dan keduanya soal apa yang terjadi pada baris yang `meta` tidak
+    punya nilainya.
+
+    Baris dengan nilai dari `meta` ditulis ulang: `.env` adalah sumber data
+    yang dipakai pengguna, jadi dia yang menang atas isi template.
+
+    Baris tanpa nilai dari `meta` DIHAPUS, bukan dibiarkan. Alasannya bukan
+    soal tampilan: template `ContohFormatJawaban.docx` diisi dengan identitas
+    mahasiswa yang menjadi contoh -- nama dan NIM orang sungguhan. Membiarkannya
+    berarti berkas yang diserahkan ke tutor memuat identitas orang lain, dan
+    dan itu baru ketahuan setelah berkas diserahkan. Baris yang dihapus
+    juga mencegah label menggantung seperti "Semester |" yang terlihat seperti
+    tabel gagal terisi.
+    """
+    if not doc.tables:
+        return False
+    table = doc.tables[0]
+    for row in list(table.rows):
+        sel = row.cells
+        if len(sel) < 2:
+            continue
+        kunci = _IDENTITAS_LABELS.get(sel[0].text.strip().lower().rstrip(":").strip())
+        if not kunci:
+            # Label yang tidak dikenali (mis. kolom tambahan milik pengguna)
+            # dibiarkan: bukan urusan pipeline.
+            continue
+        nilai = str(meta.get(kunci) or "").strip()
+        if not nilai:
+            table._tbl.remove(row._tr)
+            continue
+        _ganti_teks_paragraf(sel[1].paragraphs[0], nilai)
+    return True
+
+
 def _identitas_table(doc: Document, meta: dict) -> None:
     """Tabel identitas 2 kolom: label | nilai.
 
-    Mengikuti template (yang memakai `Table Grid`), bukan paragraf
-    "Nama : ..." seperti versi lama. Baris yang nilainya kosong dilewati supaya
-    field yang belum diisi di .env tidak tercetak sebagai baris kosong.
+    Dipakai hanya kalau template TIDAK punya tabel identitas (dokumen kosong
+    atau template lain). Kalau template punya, tabel itu yang dipakai --
+    lihat `_isi_tabel_identitas`.
     """
     rows = [
         ("Nama", meta.get("nama", "")),
@@ -1096,6 +1481,7 @@ def build_docx(
     out_docx: Path,
     include_soal: bool = True,
     template: Path | None = None,
+    gambar_soal: list[Path] | None = None,
 ) -> Path:
     # Sanitasi di pintu masuk: meta, soal, dan jawaban bisa memuat karakter
     # kontrol dari scraping Moodle. Run header/judul tidak lewat _normalize_text
@@ -1112,40 +1498,45 @@ def build_docx(
     if from_template:
         _apply_base_typography(doc, font_name, font_size)
 
-    # Judul: TNR 18 bold center, mengikuti template. Ukuran diambil dari style
-    # `Title` kalau ada supaya perubahan di template ikut terbawa.
-    title = f"{meta.get('kind_label', '')} {meta.get('display_index', '')}".strip()
-    tp = doc.add_paragraph()
-    tp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    tr = tp.add_run(title)
-    tr.bold = True
-    tr.font.size = Pt(18)
+    # Judul dan tabel identitas: template sudah menyediakan keduanya, jadi
+    # isinya ditulis ke tempat itu. Baris `if not ...` hanya berlaku untuk
+    # dokumen tanpa template, yang memang tidak punya apa pun untuk diisi.
+    if not _isi_judul(doc, meta):
+        # TNR 18 bold center, mengikuti template. Ukuran diambil dari style
+        # `Title` kalau ada supaya perubahan di template ikut terbawa.
+        title = _judul_dokumen(meta)
+        tp = doc.add_paragraph()
+        tp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        tr = tp.add_run(title)
+        tr.bold = True
+        tr.font.size = Pt(18)
 
-    _identitas_table(doc, meta)
+    if not _isi_tabel_identitas(doc, meta):
+        _identitas_table(doc, meta)
 
-    # Soal. Judul "Soal" hanya ditambah kalau teks soal tidak sudah punya
-    # heading sendiri -- kalau ditambah tanpa syarat, hasilnya dua "Soal"
-    # berturut-turut (satu dari kita, satu dari markdown).
+    # Soal ditulis ulang di depan jawaban. Alasannya bukan estetika: berkas
+    # yang dikumpulkan tutor harus bisa diperiksa utuh, dan tanpa soal di
+    # dalamnya pengajar tidak bisa menilai apakah jawaban menjawab yang
+    # ditanyakan.
     #
-    # `include_soal` sengaja False untuk mode url. Teks hasil scraping
-    # bring metadata Moodle apa adanya -- "Lokasi: My courses > ...", "Opened:",
-    # "Due:", "Jenis konten: tugas" -- yang tidak ada di template dan tidak
-    # ada artinya di berkas yang dikumpulkan tutor. Judul soal dan seluruh
-    # butirnya sudah ditulis ulang sendiri oleh agen di markdown jawaban,
-    # jadi merender `soal_text` hanya menghasilkan duplikat.
-    if include_soal and soal_text.strip():
-        cleaned = _clean_soal(soal_text)
-        if not re.match(r"^\s*#", cleaned):
-            sh = doc.add_paragraph(style=_heading_style(doc, 2))
-            sh.add_run("Soal")
-        _render_markdown(doc, cleaned)
+    # Dua bentuk, karena bentuk soal berbeda antara mata kuliah:
+    #   - gambar (screenshot): DISISIPKAN apa adanya. Mengetik ulang dari
+    #     transkripsi berisiko salah -- dan lebihCommerceStill, lampiran itu
+    #     adalah naskah resmi yang harus dinilai persis seperti aslinya.
+    #   - teks: ditempel apa adanya setelah metadata Moodle dibuang.
+    if include_soal:
+        _tulis_soal(doc, soal_text, gambar_soal=gambar_soal)
 
     # Jawab (dari markdown opencode)
     body = _drop_identity_echo(_answer_body(jawaban_md))
     if body.strip():
         _render_markdown(doc, body)
 
-    _apply_hanging_indent_refs(doc)
+    # Daftar Pustaka dirapikan setelah seluruh isi masuk: urutan alfabetis dan
+    # indentasi gantung baru bisa dipastikan setelah paragraf terakhir ada.
+    _urutkan_referensi_apa(doc)
+    _style_referensi_apa(doc)
+    _tandai_placeholder_referensi(doc)
     _neutralize_metadata(doc, meta)
 
     out_docx.parent.mkdir(parents=True, exist_ok=True)
@@ -1166,10 +1557,11 @@ def _default_template_path() -> Path | None:
 def _heading_style(doc: Document, level: int) -> str:
     """`##` -> Heading 2, `###` -> Heading 3, dengan fallback aman.
 
-    Template menentukan ukuran/warna heading lewat style-nya sendiri; kalau
-    kita setsize manual, perubahan template jadi tidak berlaku dan hasilnya
-    menyimpang dari contoh. Kalau style tidak ada (dokumen tanpa template),
-    turun ke bold polos.
+    Template menentukan ukuran heading lewat style-nya sendiri, jadi style
+    dipakai apa adanya -- hanya UKURAN yang diambil dari sana. Warna dan font
+    tidak ikut, karena keduanya bawaan Word (biru aksen + Calibri Light) dan
+    sama sekali tidak cocok untuk berkas yang dikumpulkan ke tutor. Yang
+    memperbaiki semuanya adalah `_rapikan_heading`.
     """
     wanted = f"Heading {min(max(level, 2), 3)}"
     try:
@@ -1177,6 +1569,55 @@ def _heading_style(doc: Document, level: int) -> str:
     except KeyError:
         return "Normal"
     return wanted
+
+
+# Font dan warna heading. Ditetapkan per-run, bukan lewat style, karena style
+# `Heading N` bawaan Word mewarisi warna aksen dan font tema -- dokumen hasil
+# akan tampil biru dan Calibri Light, dan itu langsung terbaca sebagai "dibuat
+# mesin", padahal yang salah hanya style bawaannya.
+_HEADING_FONT = "Times New Roman"
+_HEADING_COLOR = "000000"  # hitam
+
+
+def _rapikan_heading(run, doc: Document, style_name: str, *, pt: int | None = None) -> None:
+    """Jadikan satu run heading: bold, hitam, Times New Roman.
+
+    Ukuran diambil dari style template kalau ada, supaya perubahan ukuran di
+    template tetap ikut terbawa. Font dan warna dipasang LANGSUNG di run, bukan
+    di style: begitu tutor mengubah font lewat style, hasil pipeline tetap
+    konsisten dengan yang diminta di sini.
+    """
+    run.bold = True
+    run.font.name = _HEADING_FONT
+    run.font.color.rgb = RGBColor.from_string(_HEADING_COLOR)
+    # `eastAsia`/`cs` wajib diisi juga; kalau tidak, teks dengan karakter
+    # non-Latin akan jatuh ke font tema dan terlihat tidak serasi.
+    rpr = run._r.get_or_add_rPr()
+    rf = rpr.get_or_add_rFonts()
+    for attr in ("w:asciiTheme", "w:hAnsiTheme", "w:eastAsiaTheme", "w:cstheme"):
+        q = qn(attr)
+        if q in rf.attrib:
+            del rf.attrib[q]
+    rf.set(qn("w:ascii"), _HEADING_FONT)
+    rf.set(qn("w:hAnsi"), _HEADING_FONT)
+    rf.set(qn("w:eastAsia"), _HEADING_FONT)
+    rf.set(qn("w:cs"), _HEADING_FONT)
+
+    if pt is None:
+        pt = _heading_pt(doc, style_name, 0)
+    if pt:
+        run.font.size = Pt(pt)
+
+
+def _heading_pt(doc: Document, style_name: str, bawaan: int) -> int:
+    """Ukuran heading dari style template, atau `bawaan` kalau tidak ada."""
+    if style_name == "Normal":
+        return bawaan
+    try:
+        ukuran = doc.styles[style_name].font.size
+    except KeyError:
+        return bawaan
+    return int(ukuran.pt) if ukuran is not None else bawaan
 
 
 def _answer_body(jawaban_md: str) -> str:
@@ -1260,30 +1701,107 @@ def _neutralize_metadata(doc: Document, meta: dict) -> None:
         pass
 
 
-def _apply_hanging_indent_refs(doc: Document):
-    """Referensi (setelah 'Daftar Pustaka') diberi hanging indent ala APA."""
-    from docx.shared import Cm
+def _paragraf_referensi(doc: Document) -> list:
+    """Paragraf entri Daftar Pustaka, dalam urutan dokumen.
 
+    Placeholder "tidak ada referensi yang terverifikasi" bukan entri, jadi
+    tidak ikut; ia ditangani terpisah sebagai catatan.
+    """
     found = False
+    entries = []
     for p in doc.paragraphs:
         txt = p.text.strip()
         if txt.lower().startswith("daftar pustaka"):
             found = True
             continue
-        if found and not txt:
+        if not found or not txt or _NO_REFERENSI_RE.search(txt):
             continue
-        if found and _NO_REFERENSI_RE.search(txt):
-            # Placeholder "tidak ada referensi" bukan entri, jadi jangan diberi
-            # hanging indent seperti daftar pustaka sungguhan. Dicetak miring
-            # dan rata tengah supaya terbaca sebagai catatan, bukan sitasi.
+        entries.append(p)
+    return entries
+
+
+def _kunci_urut_referensi(teks: str) -> str:
+    """Kunci pengurutan alfabetis APA untuk satu entri.
+
+    APA 7 mengurutkan berdasarkan nama belakang penulis. Tanda baca di awal
+    entri harus diabaikan, supaya entri yang diawali kutipan tidak mendahului
+    entri yang diawali huruf biasa.
+    """
+    bersih = re.sub(r"^\d+[.)]\s+", "", teks)
+    bersih = re.sub(r"^[^\w\s]+", "", bersih)
+    bersih = bersih.lstrip("\"'“”‘’ ")
+    return bersih.casefold()
+
+
+def _urutkan_referensi_apa(doc: Document) -> None:
+    """Urutkan entri Daftar Pustaka secara alfabetis (A-Z), di dalam dokumen.
+
+    Karena Daftar Pustaka tidak lagi memakai nomor, urutan alfabetis itu satu-
+   -satunya penanda urutannya. Tanpa langkah ini, urutannya persis seperti
+    urutan penemuan agen -- dan itu langsung terlihat, karena entri pertama
+    yang dimulai huruf besar bisa jatuh di tengah daftar.
+
+    Pengurutan dilakukan dengan memindahkan elemen XML, bukan menulis ulang
+    paragraf. Run di dalam entri membawa format -- italic untuk judul buku,
+    tautan, nomor halaman -- dan semuanya ikut hilang kalau teksnya disalin
+    ulang ke paragraf baru.
+    """
+    entries = _paragraf_referensi(doc)
+    if len(entries) < 2:
+        return
+    urut = sorted(entries, key=lambda p: _kunci_urut_referensi(p.text.strip()))
+    if urut == entries:
+        return
+    anchor = entries[0]._p
+    for p in urut:
+        anchor.addnext(p._p)
+        anchor = p._p
+
+
+def _style_referensi_apa(doc: Document) -> None:
+    """Referensi diberi hanging indent APA 7: `w:ind left=720 hanging=720`.
+
+    Ini membetulkan angka yang lama dipakai. Versi sebelumnya memakai
+    `Cm(0.63)`, yang kira-kira 0,25 inci, karena meniru template. Tapi APA 7
+    menetapkan 0,5 inci, dan itulah yang diminta tutor. Dengan 0,25 inci, baris
+    kedua rujukan nyaris rata dengan teks biasa sehingga Daftar Pustaka terlihat
+    seperti paragraf biasa, bukan daftar. 720 twentieths of a point =
+    720/1440 inci = 0,5 inci persis.
+
+    Nilainya ditulis langsung ke `w:ind`, bukan lewat `paragraph_format`,
+    supaya style tidak menimpanya belakangan. `List Paragraph` di template
+    membawa `w:ind left="720"` sendiri, dan itulah yang membuat indentasi
+    gantung hilang begitu paragraf diklik di Word.
+    """
+    for p in _paragraf_referensi(doc):
+        pPr = p._p.get_or_add_pPr()
+        ind = pPr.find(qn("w:ind"))
+        if ind is None:
+            ind = OxmlElement("w:ind")
+            pPr.append(ind)
+        ind.set(qn("w:left"), str(_APA_HANGING_TWIP))
+        ind.set(qn("w:hanging"), str(_APA_HANGING_TWIP))
+        # Style bawaan bisa membawa indentasi lain lewat `w:pStyle`; lepaskan
+        # supaya nilai di atas benar-benar yang dipakai.
+        for gaya in pPr.findall(qn("w:pStyle")):
+            nilai = (gaya.get(qn("w:val")) or "").replace(" ", "")
+            if nilai in {"ListParagraph", "ListNumber", "ListBullet"}:
+                pPr.remove(gaya)
+
+
+def _tandai_placeholder_referensi(doc: Document) -> None:
+    """Placeholder referensi dicetak miring dan rata tengah.
+
+    Placeholder itu jawaban yang jujur, bukan sitasi. Bentuknya dibedakan agar
+    tutor langsung tahu tidak ada sumber yang bisa diperiksa, bukan mengira
+    dokumen ini punya Daftar Pustaka sungguhan.
+    """
+    for p in doc.paragraphs:
+        if _NO_REFERENSI_RE.search(p.text):
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             for run in p.runs:
                 run.italic = True
-            continue
-        if found and txt:
-            pf = p.paragraph_format
-            pf.left_indent = Cm(0.63)
-            pf.first_line_indent = Cm(-0.63)
+            return
 
 
 def _convert_to_doc(docx_path: Path, doc_path: Path) -> bool:
@@ -1311,12 +1829,17 @@ def save_doc(
     out_dir: Path,
     *,
     template: Path | None = None,
+    include_soal: bool = True,
+    gambar_soal: list[Path] | None = None,
 ) -> tuple[Path, Path]:
     """Simpan jawaban sebagai satu file .docx final (equation OMML asli).
 
     Equation asli (Word Equation) hanya dapat disimpan dalam format OOXML
     (.docx); konversi ke .doc lama akan mengubah equation menjadi gambar.
     Return (docx_path, docx_path) agar pemanggil tetap API tuple.
+
+    `include_soal` (`False` = jangan tulis bagian soal) dan `gambar_soal`
+    (gambar soal yang harus disisipkan apa adanya) lihat `build_docx`.
     """
     base = meta.get("file_base", "jawaban")
     docx_path = out_dir / f"{base}.docx"
@@ -1332,11 +1855,106 @@ def save_doc(
         soal_text=soal_text,
         meta=meta,
         out_docx=docx_path,
-        # Mode url: markdown jawaban sudah memuat judul soal + butir-butirnya,
-        # jadi teks hasil scraping hanya menambah metadata Moodle yang tidak
-        # ada di template. Mode file (Form Soal) tetap merender soal karena
-        # di sana sumbernya memang berkas soal milik pengguna.
-        include_soal=False,
+        # Soal tetap dirender: di depan jawaban, dengan bentuk yang sama
+        # seperti sumbernya (gambar disisipkan, teks ditempel).
+        include_soal=include_soal,
         template=template,
+        gambar_soal=gambar_soal,
     )
     return docx_path, docx_path
+
+
+# Metadata Moodle yang ikut ter-render tapi tidak ada artinya di berkas yang
+# dikumpulkan tutor. Semuanya satu baris "Label: nilai" yang ditambahkan Reader
+# supaya jejaknya jelas saat agent membaca -- bukan isi soal.
+_SOAL_BUANG_RE = re.compile(
+    r"^\s*[-*]?\s*(?:lokasi|di buka|opened|opened by|due|due date|deadline|"
+    r"jenis konten|url sumber|halaman ini|last modified|terakhir diubah|"
+    r"kelas|kursus|subject|group|grup|tag|assessment|penilaian|nilai|"
+    r"jumlah|attempt|percobaan)\s*[:\-]\s*.*$",
+    re.IGNORECASE,
+)
+
+# Baris "Tugas 1" / "Forum Diskusi.4" sebagai label -- bukan isi soal.
+_SOAL_LABEL_RE = re.compile(
+    r"^\s*#{0,3}\s*(?:soal|tugas|diskusi|pertanyaan|tasks?|forum)\b[\s.:0-9-]*$",
+    re.IGNORECASE,
+)
+
+# Lebar gambar yang masih muat di antara margin template (A4/Letter, margin
+# kiri-kanan ~1.9 cm). 15 cm aman untuk keduanya.
+_GAMBAR_LEBAR_CM = 15.0
+
+
+def _soal_bersih(soal_text: str) -> str:
+    """Buang kerangka Moodle dari teks soal, sisakan instruksi yang sebenarnya."""
+    lines = (soal_text or "").splitlines()
+    out: list[str] = []
+    for line in lines:
+        if _SOAL_BUANG_RE.match(line):
+            continue
+        if _SOAL_LABEL_RE.match(line):
+            continue
+        out.append(line)
+    # Runtuhkan blok kosong berlebih yang ditinggalkan oleh penyaringan.
+    teks = "\n".join(out).strip()
+    return re.sub(r"\n{3,}", "\n\n", teks)
+
+
+def _sisip_gambar(doc: Document, path: Path) -> bool:
+    """Sisipkan satu gambar ke paragraf baru. True kalau berhasil."""
+    try:
+        from docx.shared import Cm as _Cm
+
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run()
+        run.add_picture(str(path), width=_Cm(_GAMBAR_LEBAR_CM))
+        return True
+    except Exception as exc:  # noqa: BLE001 - gambar rusak tidak boleh mematikan docx
+        print(f"  ! gambar soal gagal disisipkan ({Path(path).name}): {exc}")
+        return False
+
+
+def _tulis_soal(
+    doc: Document,
+    soal_text: str,
+    *,
+    gambar_soal: list[Path] | None = None,
+) -> None:
+    """Tulis bagian `## Soal` di depan jawaban.
+
+    Dua sumber, keduanya dipertahankan apa adanya karena keduanya adalah naskah
+    resmi: gambar lampiran disisipkan, teks soal ditempel. Yang dibuang hanya
+    kerangka Moodle (baris "Lokasi:", "URL sumber:", dan sejenisnya) yang tidak
+    pernah menjadi bagian soal.
+
+    Kalau soalnya berupa gambar, teks hasil transkripsi tidak boleh menggantikan
+    gambar: transkripsi dibuat model dan bisa keliru, sedangkan yang dipegang
+    pengajar adalah naskah aslinya. Kalau teksnya ada DAN berarti (bukan cuma
+    "halaman ini tidak memuat teks"), teksnya ikut dicetak sebagai alat bantu
+    baca.
+    """
+    gambar = [Path(p) for p in (gambar_soal or []) if Path(p).is_file()]
+    teks = _soal_bersih(soal_text)
+
+    if not gambar and not teks:
+        return
+
+    # Judul "Soal" selalu bold hitam TNR, sama seperti heading lain.
+    sh = doc.add_paragraph(style=_heading_style(doc, 2))
+    run = sh.add_run("Soal")
+    _rapikan_heading(run, doc, _heading_style(doc, 2))
+
+    sisip_ok = False
+    for path in gambar[:3]:
+        sisip_ok = _sisip_gambar(doc, path) or sisip_ok
+
+    # Teks ikut dicetak kalau salah satu: gambar gagal disisipkan, atau teksnya
+    # berarti lebih dari sekadar pesan "halaman ini tidak memuat teks".
+    if teks and len(teks) > 120:
+        _render_markdown(doc, teks)
+    elif teks and not sisip_ok:
+        _render_markdown(doc, teks)
+
+    doc.add_paragraph()

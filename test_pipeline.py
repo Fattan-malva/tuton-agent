@@ -18,6 +18,7 @@ Tidak ada panggilan jaringan keluar dan tidak ada biaya model.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sys
@@ -280,30 +281,33 @@ Halaman yang diperiksa: 2. Batas: 12.
 - Tidak ada tautan yang tertinggal.
 """
 
-REF_STUB = """1. Connolly, T., & Begg, C. (2015). Database Systems: A Practical Approach to
-   Design, Implementation, and Management (6th ed.). Pearson Education. ISBN
-   978-1-4479-3248-8.
-2. Elmasri, R., & Navathe, S. B. (2016). Fundamentals of Database Systems
-   (7th ed.). Pearson Education. ISBN 978-0-13-468599-1.
+REF_STUB = """Connolly, T., & Begg, C. (2019). Database systems: A practical approach to
+design, implementation, and management (6th ed.). Pearson Education.
+Elmasri, R., & Navathe, S. B. (2016). Fundamentals of database systems (7th ed.).
+Pearson Education.
 """
 
 GOOD_ANSWER = """## Jawaban Mahasiswa
 
 ### a. Perbedaan 1NF, 2NF, dan 3NF
 
-1NF mensyaratkan setiap atribut atomik. 2NF menambahkan fungsi dependensi penuh
-terhadap kunci utama. 3NF menghilangkan dependensi transitif.
-
-Penjelasan ini didasarkan pada lampiran tugas dan halaman resmi yang diberikan.
+Menurut saya, 1NF mensyaratkan setiap atribut atomik, 2NF menambahkan fungsi
+dependensi penuh terhadap kunci utama, dan 3NF menghilangkan dependensi
+transitif. Saya memakai satu tabel absensi sebagai contoh supaya selisih ketiga
+normalisasi itu kelihatan, bukan sekadar definisi.
 
 ### b. Rancangan database absensi
 
-Entitas: Mahasiswa, MataKuliah, Enrollment, Absensi.
+Saya memakai empat entitas: Mahasiswa, MataKuliah, Enrollment, dan Absensi.
+Aturan keunikan saya tempatkan pada tabel Absensi, karena tabel itu yang
+paling rawan dobel saat satu mahasiswa absen dua kali pada sesi yang sama.
 
 ## Daftar Pustaka
 
-1. Connolly, T., & Begg, C. (2015). *Database Systems* (6th ed.). Pearson. ISBN 978-1-4479-3248-8.
-2. https://doi.org/10.1145/3292500.3330718
+Connolly, T., & Begg, C. (2019). Database systems: A practical approach to design,
+implementation, and management (6th ed.). Pearson Education.
+Elmasri, R., & Navathe, S. B. (2016). Fundamentals of database systems (7th ed.).
+Pearson Education.
 """
 
 
@@ -753,10 +757,17 @@ def main() -> int:
         check("placeholder TIDAK ADA REFERENSI lolos validasi", not issues,
               str(issues))
         issues = main_mod.answer_quality_issues(
-            isi_panjang + "\n## Daftar Pustaka\n1. Ben-Ari, M. (2012). Judul. Springer."
+            isi_panjang + "\n## Daftar Pustaka\nBen-Ari, M. (2020). Judul. Springer."
         )
         check("daftar pustaka dengan entri asli tetap lolos", not issues,
               str(issues))
+        # Entri 2012 ditolak karena di luar jendela 10 tahun. Ini persis
+        # kegagalan keluaran produksi yang lalu, jadi harus tetaptertangkap.
+        issues = main_mod.answer_quality_issues(
+            isi_panjang + "\n## Daftar Pustaka\nBen-Ari, M. (2012). Judul. Springer."
+        )
+        check("referensi di luar 10 tahun tetap ditolak",
+              any("10 tahun" in i for i in issues), str(issues))
         issues = main_mod.answer_quality_issues(isi_panjang + "\n## Daftar Pustaka\n")
         check("Daftar Pustaka benar-benar kosong tetap ditolak",
               any("kosong" in i for i in issues), str(issues))
@@ -785,9 +796,11 @@ def main() -> int:
               "butir" not in Path(".opencode/agent/tuton.md")
               .read_text(encoding="utf-8").lower())
 
-        # [12] Paragraf di bawah label harus rata dengan TEKS label, bukan
-        # dengan angkanya. Nomor yang diketik literal (bukan fitur List Number)
-        # tidak pernah membawa indentasi gantung ke paragraf berikutnya.
+        # [12] Paragraf di bawah heading berlabel harus rata dengan TEKS label,
+        # bukan dengan angkanya. Kalau label memakai angka yang diketik, indentasi
+        # gantung tidak ikut ke paragraf berikutnya, jadi paragraf pembuka terlihat
+        # maju Mundur dari judulnya. (Penomoran butir sendiri sudah dipindah ke
+        # fitur List Number Word; lihat test_format.py bagian 11.)
         doc_dir = fixtures / "out" / "_indent"
         doc_dir.mkdir(parents=True, exist_ok=True)
         docx_path, _ = docx_mod.save_doc(
@@ -872,6 +885,266 @@ def main() -> int:
               rows_ok is not None
               and ml._format_matrix(rows_ok) == "[[2, 1], [0, 3]]",
               ml._format_matrix(rows_ok) if rows_ok else "None")
+
+        # [15] Bahan ajar wajib sesi: dibaca dari teks halaman, tanpa model.
+        #
+        # Inilah yang membuat Daftar Pustaka tidak lagi kosong. Halaman sesi
+        # hampir selalu menyebut satu buku resmi, dan katalognya memuat metadata
+        # lengkap yang bisa diperiksa dosen. Kalau tahap ini tidak diuji, ia
+        # kembali diam-diam ke model -- dan model mengembalikan buku topik
+        # yang mirip, yang justru terlihat sebagai daftar di luar sesi.
+        print("\n[15] Bahan ajar sesi diambil dari teks halaman")
+        from moodle import bahan_ajar as ba
+
+        teks_sesi = (
+            "Sesi 4 - Logika Informatika\n"
+            "Silakan pelajari BMP MSIM4103 Modul 4 sebagai referensi utama.\n"
+            "Buku: https://pustaka.ut.ac.id/lib/msim4103-logika-informatika-edisi-2/\n"
+        )
+        bahan = ba.find_bahan_ajar(teks_sesi)
+        check("kode buku MSIM4103 terbaca dari kalimat halaman",
+              bahan.get("kode") == "MSIM4103", str(bahan))
+        check("nomor modul terbaca", str(bahan.get("modul")) == "4",
+              str(bahan.get("modul")))
+        check("URL katalog resmi ikut terbaca",
+              "pustaka.ut.ac.id" in (bahan.get("url") or ""),
+              str(bahan.get("url")))
+
+        # Host lain harus ditolak: halaman sesi boleh menautkan apa saja, dan
+        # metadata dari host sembarang tidak bisa dipercaya.
+        cek_host = ba.find_bahan_ajar(
+            "buku acuan: https://contoh-penipu.example/lib/buku-2020/\n"
+            "silakan pelajari buku tersebut\n"
+        )
+        check("host di luar katalog UT tidak diambil",
+              not cek_host.get("url"), str(cek_host.get("url")))
+
+        # Sitasi dari katalog: satu entri polos, tanpa ISBN dan tanpa nomor
+        # halaman, karena kedua hal itu tidak bisa diperiksa di luar katalog.
+        sitasi = (
+            "Suprapto. (2025). MSIM4103 - Logika Informatika (Edisi 2). "
+            "Tangerang Selatan: Universitas Terbuka. "
+            "https://pustaka.ut.ac.id/lib/msim4103-logika-informatika-edisi-2/"
+        )
+        isi_cukup = (
+            "## Jawaban Mahasiswa\n\n"
+            "Saya memakai tabel kebenaran karena setiap pernyataan hanya boleh "
+            "bernilai benar atau salah, jadi tidak ada nilai ketiga yang harus "
+            "diwakili. Saya lanjutkan dengan Reduction Order untuk memastikan "
+            "hasilnya konsisten.\n\n"
+            "## Daftar Pustaka\n\n"
+        )
+        issues = main_mod.answer_quality_issues(isi_cukup + sitasi + "\n")
+        check("sitasi bahan ajar lolos gerbang", not issues, str(issues))
+
+        # [16] Gerbang kualitas: dua kegagalan produksi yang lalu.
+        #
+        # Jawaban 1365 kata tanpa satu pun "saya" tetap lengkap dan referensinya
+        # sah, jadi tidak ada yang menangkapnya tanpa aturan bahasa orang
+        # pertama. Dan kata "bayangkan" muncul di hampir semua paragraf jawaban
+        # model, jadi harus dicek sebagai kata, bukan sebagai frasa.
+        print("\n[16] Gerbang kualitas menangkap kegagalan nyata")
+        panjang = (
+            "## Jawaban Mahasiswa\n\n"
+            "Menurut saya normalisasi pertama menuntut atribut atomik, dan saya "
+            "menambahkan fungsi dependensi penuh pada kunci utama. Saya juga "
+            "menyusun rancangan absensi dengan empat entitas terpisah supaya "
+            "relasinya jelas. Menurut saya sudah cukup untuk menjawab soal ini, "
+            "jadi saya tidak perlu buku lain untuk menyelesaikannya.\n\n"
+            "## Daftar Pustaka\n\n"
+            "Elmasri, R., & Navathe, S. B. (2016). Fundamentals of database "
+            "systems (7th ed.). Pearson Education.\n"
+        )
+        issues = main_mod.answer_quality_issues(panjang)
+        check("jawaban orang pertama lolos", not issues, str(issues))
+
+        # Buang SELURUH kata "saya", bukan hanya yang diikuti spasi: kalau
+        # satu tersisa, aturan orang pertamanya lolos padahal teksnya sudah
+        # impersonal -- persis skenario yang lolos di keluaran produksi.
+        tanpa_saya = re.sub(r"\bsaya\b", "", panjang, flags=re.IGNORECASE)
+        issues = main_mod.answer_quality_issues(tanpa_saya)
+        check('jawaban tanpa kata "saya" ditolak',
+              any('"saya"' in i for i in issues), str(issues))
+
+        issues = main_mod.answer_quality_issues(
+            panjang.replace(
+                "Menurut saya normalisasi pertama",
+                "Bayangkan tabel absensi. Menurut saya normalisasi pertama",
+            )
+        )
+        check('kata "bayangkan" ditolak',
+              any("bayangkan" in i.lower() for i in issues), str(issues))
+
+        issues = main_mod.answer_quality_issues(
+            panjang.replace(
+                "Pearson Education.",
+                "Pearson Education. ISBN 978-1-4479-3248-8.",
+            )
+        )
+        check("ISBN pada entri non-katalog UT ditolak",
+              any("ISBN" in i for i in issues), str(issues))
+
+        # [17] Menyalin jawaban orang lain.
+        #
+        # Dua sisi yang harus tertangkap. Sisi "menyebut sumbernya" adalah yang
+        # paling merusak: kalimat di dalamnya menyatakan sendiri kalau isinya
+        # diambil dari orang lain, jadi plaintext-nya jadi bukti. Sisi kedua
+        # adalah teks yang terstruktur rapi tapi tidak punya satu pun kata ganti
+        # orang pertama -- ciri teks yang disalin, bukan ditulis.
+        #
+        # Yang sama pentingnya adalah sisi negatifnya: jawaban yang BENAR dan
+        # ditulis dengan "saya" tidak boleh ikut tertangkap. Kalau gate terlalu
+        # galak, satu-satunya jalan keluar model adalah menulis dummies.
+        print("\n[17] Gerbang menolak jawaban yang disalin dari mahasiswa lain")
+        salin = (
+            "## Jawaban Mahasiswa\n\n"
+            "Menurut saya, langkah pertama adalah menyusun tabel kebenaran. "
+            "Saya lanjutkan dengan Reduction Order agar hasilnya konsisten. "
+            "Saya memeriksa ulang setiap baris untuk memastikan tidak ada "
+            "nilai yang terlewat. Saya memakai bentuk implikasi karena "
+            "operatornya paling dekat dengan bentuk aslinya.\n\n"
+            "## Daftar Pustaka\n\n"
+            "Elmasri, R., & Navathe, S. B. (2016). Fundamentals of database "
+            "systems (7th ed.). Pearson Education.\n"
+        )
+        check("jawaban yang benar tetap lolos",
+              not main_mod.answer_quality_issues(salin),
+              str(main_mod.answer_quality_issues(salin)))
+
+        for frasa in (
+            "Disalin dari thread diskusi yang saya baca.",
+            "Seperti yang ditulis mahasiswa lain, saya memakai tabel yang sama.",
+            "Saya menyalin langkah yang ada di lampiran.",
+        ):
+            issues = main_mod.answer_quality_issues(
+                salin.replace(
+                    "Menurut saya, langkah pertama",
+                    f"{frasa} Menurut saya, langkah pertama",
+                )
+            )
+            check(f'frasa "{frasa[:26]}..." ditolak',
+                  any("orang lain" in i for i in issues), str(issues))
+
+        # Teks rapi tanpa kata ganti orang pertama. Panjang >120 kata dan
+        # >=8 kalimat, persis syarat `_terlalu_rapi`.
+        rapi = (
+            "Tabel kebenaran digunakan untuk menilai setiap pernyataan logika. "
+            "Kolom P dan Q menunjukkan nilai kedua premis secara terpisah. "
+            "Kolom T menunjukkan nilai konsekuensi secara terpisah. "
+            "Setiap baris menyatakan hubungan antara ketiga komponen tersebut. "
+            "Nilai true menandakan bahwa pernyataan tersebut benar secara "
+            "logika. Nilai false menandakan bahwa pernyataan tersebut salah "
+            "secara logika. Kolom F1 merupakan hasil akhir dari setiap "
+            "kombinasi tersebut. Implikasi bernilai benar bila kedua premis "
+            "memenuhi syaratnya. Konjungsi bernilai benar bila kedua premis "
+            "bernilai benar. Negasi bernilai benar bila premisnya bernilai "
+            "salah. Disjungsi bernilai benar bila salah satu premisnya "
+            "bernilai benar. Ekor buruk bernilai benar bila keduanya "
+            "bernilai benar. "
+        ) * 2
+        rapi_panjang = (
+            "## Jawaban Mahasiswa\n\n" + rapi + "\n## Daftar Pustaka\n\n"
+            "Elmasri, R., & Navathe, S. B. (2016). Fundamentals of database "
+            "systems (7th ed.). Pearson Education.\n"
+        )
+        check("teks rapi tanpa 'saya' terdeteksi mencurigakan",
+              main_mod._terlalu_rapi(rapi), str(len(rapi.split())))
+        check("teks rapi + satu kata 'saya' TIDAK ditolak",
+              not main_mod._terlalu_rapi("Saya memakai " + rapi.lower()),
+              "sinyal terlalu galak")
+        check("teks pendek tidak pernah dianggap mencurigakan",
+              not main_mod._terlalu_rapi("Tabel ini sudah benar."), "")
+
+        issues = main_mod.answer_quality_issues(rapi_panjang)
+        check("jawaban mencurigakan ditolak gerbang",
+              any("serapi" in i for i in issues), str(issues))
+
+
+        # [18] Lampiran mahasiswa lain tidak boleh jadi bahan jawaban.
+        #
+        # Ini kegagalan yang terlihat jelas dari run sungguhan: satu Diskusi
+        # punya screenshot soal resmi plus DUA PDF jawaban mahasiswa lain.
+        # Ketiganya ditranskripsi ke satu berkas, dan jawaban yang keluar
+        # memakai angka yang sama persis dengan salah satu PDF itu.
+        #
+        # Yang diuji: klasifikasi berkas, DAN akibatnya -- transkrip tidak memuat
+        # isi jawaban orang, dan daftar lampiran yang diberikan ke agent tidak
+        # menyebutnya.
+        print("\n[18] Lampiran jawaban mahasiswa lain dikecualikan")
+        from moodle import lampiran_mahasiswa as lm
+
+        KIRIMAN = [
+            ("Jawaban Diskusi STMA4113 Sesi 4 Habib Musi_058296657.pdf", True),
+            ("ILHAM SULHAKIM.pdf", True),
+            ("Tugas 1 - Aljabar Linear - 058296657.pdf", True),
+            ("diskusi2_revisi.pdf", True),
+            ("Screenshot 2026-03-01 140136.png", False),
+            ("BMP MATA4113 Modul 2.pdf", False),
+            ("soal diskusi 4.png", False),
+            ("Bahan Tuton W4.pdf", False),
+            ("MATA4113 Modul 1 Aljabar Linear Elementer II.pdf", False),
+            ("panduan-tugas.pdf", False),
+            ("latihan-1.pdf", False),
+            ("soal.jpg", False),
+        ]
+        for nama, harus_ditolak in KIRIMAN:
+            alasan = lm.looks_like_student_submission(Path("/tmp") / nama, "")
+            check(f"{'DITOLAK ' if harus_ditolak else 'DITERIMA'} : {nama}",
+                  bool(alasan) == harus_ditolak, str(alasan))
+
+        # Isi dokumen: blok identitas mahasiswa, meski namanya tidak jujur.
+        isi_mahasiswa = (
+            "DISKUSI SESI 4\nNama  SITI AMINAH\nNIM 058296657\n"
+            "Jawaban:\n1. Sistem ini punya solusi tunggal.\n"
+        )
+        check("PDF tanpa NIM di nama tapi berisi blok identitas ditolak",
+              bool(lm.looks_like_student_submission(
+                  Path("/tmp") / "scan-2026.pdf", isi_mahasiswa
+              )),
+              "")
+        check("soal resmi dengan angka tidak dianggap jawaban mahasiswa",
+              lm.looks_like_student_submission(
+                  Path("/tmp") / "MATA4113 Modul 2.pdf",
+                  "1. Tentukan x dari sistem 2x + y = 4 dan x - y = 1.\n",
+              ) is None,
+              "")
+
+        # Dampak ke transkrip.
+        _out = fixtures / "out" / "_lampiran"
+        _out.mkdir(parents=True, exist_ok=True)
+        _kiriman = _out / "Jawaban Diskusi Sesi 4 Budi Santoso_058296657.pdf"
+        _kiriman.write_bytes(b"%PDF-1.4\n")
+        _soal = _out / "Screenshot 2026-03-01 140136.png"
+        _soal.write_bytes(b"\x89PNG\r\n")
+        _rec = main_mod.Prefetched(
+            course=type("C", (), {"id": "9", "name": "MK", "folder_name": "MK"})(),
+            section_num=4,
+            item=type("A", (), {"title": "Diskusi", "mod_type": "forum", "id": "9"})(),
+            kind="diskusi",
+            index=4,
+            out_dir=_out,
+            attachments=[_soal, _kiriman],
+        )
+        _rec.transcripts = {
+            _soal.name: "1. Buatlah sistem persamaan linear tiga variabel.",
+            _kiriman.name: "Jawaban teman: x = 1, y = 2, z = 3.",
+        }
+        _tp = main_mod._write_transcript_file(_rec, _out)
+        _teks = _tp.read_text(encoding="utf-8") if _tp else ""
+        check("isi jawaban mahasiswa tidak masuk transkrip",
+              "x = 1, y = 2, z = 3" not in _teks, "")
+        check("soal resmi tetap masuk transkrip",
+              "Buatlah sistem persamaan linear" in _teks, "")
+        check("transkrip menyebut lampiran yang sengaja dilewati",
+              "tidak dipakai" in _teks.lower()
+              and "kiriman mahasiswa lain" in _teks.lower()
+              and "Budi Santoso" in _teks,
+              "")
+        check("transkrip turunannya dihapus dari folder",
+              not (_out / "transkrip_Jawaban Diskusi Sesi 4 Budi Santoso_058296657.md").is_file(),
+              "")
+        check("berkas lampiran aslinya tetap ada di folder",
+              _kiriman.is_file(), "")
 
     finally:
         server.shutdown()

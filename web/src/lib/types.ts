@@ -194,10 +194,28 @@ export interface RunStatusResponse {
   last_output: string | null;
 }
 
+export interface ResetResponse {
+  success: boolean;
+  message?: string;
+  error?: string;
+  /** Jumlah entri di `output/` yang dihapus. */
+  deleted?: number;
+  /** Jumlah berkas yang hilang, termasuk di dalam folder. */
+  files?: number;
+  /** Total byte yang dibebaskan. */
+  bytes?: number;
+  /** Item `state.json` yang dibersihkan karena berkasnya sudah tidak ada. */
+  items?: number;
+  /** Nama entri yang gagal dihapus. Kosong = tidak ada. */
+  failed?: string[];
+}
+
 export interface StopResponse {
   success: boolean;
   message?: string;
   error?: string;
+  /** Jumlah proses yang benar-benar dibunuh (pipeline + sesi agen). */
+  killed?: number;
 }
 
 export interface LoginResponse {

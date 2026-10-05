@@ -130,6 +130,16 @@ export default function FormSoal({ courses, onRefresh, onNotify, terminal }: For
         return;
       }
       terminal.onStopRequested();
+      // Sama seperti di tab Run: tampilkan jumlah proses yang benar-benar
+      // dibunuh, supaya "Stop" tidak terlihat berhasil padahal ada sesi
+      // agent yang masih jalan.
+      const killed = response.killed ?? 0;
+      onNotify(
+        killed > 0
+          ? `${response.message || 'Semua proses dihentikan.'} (${killed} proses)`
+          : response.message || 'Semua proses dihentikan.',
+        'warning',
+      );
     } catch (caught) {
       onNotify(caught instanceof Error ? caught.message : 'Gagal menghentikan proses.', 'error');
     }

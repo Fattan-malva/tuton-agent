@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -167,7 +168,91 @@ def _spawn_cmd(cmd: list[str], cwd: str, env: dict | None = None) -> subprocess.
         kwargs["creationflags"] = (
             subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
         )
+    else:
+        # Grup proses sendiri. Tanpa ini `os.killpg` akan ikut membunuh pipeline
+        # dan server, karena semuanya satu grup; dengan grup sendiri, satu
+        # `killpg` bisa mematikan `opencode` beserta `node` yang dibesarkannya.
+        kwargs["start_new_session"] = True
     return subprocess.Popen(spawn_cmd, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Registry proses yang sedang hidup + tombol stop bersama.
+#
+# Dua hal ini yang membuat "Stop" berarti berhenti. Sebelumnya `Popen.kill()`
+# hanya menyentuh satu PID, sehingga setelah pipeline selesai atau timeout,
+# `node` milik opencode tetap hidup -- tetap memakai kuota, dan kalau sempat
+# selesai menulis berkas setelah stop, user melihat file muncul tanpa diminta.
+# Registry ini jadi sumber kebenaran tunggal untuk "proses apa saja yang masih
+# jalan", dipakai pipeline (lewat `stop_requested()`) maupun server
+# (lewat `live_processes()` / `kill_all()`).
+# ---------------------------------------------------------------------------
+_LIVE_LOCK = threading.Lock()
+_LIVE: dict[int, subprocess.Popen] = {}
+_STOP = threading.Event()
+
+
+def request_stop() -> int:
+    """Tandai stop dan matikan semua sesi yang hidup. Kembalikan jumlah proses.
+
+    Aman dipanggil dari thread mana pun, beberapa kali, dan tanpa efek samping
+    selain mematikan proses: idempoten, jadi tombol Stop yang ditekan dua kali
+    tidak merusak apa pun.
+    """
+    _STOP.set()
+    return kill_all()
+
+
+def stop_requested() -> bool:
+    """True kalau stop sudah diminta. Dipakai loop reader untuk keluar cepat."""
+    return _STOP.is_set()
+
+
+def clear_stop() -> None:
+    """Hapus tanda stop. Dipanggil di awal run supaya run berikutnya normal."""
+    _STOP.clear()
+
+
+def _register(proc: subprocess.Popen) -> None:
+    with _LIVE_LOCK:
+        _LIVE[proc.pid] = proc
+
+
+def _unregister(proc: subprocess.Popen) -> None:
+    with _LIVE_LOCK:
+        _LIVE.pop(proc.pid, None)
+
+
+def live_processes() -> list[subprocess.Popen]:
+    """Proses yang masih hidup, tanpa proses yang sudah selesai."""
+    with _LIVE_LOCK:
+        snapshot = list(_LIVE.values())
+    return [p for p in snapshot if p.poll() is None]
+
+
+def kill_all() -> int:
+    """Matikan setiap sesi yang hidup. Kembalikan berapa yang benar-benar mati."""
+    proses = live_processes()
+    for proc in proses:
+        _kill_proc_tree(proc)
+    hidup = live_processes()
+    for proc in hidup:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    return len(proses)
+
+
+class RunStopped(RuntimeError):
+    """Sesi opencode dihentikan atas permintaan pengguna.
+
+    Terpisah dari `TimeoutError` karena keduanya berbeda artinya bagi pipeline:
+    timeout = "item ini gagal, coba lagi", stop = "pengguna memutuskan berhenti,
+    jangan coba lagi dan jangan tandai item sebagai gagal". Tanpa pemisahan
+    ini, satu klik Stop akan mengisi `state.json` dengan `failed` untuk item
+    yang sebenarnya belum pernah sempat dikerjakan.
+    """
 
 
 def _build_cmd(
@@ -268,22 +353,58 @@ def _cap_line(line: str, limit: int = 120) -> str:
 
 
 def _kill_proc_tree(proc: subprocess.Popen) -> None:
-    """Kill proses + semua anaknya. Windows: taskkill /T supaya node/opencode
-    anak ikut mati saat timeout."""
-    if os.name != "nt":
-        proc.kill()
-        return
-    try:
-        subprocess.run(
-            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-            capture_output=True,
-            timeout=10,
-        )
-    except (subprocess.SubprocessError, OSError):
+    """Matikan satu sesi opencode beserta seluruh keturunannya.
+
+    Timeout harus benar-benar menghentikan sesi, bukan cuma proses opencode.
+    `opencode` menjalankan `node` sebagai anaknya, dan kalau anak itu selamat
+    ia tetap terhubung ke model dan tetap memakai kuota setelah pipeline sudah
+    tuntas. Karena itu POSIX memakai `killpg` ke grup proses yang
+    dibuat `_spawn_cmd` (start_new_session), dengan TERM lalu KILL supaya
+    `node` sempat menutup cache-nya sendiri.
+    """
+    if os.name == "nt":
         try:
-            proc.kill()
-        except OSError:
-            pass
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+            )
+            return
+        except (subprocess.SubprocessError, OSError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            return
+
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (OSError, ProcessLookupError):
+        pgid = None
+
+    if pgid is not None and pgid != os.getpgid(0):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(pgid, sig)
+            except (OSError, ProcessLookupError):
+                break
+            try:
+                proc.wait(timeout=5.0)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        return
+
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            proc.send_signal(sig)
+        except (OSError, ProcessLookupError):
+            break
+        try:
+            proc.wait(timeout=5.0)
+            break
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def run_opencode(
@@ -315,6 +436,7 @@ def run_opencode(
     exe = _display_name(cmd)
     print(f"  → {exe} run ... (output live di bawah, mohon tunggu)", flush=True)
     proc = _spawn_cmd(cmd, cwd=str(PROJECT_ROOT), env=env)
+    _register(proc)
     out_lines: list[str] = []
     start = time.time()
 
@@ -376,6 +498,15 @@ def run_opencode(
                     print(f"  · {_cap_line(clean)}", flush=True)
                 break
             else:
+                # Stop diprioritaskan di atas timeout: setelah stop, sisa
+                # durasi timeout tidak boleh jadi alasan session tetap hidup
+                # sampai puluhan menit.
+                if _STOP.is_set():
+                    _kill_proc_tree(proc)
+                    proc.wait()
+                    raise RunStopped(
+                        "Sesi opencode dihentikan karena stop diminta pengguna."
+                    )
                 if time.time() - start > timeout:
                     _kill_proc_tree(proc)
                     proc.wait()
@@ -384,6 +515,7 @@ def run_opencode(
                     )
                 time.sleep(0.05)
     finally:
+        _unregister(proc)
         try:
             proc.stdout.close()
         except OSError:

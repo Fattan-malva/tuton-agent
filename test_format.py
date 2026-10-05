@@ -36,6 +36,7 @@ from generator.docx import save_doc  # noqa: E402
 from generator.prompt import build_file_prompt  # noqa: E402
 
 from docx import Document  # noqa: E402
+from docx.oxml.ns import qn  # noqa: E402
 from docx.shared import Pt  # noqa: E402
 
 PASS: list[str] = []
@@ -218,6 +219,172 @@ def test_docx_template(scratch: Path) -> None:
     check("daftar pustaka di docx tidak melebihi 5", len(ref) <= 5, f"{len(ref)}")
 
 
+def test_daftar_pustaka_apa7(scratch: Path) -> None:
+    """Daftar Pustaka harus APA 7 murni: A-Z, tanpa nomor, baris menggantung.
+
+    Tiga aturan ini dicek langsung di XML, bukan dari teks yang terlihat.
+    Teks bisa terlihat benar padahal paragrafnya masih memakai style
+    ListParagraph dari template -- dan itu yang membuat dokumen tampil dengan
+    angka otomatis sementara referensinya sudah ditulis polos.
+    """
+    print("\n[10] Daftar Pustaka mengikuti APA 7")
+    out = scratch / "apa"
+    out.mkdir(parents=True, exist_ok=True)
+
+    md = (
+        "## Jawaban Mahasiswa\n\n"
+        "### a. Soal Satu\n\n"
+        "Isi jawaban.\n\n"
+        "## Daftar Pustaka\n\n"
+        "Suprapto. (2025). MSIM4103 Logika Informatika (Edisi 2). "
+        "Tangerang Selatan: Universitas Terbuka.\n"
+        "Elmasri, R., & Navathe, S. B. (2016). Fundamentals of database systems "
+        "(7th ed.). Pearson Education.\n"
+        "Connolly, T., & Begg, C. (2019). Database systems (6th ed.). "
+        "Pearson Education.\n"
+    )
+    docx_path, _ = save_doc(
+        jawaban_md=md,
+        soal_text="",
+        meta={"file_base": "apa", "nama": "Uji", "nim": "1"},
+        out_dir=out,
+    )
+    doc = Document(str(docx_path))
+
+    # Ambil paragraf setelah heading "Daftar Pustaka".
+    teks = [p.text.strip() for p in doc.paragraphs]
+    awal = next(
+        (i for i, t in enumerate(teks) if t.lower() == "daftar pustaka"), None
+    )
+    check("heading 'Daftar Pustaka' ada di dokumen", awal is not None)
+    if awal is None:
+        return
+    isi = [t for t in teks[awal + 1:] if t]
+
+    check("tiga entri terbaca sebagai paragraf", len(isi) == 3, str(isi))
+    check(
+        "entri diurutkan A-Z",
+        isi == sorted(isi, key=lambda s: s.lower()),
+        str(isi[:1]),
+    )
+    check(
+        "tidak ada nomor literal di depan entri",
+        not any(t[:1].isdigit() or t[:1] in "-*" for t in isi),
+        str([t[:20] for t in isi]),
+    )
+
+    # Gaya paragraf: bukan ListParagraph/ListNumber, dan indentasi menggantung.
+    p_entri = [p for p in doc.paragraphs[awal + 1:] if p.text.strip()]
+    gaya = [(p.style.name if p.style else "") for p in p_entri]
+    check(
+        "paragraf referensi bukan ListParagraph/ListNumber/ListBullet",
+        not any(g.startswith("List") for g in gaya),
+        str(gaya),
+    )
+    for p in p_entri:
+        fmt = p.paragraph_format
+        left = fmt.left_indent.pt if fmt.left_indent is not None else None
+        hanging = fmt.first_line_indent.pt if fmt.first_line_indent is not None else None
+        check(
+            "baris menggantung 0.5 inci (left 36pt, first -36pt)",
+            left == 36.0 and hanging == -36.0,
+            f"left={left} first={hanging}",
+        )
+        check(
+            "entri tidak memakai penomoran otomatis Word",
+            p._p.find(qn("w:pPr")) is None
+            or p._p.find(qn("w:pPr")).find(qn("w:numPr")) is None,
+            p.text[:40],
+        )
+        break  # cukup satu: indentasi dipakai untuk semua entri
+
+
+def test_nomor_asli_docx(scratch: Path) -> None:
+    """Penomoran soal harus fitur List Number Word, bukan angka yang diketik.
+
+    Angka yang diketik tidak pernah membawa indentasi ke paragraf berikutnya,
+    dan tidak bisa dimulai dari angka selain 1 saat soal sesi ini mulai dari 3.
+    """
+    print("\n[11] Penomoran memakai fitur DOCX, bukan angka literal")
+    out = scratch / "nomor"
+    out.mkdir(parents=True, exist_ok=True)
+    md = (
+        "## Jawaban Mahasiswa\n\n"
+        "### a. Soal Satu\n\n"
+        "Paragraf pembuka.\n\n"
+        "1. Butir pertama.\n"
+        "2. Butir kedua.\n\n"
+        "### b. Soal Dua\n\n"
+        "3. Butir ketiga.\n"
+        "4. Butir keempat.\n"
+    )
+    docx_path, _ = save_doc(
+        jawaban_md=md,
+        soal_text="",
+        meta={"file_base": "nomor", "nama": "Uji", "nim": "1"},
+        out_dir=out,
+    )
+    doc = Document(str(docx_path))
+    bernomor = []
+    for p in doc.paragraphs:
+        ppr = p._p.find(qn("w:pPr"))
+        if ppr is not None and ppr.find(qn("w:numPr")) is not None:
+            bernomor.append(p)
+    check("ada paragraf dengan numPr", len(bernomor) == 4, str(len(bernomor)))
+    check(
+        "teks paragraf bernomor tidak lagi memuat angka literal",
+        not any(p.text.strip()[:1].isdigit() for p in bernomor),
+        str([p.text[:24] for p in bernomor]),
+    )
+
+    # Dua daftar harus punya numId berbeda supaya yang kedua mulai dari 1 lagi.
+    num_id = []
+    for p in bernomor:
+        numpr = p._p.find(qn("w:pPr")).find(qn("w:numPr"))
+        num_id.append(numpr.find(qn("w:numId")).get(qn("w:val")))
+    check(
+        "dua daftar terpisah memakai numId berbeda",
+        num_id[:2] == num_id[:1] * 2 and num_id[2:] == num_id[3:4] * 2
+        and num_id[0] != num_id[2],
+        str(num_id),
+    )
+
+    # Kalau numId sama, penomoran lanjut dari angka sebelumnya dan butir
+    # ketiga akan tampil "5. Butir ketiga." Jadi tiap daftar baru wajib punya
+    # startOverride, dan nilainya harus sama dengan angka yang dipakai
+    # penulis di markdown -- di sini daftar kedua memang dimulai dari 3.
+    numbering = doc.part.numbering_part.element
+    start_override = {}
+    for n in numbering.findall(qn("w:num")):
+        ov = n.find(qn("w:lvlOverride"))
+        so = ov.find(qn("w:startOverride")) if ov is not None else None
+        start_override[n.get(qn("w:numId"))] = (
+            so.get(qn("w:val")) if so is not None else None
+        )
+    check(
+        "daftar kedua mulai dari angka yang sama dengan markdown",
+        start_override.get(num_id[2]) == "3",
+        f"numId {num_id[2]} -> startOverride {start_override.get(num_id[2])}",
+    )
+    check(
+        "daftar pertama mulai dari 1",
+        start_override.get(num_id[0]) in (None, "1"),
+        f"startOverride {start_override.get(num_id[0])}",
+    )
+
+    # Setiap numId yang dipakai harus benar-benar didefinisikan di numbering.xml,
+    # kalau tidak Word membuka dokumen dan menolaknya.
+    numbering = doc.part.numbering_part.element
+    terdaftar = {
+        n.get(qn("w:numId")) for n in numbering.findall(qn("w:num"))
+    }
+    check(
+        "semua numId yang dipakai terdaftar di numbering.xml",
+        set(num_id) <= terdaftar,
+        f"dipakai={sorted(set(num_id))} terdaftar={sorted(terdaftar)}",
+    )
+
+
 def test_output_dir() -> None:
     print("\n[7] Folder output/ dibuat otomatis")
     root = config.OUTPUT_DIR
@@ -248,11 +415,78 @@ def test_output_dir() -> None:
         (nested / "jawaban_tugas_1.docx").write_bytes(b"PK\x03\x04")
         check("bisa langsung menulis di folder yang baru dibuat",
               (nested / "jawaban_tugas_1.docx").is_file())
+
+        # [12] Folder hilang SETELAH dibuat harus dipulihkan otomatis.
+        #
+        # Ini kondisi yang dilaporkan user: `[Errno 2] No such file or
+        # directory: '/app/output/.jobs'`. Di container, `output/` adalah
+        # bind-mount dari host, jadi foldernya bisa hilang di host tanpa
+        # container ikut berhenti. Pemanggil yang hanya mengandalkan
+        # `mkdir(parents=True)` waktu boot akan gagal selamanya setelah itu,
+        # padahal masalahnya sebenarnya satu baris saja.
+        for hilang in (root / ".jobs", root / ".cache"):
+            shutil.rmtree(hilang, ignore_errors=True)
+            check(f"{root.name}/{ hilang.name} benar-benar hilang",
+                  not hilang.exists())
+            config.ensure_output_dirs()
+            check(f"{ hilang.name} dibuat ulang",
+                  config.OUTPUT_JOBS_DIR.is_dir()
+                  and config.OUTPUT_CACHE_DIR.is_dir())
+            # Panggilan kedua harus tetap benar walau cache sudah "jadi".
+            config.ensure_output_dirs()
+            check(f"idempoten setelah { hilang.name} dipulihkan",
+                  config.OUTPUT_JOBS_DIR.is_dir())
+            check("berkas lain tetap utuh setelah pemulihan",
+                  (root / "sentinel.txt").is_file())
+
+        # Kasus yang paling sering terjadi di container: `output/` sendiri
+        # hilang di host, jadi mount-nya hilang juga. Berkas di dalamnya ikut
+        # hilang -- itu konsekuensi menghapus folder, bukan bug pemulihan --
+        # tapi foldernya sendiri harus muncul lagi.
+        shutil.rmtree(root, ignore_errors=True)
+        check("output/ hilang total", not root.exists())
+        config.ensure_output_dirs()
+        check("output/ muncul lagi setelah hilang total",
+              root.is_dir()
+              and config.OUTPUT_JOBS_DIR.is_dir()
+              and config.OUTPUT_CACHE_DIR.is_dir())
+        (root / "sentinel.txt").write_text("x", encoding="utf-8")
+        check("bisa langsung menulis setelah hilang total",
+              (root / "sentinel.txt").is_file())
     finally:
         shutil.rmtree(root, ignore_errors=True)
         if ada_awal:
             shutil.move(str(backup), str(root))
     check("folder keluaran asli dipulihkan", root.is_dir())
+
+
+def test_galat_folder_tidak_bisa_dibuat() -> None:
+    """Folder yang benar-benar tidak bisa dibuat harus dijelaskan.
+
+    Tanpa ini, orang yang memegang server hanya melihat `Permission denied`
+    atau errno 2 tanpa tahu harus memeriksa apa. Pesan dari `ensure_dir` menyebut
+    penyebab yang paling sering dan cara memperbaikinya.
+    """
+    print("\n[13] Galat folder yang tidak bisa dibuat dijelaskan")
+    # Bikin file yang menghalangi mkdir pada path yang sama. Ini hasil yang
+    # selalu gagal dengan errno yang bukan "sudah ada", jadi tesnya deterministik.
+    blocker = config.OUTPUT_DIR / ".test_blokir"
+    blocker.parent.mkdir(parents=True, exist_ok=True)
+    blocker.write_text("ini file, bukan folder", encoding="utf-8")
+    try:
+        pesan = ""
+        try:
+            config.ensure_dir(blocker / ".jobs")
+        except RuntimeError as exc:
+            pesan = str(exc)
+        check("ensure_dir melempar RuntimeError, bukan errno mentah",
+              bool(pesan), pesan[:80])
+        check("pesan menyebut cara memperbaikinya",
+              "mkdir -p output" in pesan, pesan[:140])
+        check("pesan menyebut error aslinya",
+              "NotADirectoryError" in pesan or "Errno" in pesan, pesan[:140])
+    finally:
+        blocker.unlink(missing_ok=True)
 
 
 def test_gitignore() -> None:
@@ -374,6 +608,177 @@ def test_identitas_dokumen() -> None:
           "_env_any(\"SEMESTER\"" in cfg and "_env_any(\"UT_DAERAH\"" in cfg)
     check("Settings membuang kunci ejaan lama saat menyimpan",
           "_ENV_LEGACY_KEYS" in server)
+
+
+
+def test_tampilan_dokumen(scratch: Path) -> None:
+    """Empat hal yang selalu dilihat tutor, dicek langsung di XML.
+
+    1. Judul memuat nama dan kode mata kuliah, bukan cuma "Diskusi 4".
+    2. Heading bold, hitam, Times New Roman -- bukan biru Calibri bawaan Word.
+    3. Soal ditulis di depan jawaban; kalau soalnya gambar, gambarnya
+       disisipkan apa adanya.
+    4. Tanda perbandingan `<`, `<>`, `<=` jadi lambang, dan blok `$$`
+       multi-baris jadi Word equation -- bukan teks polos plus satu baris
+       kosong.
+
+    Yang diperiksa lewat XML, bukan teks yang terlihat, karena kesalahan
+    ketiganya justru tidak terlihat di preview: styles.xml masih menyimpan
+    warna biru, dan `<m:oMath>` kosong hanya muncul sebagai ruang kosong.
+    """
+    print("\n[12] Tampilan dokumen: judul, heading, soal, dan matematika")
+    out = scratch / "tampil"
+    out.mkdir(parents=True, exist_ok=True)
+
+    gambar = out / "soal.png"
+    _tulis_png_minimal(gambar)
+
+    md = (
+        "## Jawaban Mahasiswa\n\n"
+        "### Kesimpulan\n\n"
+        "Selesai.\n\n"
+        "## Daftar Pustaka\n\n"
+        "Pamuntjak, R. J. (2022). Aljabar Linear Elementer 2 (MATA4113). "
+        "Universitas Terbuka.\n"
+    )
+    soal = (
+        "- Lokasi: My courses > Aljabar Linear Elementer 95 > Sesi 4\n"
+        "- Jenis konten: forum\n"
+        "- URL sumber: http://127.0.0.1:8765/soal?u=x\n"
+        "- Due: 12 Maret 2026\n"
+        "\n"
+        "Silakan kerjakan diskusi berikut dengan aturan yang berlaku.\n"
+        "\n"
+        "## Lampiran:\n"
+        "- soal.png\n"
+    )
+    docx_path, _ = save_doc(
+        jawaban_md=md,
+        soal_text=soal,
+        meta={
+            "file_base": "tampil",
+            "nama": "Uji",
+            "nim": "1",
+            "kind_label": "Diskusi",
+            "display_index": 4,
+            "matkul": "Aljabar Linear Elementer 95",
+            "matkul_kode": "STMA4113",
+        },
+        out_dir=out,
+        include_soal=True,
+        gambar_soal=[gambar],
+    )
+    doc = Document(str(docx_path))
+    paragraf = [p for p in doc.paragraphs if p.text.strip()]
+    gaya = [(p.style.name if p.style else "") for p in paragraf]
+    isi = [p.text.strip() for p in paragraf]
+
+    # --- 1) Judul ---
+    check("judul memuat nama mata kuliah",
+          any("Aljabar Linear Elementer 95" in t for t in isi[:1]),
+          str(isi[:1]))
+    check("judul memuat kode mata kuliah",
+          any("STMA4113" in t for t in isi[:1]), str(isi[:1]))
+
+    # --- 2) Heading ---
+    for label in ("Soal", "Jawaban Mahasiswa", "Kesimpulan", "Daftar Pustaka"):
+        p = next((p for p in paragraf if p.text.strip() == label), None)
+        check(f"heading '{label}' ada", p is not None)
+        if p is None:
+            continue
+        run = p.runs[0] if p.runs else None
+        check(f"heading '{label}' bold",
+              run is not None and run.bold is True,
+              str(run.bold if run else None))
+        warna = (
+            str(run.font.color.rgb) if run is not None and run.font.color and run.font.color.rgb
+            else None
+        )
+        check(f"heading '{label}' hitam", warna == "000000", str(warna))
+        check(f"heading '{label}' Times New Roman",
+              run is not None and run.font.name == "Times New Roman",
+              str(run.font.name if run else None))
+
+    # --- 3) Soal di depan jawaban ---
+    posisi_soal = next((i for i, t in enumerate(isi) if t == "Soal"), None)
+    posisi_jawab = next(
+        (i for i, t in enumerate(isi) if t == "Jawaban Mahasiswa"), None
+    )
+    check("bagian Soal ada", posisi_soal is not None)
+    check(
+        "Soal ditulis SEBELUM jawaban",
+        posisi_soal is not None
+        and posisi_jawab is not None
+        and posisi_soal < posisi_jawab,
+        f"soal={posisi_soal} jawab={posisi_jawab}",
+    )
+    n_gambar = len(
+        doc.element.body.findall(".//" + qn("a:blip"))
+    )
+    check("gambar soal disisipkan", n_gambar >= 1, str(n_gambar))
+    check("metadata Moodle dibuang dari soal",
+          not any("Lokasi:" in t or "URL sumber:" in t or "Due:" in t for t in isi),
+          str([t for t in isi if "Lokasi:" in t]))
+    check("trailer '## Lampiran:' tidak ikut tercetak",
+          not any(t.startswith("Lampiran:") for t in isi),
+          str([t for t in isi if "Lampiran" in t]))
+
+    # --- 4) Matematika ---
+    md_math = (
+        "## Jawaban Mahasiswa\n\n"
+        "Tanda di prosa: a <= b dan a <> b.\n\n"
+        "$$\n"
+        "a < b\n"
+        "$$\n\n"
+        "$$\n"
+        "\\begin{bmatrix} 1 & 2 \\\\ 3 & 4 \\end{bmatrix}\n"
+        "$$\n\n"
+        "### Kesimpulan\n\n"
+        "Selesai.\n\n"
+        "## Daftar Pustaka\n\n"
+        "Pamuntjak, R. J. (2022). Aljabar Linear Elementer 2. Universitas Terbuka.\n"
+    )
+    math_path, _ = save_doc(
+        jawaban_md=md_math,
+        soal_text="",
+        meta={"file_base": "math", "nama": "Uji", "nim": "1"},
+        out_dir=out,
+        include_soal=False,
+    )
+    mdoc = Document(str(math_path))
+    semua_teks = "\n".join(p.text for p in mdoc.paragraphs)
+    check("`<=` di prosa jadi lambang", "<=" not in semua_teks, "")
+    check("`<>` di prosa jadi lambang", "<>" not in semua_teks, "")
+    check("lambang <= benar-benar muncul", "≤" in semua_teks, "")
+
+    n_math = 0
+    kosong = 0
+    for par in mdoc.paragraphs:
+        for om in par._p.findall(qn("m:oMath")):
+            n_math += 1
+            if not "".join(om.itertext()).strip():
+                kosong += 1
+    check("blok $$ multi-baris jadi Word equation", n_math >= 2, str(n_math))
+    check("tidak ada Word equation kosong", kosong == 0, f"{kosong} dari {n_math}")
+
+    # Sisa dokumen setelah blok matematika harus utuh -- inilah yang rusak
+    # kalau pemroses blok $$ salah menghitung penutupnya.
+    isi_math = [p.text.strip() for p in mdoc.paragraphs if p.text.strip()]
+    check("heading setelah blok matematika tidak hilang",
+          "Kesimpulan" in isi_math, str(isi_math))
+    check("Daftar Pustaka tetap ada setelah blok matematika",
+          any(t == "Daftar Pustaka" for t in isi_math), str(isi_math))
+
+
+def _tulis_png_minimal(path: Path, size: int = 40) -> None:
+    """PNG 1x1 yang diperbesar, supaya tes tidak bergantung pada Pillow."""
+    import base64
+
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8"
+        "BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    path.write_bytes(png)
 
 
 def test_kelas_pixel() -> None:
@@ -508,11 +913,15 @@ def main() -> int:
         test_prompt_optional(scratch)
         test_docx_template(scratch)
         test_identitas_dokumen()
+        test_daftar_pustaka_apa7(scratch)
+        test_nomor_asli_docx(scratch)
+        test_tampilan_dokumen(scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
     test_output_dir()
     test_gitignore()
+    test_galat_folder_tidak_bisa_dibuat()
     test_kelas_pixel()
     test_chrome_mobile_tidak_tertimbun()
 

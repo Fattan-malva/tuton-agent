@@ -15,6 +15,7 @@ aslinya tetap disertakan supaya jejaknya jelas dan bisa di-debug.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from config import Config
@@ -92,6 +93,13 @@ _NO_RESEARCH_RULES = [
     "tulis tepat baris itu di bagian Daftar Pustaka. Jangan mengarang pengganti.",
     "Dalam teks jawaban, boleh merujuk '(Rosen, 2011)' untuk sumber yang memang "
     "ada di daftar. Jangan mengarang sitasi untuk sumber yang tidak ada di sana.",
+    "Format Daftar Pustaka harus persis APA 7: SATU entri per baris, TANPA nomor "
+    "atau bullet di depannya, diurutkan A-Z berdasarkan nama penulis. Nomor "
+    "otomatis Word tidak dipakai di bagian ini, jadi entri yang diberi angka "
+    "akan tampil salah di dokumen.",
+    "Jangan menambah ISBN, jumlah halaman, atau catatan penerbit pada entri "
+    "yang sumbernya bukan katalog resmi Universitas Terbuka. Metadata seperti "
+    "itu tidak bisa diperiksa di luar katalog dan sering dikarang.",
 ]
 
 _OUTPUT_SKELETON = [
@@ -99,8 +107,7 @@ _OUTPUT_SKELETON = [
     "(jawaban untuk setiap soal, gunakan subheading/penomoran sesuai soal: a, b, c, ...)",
     "",
     "## Daftar Pustaka",
-    "1. ...",
-    "2. ...",
+    "<satu entri per baris, tanpa nomor di depan, diurutkan A-Z>",
 ]
 
 # Kerangka jawaban untuk agen penulis. Level heading di sini bukan gaya penulisan:
@@ -120,8 +127,93 @@ _WRITER_SKELETON = [
     "<kesimpulan akhir>",
     "",
     "## Daftar Pustaka",
-    "1. <salinan persis entri pertama dari berkas referensi>",
-    "2. ...",
+    "<salin persis entri pertama dari berkas referensi, satu baris polos tanpa nomor>",
+    "<salin persis entri berikutnya, likewise tanpa nomor>",
+]
+
+# Aturan bahasa orang pertama. Ini bukan selera gaya: jawaban yang ditulis
+# sebagai laporan impersonal gagal tujuan pipeline ini, karena yang dikumpulkan
+# adalah tugas mahasiswa. Bukti masalahnya ada di keluaran lama -- satu jawaban
+# 1365 kata tanpa satu pun kata "saya".
+_POV_RULES = [
+    "Tulis sebagai MAHASISWA yang mengerjakan tugas ini, bukan sebagai laporan "
+    "dan bukan sebagai pengamat luar. Pakai kata \"saya\" untuk "
+    "penilaian, pilihan, dan langkah yang diambil: \"saya memakai tabel "
+    "kebenaran karena ...\", \"menurut saya, ...\", \"langkah pertama yang "
+    "saya lakukan adalah ...\".",
+    "Hindari kalimat orang ketiga tanpa pemilik seperti \"penulis membahas "
+    "...\" atau \"pembahasan dilakukan dengan ...\". Tulis \"saya\" di sana.",
+    "Kata \"kamu\" dan \"anda\" tidak boleh muncul sebagai pengganti "
+    "\"saya\". Dalam tugas pribadi, kata ganti orang kedua berarti jawaban "
+    "ikut menyapa pembaca -- itu langsung terbaca sebagai jawaban mesin.",
+    "Kata \"bayangkan\" DILARANG sama sekali. Kata itu dipakai model sebagai "
+    "jeda di hampir setiap paragraf, jadi keberadaannya sendiri sudah cukup "
+    "membongkar bahwa teks ini bukan tulisan mahasiswa. Ganti dengan \"misalnya\" "
+    "diikuti peristiwanya, atau langsung sebutkan satu kasusnya.",
+    "Jangan tulis pengantar atau penutup yang mengulang bahwa ini adalah "
+    "jawaban. Langsung masuk ke isi soal.",
+]
+
+# Aturan sumber jawaban. Ini bukan persoalan gaya: menyalin jawaban orang
+# lain berarti tugas ini tidak dikerjakan sama sekali, dan pengajar bisa
+# langsung tahu karena jawaban itu terpampang di halaman Diskusi yang sama.
+#
+# Dua jalan masuk yang pernah terjadi:
+#
+# 1. Isi halaman forum. Reader sudah memangkas thread jadi post pembuka saja,
+#    tapi isi post itu sendiri bisa berisi "jawaban teman saya begini" beserta
+#    teks lengkapnya, atau menyalin Structures jawaban yang tertempel.
+# 2. Lampiran yang diunggah mahasiswa lain. Kalau tugas menyuruh mengunduh
+#    lampiran, file di sana bisa milik siapa saja, termasuk jawaban yang
+#    sudah jadi.
+#
+# Karena itu aturan ini dipasang dua kali: di prompt (supaya model tidak mau
+# menyalin) dan di quality gate (supaya hasil yang tetap menyalin ditolak).
+_ORANG_LAIN_RE = re.compile(
+    r"(?:"
+    r"jawaban\s+(?:teman|orang|mahasiswa\s+lain|sejawat|lain)"
+    r"|(?:teman|orang)\s+(?:saya|kamu)\s+(?:menulis|jawaban|menjawab)"
+    r"|(?:dari|kari)\s+(?:thread|diskusi|post)\s+yang\s+(?:dibaca|dilihat)"
+    r"|menyalin|disalin\s+dari|di\s+salin|dikutip\s+dari"
+    r"|setelah\s+membaca\s+jawaban"
+    r"|seperti\s+(?:yang\s+)?ditulis\s+(?:oleh|teman|mahasiswa)"
+    r"|post\s+(?:mahasiswa|reply|balasan)\s+lain"
+    r")",
+    re.IGNORECASE,
+)
+
+# Penghematan waktu. Dua aturan ini bukan soal gaya, tapi dari log run
+# sungguhan keduanya jadi sumber utama pemanggilan yang tidak perlu:
+_HEMAT_RULES = [
+    "Tulis BERKAS JAWABAN itu SEKALI, utuh, lengkap dengan Daftar Pustaka. "
+    "Jangan menulis berkas terpisah lalu menyalinnya, dan jangan menulis "
+    "berkas itu beberapa kali.",
+    "Jangan memakai tool `edit` untuk memperbaiki satu kalimat. Satu pemanggilan "
+    "edit berarti satu putaran bolak-balik dengan model; untuk memperbaiki "
+    "satu kata, tulis ulang paragrafnya dalam penulisan berikutnya. Kalau teks "
+    "memang mengandung karakter non-Latin atau kata asing yang bukan istilah "
+    "matematika, SEMBUNYIKAN sekalian saat menulis ulang -- bukan setelahnya.",
+    "Jangan memanggil `grep` untuk memeriksa hasil kerja sendiri sebelum "
+    "menyerahkannya. Kalau teks sudah ditulis dengan benar, tidak ada "
+    "yang perlu diperiksa.",
+]
+
+_SUMBER_RULES = [
+    "JAWABAN INI HARUS MILIKMU SENDIRI. Kerjakan soalnya sendiri dari bahan "
+    "bacaan yang diberikan (peta soal, bahan ajar sesi, transkrip lampiran).",
+    "DILARANG memakai, menyalin, atau mengikuti gaya jawaban orang lain. Kalau "
+    "di lampiran atau isi forum ada jawaban mahasiswa lain, jawaban itu BUKAN "
+    "bahan mu: jangan diambil isinya, jangan diringkas, jangan dijadikan "
+    "kerangka. Abaikan seluruhnya.",
+    "Kalau sumber yang tersedia ternyata sudah berisi jawaban jadi, tulis "
+    "sendiri dari soal dan istilah pada materi ajar. Jangan menempel kalimat "
+    "yang bukan milikmu, dan jangan menulis frasa yang menyiratkan kamu "
+    "membaca jawaban orang lain seperti \"jawaban teman saya\" atau "
+    "\"seperti yang ditulis mahasiswa lain\".",
+    "Jawaban harus bisa dipertanggungjawabkan dari materimu sendiri. Kalau "
+    "bahan bacaan tidak cukup untuk satu bagian soal, tulis bagian itu dengan "
+    "alasan yang kamu susun sendiri dari konsep dasar, dan sebutkan "
+    "ketidakpastiannya -- jangan isi dengan materi dari luar sesi.",
 ]
 
 
@@ -144,14 +236,30 @@ def _context(work_kind: str, index: int, course_name: str, section_num: int,
     ]
 
 
+# Humanizer: SATU berkas saja, dan berkas itu langsung berkas jawaban.
+#
+# Versi lama menyuruh agent menulis draf ke berkas terpisah, lalu me-humanize
+# draf itu, lalu menyalinnya ke berkas jawaban. Itu tiga operasi file untuk
+# satu hasil, dan dari log run sungguhan kelihatan persis begitu: write draf,
+# write draf (ulang), grep, read, edit, edit, write draf, grep, grep, edit,
+# edit, read, edit, write jawaban, grep -- lima belas panggilan untuk satu
+# jawaban, dan enam di antaranya hanya memperbaiki karakter korup.
+#
+# Sekarang: tulis jawaban LANGSUNG ke berkas jawaban, lalu me-humanize berkas
+# itu in-place. Dua operasi file, dan tidak ada berkas sisa di folder output.
 _HUMANIZER_LINE = (
-    "6. Gunakan skill `humanizer` (load via tool skill) untuk menulis ulang jawaban agar "
-    "terdengar seperti ditulis manusia: hilangkan pola AI (bahasa kaku, kata seperti "
-    "'delve', 'landscape', kalimat berimbuhan berlebihan, dashes, not-X-but-Y, dan "
-    "sejenisnya). Mode embedded: hasil langsung teks final. "
+    "6. Tulis jawaban LANGSUNG ke berkas jawaban yang diperintahkan -- jangan "
+    "buat berkas draf terpisah. Setelah selesai, pakai skill `humanizer` "
+    "(load via tool skill) pada BERKAS YANG SAMA ITU: "
+    "WAJIB mode File, dan serahkan path-nya. Jangan pakai mode pasted, karena "
+    "mode itu mengembalikan draf mentah beserta daftar pola yang tersisa, dan "
+    "kalau tidak dibuang utuh maka label seperti \"Draft:\", \"**Before:**\", "
+    "atau \"Remaining patterns\" ikut masuk ke jawaban -- dan berkas yang "
+    "dikumpulkan ke tutor akan memuat kerangka kerja agen, bukan tulisan "
+    "mahasiswa. "
     "Pertahankan semua fakta, rumus, istilah teknis, dan sitasi. "
-    "Untuk jawaban matematika: berikan langkah penyelesaian sebagai teks + notasi "
-    "matematika teks yang jelas."
+    "Untuk jawaban matematika: berikan langkah penyelesaian sebagai teks + "
+    "notasi matematika teks yang jelas."
 )
 
 _MANFAAT_RULES = [
@@ -337,8 +445,30 @@ def build_writer_prompt(
         )
 
     lines.extend(["", "## Gaya jawaban", *_STYLE_RULES])
+    lines.extend(["", "## Suara jawaban (WAJIB: orang pertama)", *_POV_RULES])
+    lines.extend(["", "## Cara kerja berkas (WAJIB: hemat waktu)", *_HEMAT_RULES])
+    lines.extend(["", "## Sumber jawaban (WAJIB: kerjakan sendiri)", *_SUMBER_RULES])
     lines.extend(["", "## Aturan kejujuran (WAJIB)", *_HONESTY_RULES])
     lines.extend(["", "## Aturan referensi (WAJIB)", *_NO_RESEARCH_RULES])
+    if work_kind == "diskusi":
+        # Di Diskusi, "jawaban yang bagus" bisa berarti milik orang lain, dan
+        # mengikutinya berarti tugas ini tidak dikerjakan. Aturan ini
+        # diletakkan di Diskusi karena jelas di situ, dan hilang di Tugas --
+        # kalau selalu ada, aturan yang tidak berlaku untuk soalnya sendiri
+        # akan dibaca sebagai hiasan yang disembunyikan.
+        lines.extend(
+            [
+                "",
+                "## Forum Diskusi (WAJIB)",
+                "Halaman Diskusi memuat post pemuka (soal resminya) dan balasan "
+                "mahasiswa lain. Post pemuka adalah soalmu. Balasan mahasiswa "
+                "lain BUKAN bahan jawaban: jangan diambil isinya, jangan "
+                "diringkas, dan jangan dijadikan kerangka jawaban.",
+                "Kalau menurutmu ada balasan yang isinya benar, verifikasi "
+                "sendiri terhadap materi ajar, lalu tulis dengan kalimat dan "
+                "urutan milikmu sendiri.",
+            ]
+        )
     lines.extend(
         [
             "",
@@ -579,6 +709,8 @@ def build_referensi_prompt(
     attachment_names: list[str],
     out_path: Path,
     max_refs: int,
+    tahun_min: int | None = None,
+    bahan_ajar: dict | None = None,
 ) -> str:
     """Prompt untuk agen `pencari-pustaka`: daftar referensi untuk satu item.
 
@@ -586,6 +718,11 @@ def build_referensi_prompt(
     penting: daftar referensi untuk satu soal tidak boleh ikut soal lain,
     karena hanya referensi yang benar-benar relevan yang membuat daftar ini
     berguna.
+
+    `bahan_ajar` berisi hasil pembacaan katalog UT (`moodle.bahan_ajar`) kalau
+    sesi ini menunjuk buku resmi. Kalau isinya ada, referensinya SUDAH ditulis
+    pipeline dan agen tidak boleh memanggil model sama sekali; prompt ini hanya
+    disusun untuk kasus cadangan.
     """
     lines = [
         f"Cari daftar pustaka untuk satu soal: {work_kind} ke-{index}, mata kuliah "
@@ -613,12 +750,81 @@ def build_referensi_prompt(
             "kalau kamu punya tool `read`, karena soalnya sering ada di dalam "
             "lampiran dan bukan di halaman."
         )
+
+    if bahan_ajar:
+        # `bahan_ajar` sudah berupa dict hasil `bahan_ajar.find_bahan_ajar`
+        # yang digabung dengan metadata katalog bila halamannya berhasil
+        # diambil. Header menyesuaikan: kalau ada katalog terverifikasi, teks
+        # ini siap disalin apa adanya; kalau tidak, itu konteks saja dan
+        # agen tetap harus memverifikasinya sebelum memakainya.
+        terverifikasi = bool(bahan_ajar.get("judul") and bahan_ajar.get("tahun"))
+        lines.extend(
+            [
+                "",
+                "## Bahan ajar wajib sesi ini",
+            ]
+        )
+        if terverifikasi:
+            lines.append(
+                "Pipeline sudah membaca halaman katalog resminya, jadi entri "
+                "berikut tinggal disalin persis ke Daftar Pustaka:"
+            )
+        else:
+            lines.append(
+                "Halaman sesi menyebut bahan ajar berikut, tapi pipeline tidak "
+                "berhasil membuka katalognya. JADALAH rujukan utama kalau nama "
+                "dan-quantitasnya cocok dengan soal; kalau tidak, cari sumber "
+                "penggantinya dan jangan mengarang metadata yang tidak terlihat."
+            )
+        for kunci, label in (
+            ("judul", "Judul"),
+            ("kode", "Kode mata kuliah"),
+            ("penulis", "Penulis"),
+            ("edisi", "Edisi"),
+            ("modul", "Modul"),
+            ("penerbit", "Penerbit"),
+            ("kota", "Kota terbit"),
+            ("tahun", "Tahun terbit"),
+        ):
+            nilai = bahan_ajar.get(kunci)
+            if nilai:
+                lines.append(f"- {label}: {nilai}")
+        kalimat = bahan_ajar.get("kalimat")
+        if kalimat:
+            lines.append(f"- Kalimat pada halaman sesi: {kalimat}")
+        if bahan_ajar.get("url"):
+            lines.append(f"- Katalog resmi: {bahan_ajar['url']}")
+
+    lines.extend(["", "## Aturan Daftar Pustaka (WAJIB)"])
+    if tahun_min:
+        lines.append(
+            f"- Referensi yang kamu cari sendiri harus terbit tahun "
+            f"**{tahun_min} atau sesudahnya**. Buku/artikel lama hanya boleh masuk "
+            "bila sesi tidak menunjuk bahan ajar apa pun -- dalam kasus itu tulis "
+            "bahan ajar tersebut saja."
+        )
+    lines.extend(
+        [
+            "- **Prioritaskan yang ada di materi sesi.** Baca `## Isi soal` dan "
+            "transkrip lampiran di bawah, lalu ambil buku, modul, atau dokumen "
+            "yang NAMANYA disebut di sana. Referensi yang benar-benar bagian dari "
+            "sesi ini selalu lebih tepat daripada hasil pencarian di luar.",
+            "- Pencarian di luar (websearch/webfetch) bersifat OPSIONAL, hanya "
+            "untuk melengkapi. Jangan mencari kalau materi sesi sudah memberi "
+            "sumber yang cukup.",
+            "- Dilarang mengarang ISBN, nomor halaman, tahun, penerbit, atau DOI. "
+            "Hanya boleh menulis yang benar-benar terlihat di respons.",
+            "- Penulisan: APA 7, TANPA nomor di depan, satu entri satu baris, "
+            "diurutkan alfabetis. Contoh: `Suprapto. (2025). Logika Informatika "
+            "(Edisi 2). Universitas Terbuka.`",
+        ]
+    )
     lines.extend(
         [
             "",
             f"Tulis Daftar Pustaka ke `{out_path}`. Ikuti aturan di definisi agent "
-            "kamu, terutama batas jumlah referensi dan larangan mengarang. Jangan "
-            "menjawab soal.",
+            "kamu, terutama batas jumlah referensi, batas tahun, dan larangan "
+            "mengarang. Jangan menjawab soal.",
         ]
     )
     return "\n".join(lines)

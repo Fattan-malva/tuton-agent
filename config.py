@@ -22,20 +22,72 @@ OUTPUT_CACHE_DIR = OUTPUT_DIR / ".cache"
 WIB = timezone(timedelta(hours=7))
 
 
-def ensure_output_dirs() -> Path:
+def ensure_dir(path: Path) -> Path:
+    """Buat satu folder (bukan hanya leaf) beserta induknya, lalu kembalikan.
+
+    Setiap penulisan ke disk harus lewat sini, karena dua alasan:
+
+    1. `mkdir(parents=True)` hanya menyelesaikan kasus "folder belum pernah
+       dibuat". Kalau foldernya HILANG setelah dibuat -- mount `output/` di
+       container yang di-recreate, `rm -rf output` dari host saat container
+       jalan, atau repo yang di-clone ulang -- pemanggil lama akan gagal
+       dengan `FileNotFoundError` yang tidak menyebut penyebabnya. Di
+       container, `output/` adalah bind-mount dari host, jadi kondisi nyata
+       dan bukan tebakan: folder bisa hilang kapan saja tanpa container
+       ikut berhenti.
+
+    2. Pesan errornya harus bisa dibaca orang yang bukan pemilik server.
+       `FileNotFoundError: '/app/output/.jobs'` tidak memberi tahu apakah
+       masalahnya mount, izin tulis, atau container yang memang belum pernah
+       menjalankan apa pun. Karena itu pesan kesalahannya ditulis di sini."""
+
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    except OSError as first:
+        # Satu percobaan lagi: kalau yang hilang adalah leaf-nya, `parents=True`
+        # sudah harus menanganinya. Retry menutup kasus mount yang baru saja
+        # terpasang dan inode lamanya sudah tidak berlaku.
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        except OSError as exc:
+            raise RuntimeError(
+                f"Tidak bisa menyiapkan folder keluaran '{path}'. "
+                "Penyebab paling sering: folder `output/` di host tidak ada "
+                "atau tidak bisa ditulis (cek izin tulisnya, lalu jalankan "
+                "`podman-compose down && mkdir -p output && podman-compose up -d`), "
+                "atau mount `output/` tidak aktif. "
+                f"Error asli: {first!r} / {exc!r}"
+            ) from exc
+
+
+# Setara True kalau ketiga folder keluaran sudah ada. Dipakai sebagai gerbang
+# cepat supaya pemeriksa per-request tidak melakukan tiga kali `is_dir()` untuk
+# request yang tidak menyentuh disk sama sekali.
+_OUTPUT_DIRS_READY = False
+
+
+def ensure_output_dirs(force: bool = False) -> Path:
     """Buat `output/` beserta subfoldernya kalau belum ada, lalu kembalikan.
 
-    Dipanggil dari setiap titik masuk (`Config.require`, `server.py`, dan
-    `cmd_solve`) supaya folder keluaran selalu ada sebelum ada yang menulis ke
-    sana. Tanpa ini, mengklona repo baru langsung gagal dengan
-    `FileNotFoundError` yang jauh lebih sulit dibaca daripada "folder belum
-    ada".
+    Dipanggil dari setiap titik masuk (`Config.require`, `server.py` termasuk
+    `before_request`, `cmd_solve`, dan setiap penulis di dalam pipeline)
+    supaya folder keluaran selalu ada sebelum ada yang menulis ke sana.
 
-    `exist_ok=True` membuat fungsi ini idempoten dan aman dipanggil dari banyak
-    worker sekaligus.
+    `force=True` melewati cek cepat, dipakai saat server baru start: pada
+    saat itu mount `output/` bisa saja belum terpasang, jadi asumsi "sudah ada"
+    justru penyebab `FileNotFoundError` yang dilaporkan user.
     """
-    for folder in (OUTPUT_DIR, OUTPUT_JOBS_DIR, OUTPUT_CACHE_DIR):
-        folder.mkdir(parents=True, exist_ok=True)
+    global _OUTPUT_DIRS_READY
+    if _OUTPUT_DIRS_READY and not force and all(
+        d.is_dir() for d in (OUTPUT_DIR, OUTPUT_JOBS_DIR, OUTPUT_CACHE_DIR)
+    ):
+        return OUTPUT_DIR
+    ensure_dir(OUTPUT_DIR)
+    ensure_dir(OUTPUT_JOBS_DIR)
+    ensure_dir(OUTPUT_CACHE_DIR)
+    _OUTPUT_DIRS_READY = True
     return OUTPUT_DIR
 
 
@@ -187,19 +239,33 @@ class Config:
     TUTON_HELPER_RETRIES = int(_env("TUTON_HELPER_RETRIES", "1"))
     # Berapa item yang dikerjakan bersamaan (masing-masing = 1 proses
     # `opencode run` independen). Naikkan kalau kuota model masih lega.
-    TUTON_JOBS = int(_env("TUTON_JOBS", "2"))
+    TUTON_JOBS = int(_env("TUTON_JOBS", "4"))
+    # Lebar worker untuk TAHAP PEMETAAN SOAL per sesi (`pemetak-soal`). Sesi-sesi
+    # saling bebas: tiap satu menulis `sesi<N>.md` yang berbeda, jadi tidak ada
+    # yang berebut berkas sama.
+    TUTON_MAP_WORKERS = int(_env("TUTON_MAP_WORKERS", "4"))
+    # Lebar worker untuk TAHAP PENCARIAN PUSTAKA per item. Sama seperti pemetaan:
+    # tiap item menulis `referensi_<kind>_<index>.md` yang berbeda dan hanya
+    # membaca peta sesi yang sudah selesai ditulis sebelumnya.
+    TUTON_HELPER_WORKERS = int(_env("TUTON_HELPER_WORKERS", "4"))
     # Batas keras jumlah referensi di Daftar Pustaka. Ini batas BIAYA, bukan
     # selera: riset adalah langkah termahal per item, dan tiap referensi
     # menambah satu putaran webfetch. Prompt agen `pencari-pustaka` memakai
     # angka yang sama, dan `answer_quality_issues` menolak hasil yang melebihi.
     TUTON_MAX_PUSTAKA = int(_env("TUTON_MAX_PUSTAKA", "5"))
+    # Umur maksimum referensi yang dicari di LUAR materi sesi, dalam tahun.
+    # Rujukan yang memang diminta tutor (bahan ajar wajib sesi) tetap dipakai
+    # berapa pun umurnya, karena yang menentukan soal itu yang menunjuk buku
+    # itu. Referensi tambahan dari luar wajib masuk rentang ini, supaya dokumen
+    # tidak terlihat seperti hasil riset lama.
+    TUTON_PUSTAKA_TAHUN_MAX = int(_env("TUTON_PUSTAKA_TAHUN_MAX", "10"))
     # Worker untuk tahap pra-ambil (verifikasi URL + unduh lampiran) yang
     # network-bound saja, jadi jauh boleh lebih banyak dari TUTON_JOBS.
     TUTON_PREFETCH_WORKERS = int(_env("TUTON_PREFETCH_WORKERS", "6"))
     # Worker khusus transkripsi lampiran. Tiap transkripsi = satu panggilan
     # model vision, jadi dijaga terpisah dari TUTON_JOBS supaya tidak ikut kena
     # rate limit. Transkripsi berjalan otomatis, tanpa perlu memilih model.
-    TUTON_TRANSCRIBE_WORKERS = int(_env("TUTON_TRANSCRIBE_WORKERS", "2"))
+    TUTON_TRANSCRIBE_WORKERS = int(_env("TUTON_TRANSCRIBE_WORKERS", "3"))
     # Port Reader Lokal (server yang menyuntikkan cookie Moodle ke URL yang
     # dibaca agent). 0 = port otomatis.
     TUTON_READER_PORT = int(_env("TUTON_READER_PORT", "8765"))

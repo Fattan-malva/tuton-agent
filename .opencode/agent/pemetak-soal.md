@@ -62,6 +62,26 @@ manusia yang mencari tugas di portal:
    isinya belum kamu periksa, buka. Tujuanmu mencari *semua* soal di sesi ini,
    bukan hanya yang pertama ketemu.
 
+### Yang tidak boleh kamu masukkan ke peta (WAJIB)
+
+Peta soal dibaca agent penulis untuk menjawab. Apa pun yang kamu taruh di sana
+berpindah lagi ke jawaban mahasiswa -- jadi peta yang bocor berarti jawaban ikut
+menyalin.
+
+- **Isi post selain post pemuka.** Kalau post pemuka memuat kutipan jawaban
+  mahasiswa lain, catat bahwa ada kutipan itu; jangan salin kalimatnya.
+- **Lampiran milik mahasiswa lain.** Kalau nama berkas atau konteksnya
+  menunjukkan file itu kiriman mahasiswa (mis. "jawaban-<nama>.docx",
+  "diskusi 2_revisi.docx"), catat sebagai
+  `LAMPIRAN MAHASISWA LAIN, JANGAN DIBACA` beserta alasannya. Jangan buka
+  isinya.
+- **Jawaban jadi yang menempel di halaman** (preview, sitasi, ringkasan).
+  Catat lokasinya saja, jangan isinya.
+
+Kalau tidak ada yang bisa dipetakan tanpa masuk ke sumber-sumber itu, tulis
+begitu di peta. Peta yang jujur lebih berguna daripada peta yang terisi jawaban
+orang lain.
+
 ### Batas eksplorasi (WAJIB dipatuhi)
 
 - Buka **maksimal 12 halaman** untuk satu sesi. Ini batas biaya, bukan saran.
@@ -98,6 +118,28 @@ token agent penulis, jadi jangan lebih dari yang perlu:
 Kalau soal butuh pengetahuan dari materi atau bahan ajar yang dirujuk,
 sebutkan file mana yang perlu dibaca. Jangan menyimpulkan sendiri isinya.
 
+### Bahan ajar wajib sesi ini (WAJIB, satu kali per peta)
+
+Peta soal adalah satu-satunya tempat pipeline membaca halaman sesi sebelum
+mencari referensi di luar. Halaman sesi Universitas Terbuka hampir selalu
+menyebut buku atau modul yang wajib dipakai, jadi bila peta ini tidak
+menyebutkannya, seluruh materi sesi itu hilang: pipeline tidak tahu harus
+mengutip apa, dan-reference yang muncul nanti benar-benar di luar sesi.
+
+Jadi carilah bagian ini dari TEKS HALAMAN SESI, bukan dari tebakan dan
+bukan dari ingatanmu tentang mata kuliah ini:
+
+- Nama lengkap bahan ajar: judul, kode mata kuliah, dan edisi kalau ada.
+- Penulis dan penerbit kalau tertulis di halaman.
+- Nomor modul atau bab, kalau halaman menyebutkannya.
+- URL katalog atau tautan unduh yang muncul di halaman.
+
+Tulis di peta pada bagian `## Bahan ajar wajib sesi ini`, SEBELUM daftar soal.
+Kalau halaman memang tidak menyebut apa pun, tulis satu baris `tidak
+ditemukan` di situ. Jangan mencari di luar halaman sesi untuk mengisi bagian
+ini, dan jangan mengarang buku yang menurutmu pernah dipakai mata kuliah
+ini. Peta yang salah lebih berbahaya daripada peta yang mengakui tidak tahu.
+
 ## Format output
 
 Tulis **satu file Markdown** ke path yang diberikan di prompt. Jangan pakai
@@ -109,6 +151,14 @@ Contoh kerangka:
 ```markdown
 # Peta Soal - <Nama Mata Kuliah> - Sesi <N>
 Halaman yang diperiksa: <n>. Batas: 12.
+
+## Bahan ajar wajib sesi ini
+- Nama: <judul bahan ajar persis seperti tertulis di halaman sesi>
+- Penulis dan penerbit: <kalimat lengkap, atau "tidak disebut">
+- Modul/bab: <nomor, atau "tidak disebut">
+- Tautan: <URL katalog atau unduh, atau "tidak ada">
+- Kutipan dari halaman: <1-2 kalimat yang menyebut bahan ajar ini, atau
+  "tidak ditemukan">
 
 ## Tugas 1 - <Judul>
 - Jenis: tugas
@@ -125,6 +175,9 @@ Halaman yang diperiksa: <n>. Batas: 12.
 ## Diskusi 2 - <Judul>
 ...
 
+## Sumber yang TIDAK boleh dibaca penulis
+- <nama lampiran> - <alasan: kiriman mahasiswa lain / berisi jawaban jadi>
+
 ## Belum diperiksa
 - <tautan + alasan tidak dibuka>
 ```
@@ -132,6 +185,9 @@ Halaman yang diperiksa: <n>. Batas: 12.
 Aturan output:
 - Jangan mengarang. Kalau sebuah field tidak ditemukan di halaman, tulis
   "tidak ditemukan".
+- Dilarang menempel isi jawaban mahasiswa lain ke peta mana pun, termasuk di
+  bagian "Soal yang ditanyakan". Kalau ada kutipan jawaban di dalam halaman
+  resmi, catat bahwa kutipan itu ada, bukan kalimatnya.
 - Kalau **tidak ada soal sama sekali** di sesi ini, tulis file dengan heading
   itu saja dan satu baris "Tidak ada soal ditemukan pada sesi ini." Itu
   informasi yang sah, bukan kegagalan.

@@ -46,7 +46,7 @@ const emptyForm: SettingsForm = {
   opencode_model_helper: '',
   opencode_model_transcribe: '',
   output_dir: './output',
-  jobs: '2',
+  jobs: '4',
   max_pustaka: String(DEFAULT_MAX_PUSTAKA),
 };
 
@@ -351,7 +351,7 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
       // pilihan manual begitu form dikirim.
       opencode_model_transcribe: config?.transcribe_model_configured ?? '',
       output_dir: config?.output_dir ?? './output',
-      jobs: String(runtime?.jobs ?? 2),
+      jobs: String(runtime?.jobs ?? 4),
       max_pustaka: String(runtime?.max_pustaka ?? DEFAULT_MAX_PUSTAKA),
     });
   }, [config]);
@@ -519,13 +519,14 @@ export default function Settings({ config, onSaved, onNotify }: SettingsProps) {
                 name="jobs"
                 type="number"
                 min={1}
-                max={8}
+                max={12}
                 value={form.jobs}
                 onChange={(event) => updateField('jobs', event.target.value)}
               />
               <span className="pixel-helper">
-                Tiap item = 1 proses opencode. Naikkan untuk lebih cepat, turunkan
-                bila sering kena rate limit.
+                Tiap item = 1 proses opencode, dan angka ini juga mengatur
+                pemetaan soal serta pencarian pustaka yang jalan paralel. Naikkan
+                untuk lebih cepat, turunkan bila sering kena rate limit.
               </span>
             </label>
             <label className="pixel-field">

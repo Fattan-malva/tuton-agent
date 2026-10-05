@@ -4,6 +4,7 @@ import mimetypes
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -22,7 +23,15 @@ from flask_cors import CORS
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import Config, OUTPUT_DIR, ensure_output_dirs, stamp_display
+from config import (
+    Config,
+    OUTPUT_CACHE_DIR,
+    OUTPUT_DIR,
+    OUTPUT_JOBS_DIR,
+    ensure_dir,
+    ensure_output_dirs,
+    stamp_display,
+)
 from generator import models, state
 from moodle.auth import MoodleSession
 from moodle.discovery import SourceDiscovery
@@ -56,21 +65,84 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+# Sesi agent yang masih hidup. Dipakai `/api/run/stop` untuk memastikan tidak
+# ada proses yang masih hidup setelah stop: `main.py run` bisa dibesarkan oleh
+# shell, gunicorn, atau start_new_session, sehingga tidak selalu satu grup
+# proses yang bisa dibunuh sekaligus. Daftar ini menutup celah itu.
+def _live_agent_sessions() -> list:
+    """Sesi `opencode run` yang masih berjalan, dari registry runner."""
+    from generator import opencode_runner
+
+    return opencode_runner.live_processes()
+
+
 def _kill_proc_tree(proc: subprocess.Popen) -> None:
-    """Kill sebuah proses beserta seluruh anaknya. Di Windows pakai
-    taskkill /T sehingga opencode/node yang dibesarkan ikut mati (tidak orphan)."""
-    if os.name != "nt":
-        proc.kill()
-        return
-    try:
-        subprocess.run(
-            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-            capture_output=True,
-            timeout=10,
-        )
-    except (subprocess.SubprocessError, OSError):
+    """Matikan satu proses BESERTA seluruh keturunannya, di semua OS.
+
+    Kenapa tidak cukup `proc.kill()`: di Linux/macOS `Popen.kill()` hanya
+    mengirim SIGKILL ke satu PID -- proses `python main.py run` itu sendiri.
+    Semua `opencode run` yang dibesarnya, dan `node` yang dibesarkan
+    `opencode`, adalah proses lain dengan PID lain. Akibatnya tombol Stop
+    terlihat berhasil (log berhenti) sementara sesi-sesi agent tetap jalan,
+    masih memakai kuota, dan masih bisa menulis berkas setelah stop. Di
+    Windows `taskkill /T` sudah menutup dua tingkat itu; di POSIX harus
+    satu proses grup, karena itu child dijalankan dengan `start_new_session=True`
+    dan lalu `killpg`.
+
+    Urutannya TERM lalu KILL: `opencode` dan `node` butuh kesempatan menutup
+    berkas cache-nya sendiri. KILL langsung berbahaya karena berkas transkrip
+    setengah jadi yang lalu dianggap cache valid di run berikutnya.
+    """
+    if os.name == "nt":
         try:
-            proc.kill()
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+            )
+            return
+        except (subprocess.SubprocessError, OSError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            return
+
+    # POSIX: satu grup proses per run, supaya killpg mengenai semua turunannya.
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (OSError, ProcessLookupError):
+        pgid = None
+
+    if pgid is not None and pgid != os.getpgid(0):
+        for sig, tunggu in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)):
+            try:
+                os.killpg(pgid, sig)
+            except (OSError, ProcessLookupError):
+                break
+            try:
+                proc.wait(timeout=tunggu)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    else:
+        # Tidak bisa killpg (grupnya sama dengan server, mis. proses dimulai
+        # tanpa start_new_session). Turun ke signal biasa per-PID.
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                proc.send_signal(sig)
+            except (OSError, ProcessLookupError):
+                break
+            try:
+                proc.wait(timeout=5.0)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+
+    # Sapuan terakhir untuk anak-anak yang somehow lepas dari grup.
+    for sisa in _live_agent_sessions():
+        try:
+            sisa.kill()
         except OSError:
             pass
 
@@ -139,6 +211,14 @@ def run_command_async(cmd: list[str], cwd: Path | None = None) -> dict:
         )
         if os.name == "nt":
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            # Grup proses sendiri. Tanpa ini, `main.py run` dan seluruh
+            # `opencode run` yang dibesarnya berbagi grup dengan server, jadi
+            # `os.killpg` akan membunuh server juga. Dengan grup sendiri,
+            # satu `killpg` mematikan semua sesi agent sekaligus -- inilah
+            # yang membuat tombol Stop benar-benar menghentikan semua proses,
+            # bukan cuma proses induknya.
+            kwargs["start_new_session"] = True
         running_process = subprocess.Popen(cmd, **kwargs)
 
     thread = threading.Thread(target=_read_process_output, args=(running_process,), daemon=True)
@@ -154,6 +234,31 @@ def upload_too_large(_exc):
         "success": False,
         "error": f"Ukuran unggahan melebihi {limit_mb} MB. Kompres file atau tulis soal di kolom teks.",
     }), 413
+
+
+@app.before_request
+def _siapkan_folder_keluaran():
+    """Pastikan `output/`, `.jobs`, dan `.cache` ada sebelum request ditangani.
+
+    Kenapa per-request, bukan cuma saat boot: `output/` di container adalah
+    bind-mount dari host. Folder itu bisa hilang di host (dihapus, dipindah,
+    atau `podman-compose down` sementara) TANPA container berhenti -- sehingga
+    folder yang dibuat saat boot tidak ada lagi padahal server masih hidup.
+    Symtomnya persis yang dilaporkan user: `[Errno 2] No such file or
+    directory: '/app/output/.jobs'` dari endpoint yang tidak pernah memanggil
+    `ensure_output_dirs()`.
+
+    Titik-titik yang menulis ke disk sudah memanggil `ensure_output_dirs()`
+    sendiri, jadi pemeriksa ini cuma acting sebagai pengaman terakhir: ia
+    tidak melakukan apa-apa kalau ketiga folder sudah ada, dan hanya
+    menjalankan tiga `is_dir()` yang sangat murah kalau ada yang hilang.
+    """
+    try:
+        ensure_output_dirs()
+    except RuntimeError as exc:
+        # Jangan dilempar sebagai 500 apa adanya: pesan dari `ensure_dir`
+        # sudah menjelaskan cara memperbaikinya, dan user butuh melihatnya.
+        return jsonify({"success": False, "error": str(exc)}), 503
 
 
 @app.route("/")
@@ -357,7 +462,12 @@ def save_config():
     # tidak diam-diam mengubah perilaku run berikutnya.
     updates.update(
         {
-            "TUTON_JOBS": _positive_int(data.get("jobs"), Config.TUTON_JOBS, maximum=8),
+            # Batas 12, bukan 8. Sebagian besar pekerjaan ada di dua tahap
+            # paralel -- pemetaan soal dan pencarian pustaka -- jadi angka di
+            # sini bukan cuma jumlah proses penulis. Yang lebih tinggi dari
+            # yang bisa ditembus pipeline hanya menambah tekanan rate limit
+            # tanpa mempercepat apa pun.
+            "TUTON_JOBS": _positive_int(data.get("jobs"), Config.TUTON_JOBS, maximum=12),
             "TUTON_TRANSCRIBE": _enum_value(
                 data.get("transcribe"), ("auto", "always", "never"), Config.TUTON_TRANSCRIBE
             ),
@@ -672,6 +782,149 @@ def delete_course(folder: str):
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+# Isi `output/` yang boleh dihapus oleh Reset Hasil. Dipisah dari "hapus semua"
+# karena `state.json` tidak boleh hilang diam-diam: tanpa berkas itu, pipeline
+# menganggap setiap item masih perlu dikerjakan -- dan tidak ada yang bisa
+# menjelaskan kenapa output lama masih ada tapi statusnya pending.
+_KUTU_BIASA_JANGAN_DIHAPUS = {".git"}
+
+
+def _ukuran_folder(path: Path) -> tuple[int, int]:
+    """(jumlah berkas, total byte) di bawah `path`.
+
+    Folder yang tidak bisa dibaca dihitung sebagai nol, bukan membuat reset
+    gagal: nama file-nya sudah diketahui, dan menjatuhkan seluruh reset demi
+    satu folder permissions adalah hasil yang lebih buruk.
+    """
+    jumlah = 0
+    byte = 0
+    for p in path.rglob("*"):
+        try:
+            if p.is_file() and not p.is_symlink():
+                jumlah += 1
+                byte += p.stat().st_size
+        except OSError:
+            continue
+    return jumlah, byte
+
+
+@app.route("/api/results/reset", methods=["POST"])
+def reset_results():
+    """Kosongkan `output/` sepenuhnya: hasil, peta, transkrip, cache halaman.
+
+    Ini memang yang ditanyakan tombol Reset Hasil, jadi cakupannya dibuat
+    total -- bukan hanya berkas .docx yang tampil di tab Result. Kalau cache
+    halaman dan transkripsi ikut tersisa, "reset" tidak berarti apa-apa: run
+    berikutnya masih membaca transcript lama, dan jawaban yang terlah
+    disalin dari mahasiswa lain masih bisa muncul kembali karena transkrip itu
+    masih ada.
+
+    Yang TIDAK dihapus: `template/`, `.env`, dan `moodle_credentials.json`.
+    Reset hasil tidak boleh menghapus template -- berkas itu milik pengguna
+    dan dipakai setiap run.
+
+    Direset juga `state.json` (dikosongkan, bukan dihapus) supaya tab Status
+    tidak menampilkan item `done` untuk berkas yang sudah tidak ada. Dan
+    penanda cache "model pembantu tidak punya webfetch" ikut terhapus,
+    supaya run berikutnya menguji ulang modelnya dari nol.
+    """
+    data = request.get_json(silent=True) or {}
+    keep_cache = bool(data.get("keep_cache"))
+
+    if running_process and running_process.poll() is None:
+        return jsonify({
+            "success": False,
+            "error": "Masih ada proses run yang jalan. Tekan Stop dulu.",
+        }), 409
+
+    # Path yang akan dihapus sudah ditentukan lebih dulu, agar bisa diverifikasi
+    # SEBELUM ada yang dihapus. Salah satu pemeriksaan setelah `rmtree` hanya
+    # bisa melaporkan "gagal", dan saat iturugianya sudah hilang.
+    if not OUTPUT_DIR.is_dir():
+        ensure_output_dirs()
+        return jsonify({
+            "success": True,
+            "message": "Folder keluaran sudah kosong.",
+            "deleted": 0,
+            "files": 0,
+            "bytes": 0,
+            "items": 0,
+        })
+
+    root = OUTPUT_DIR.resolve()
+    target = []
+    for child in sorted(OUTPUT_DIR.iterdir()):
+        if child.name in _KUTU_BIASA_JANGAN_DIHAPUS:
+            continue
+        if keep_cache and child.name == ".cache":
+            continue
+        try:
+            resolved = child.resolve()
+            resolved.relative_to(root)
+        except (OSError, ValueError):
+            continue  # symlink keluar output/ atau tidak bisa dibaca: jangan sentuh
+        target.append((child, resolved.is_dir()))
+
+    total_files = 0
+    total_bytes = 0
+    for child, is_dir in target:
+        if is_dir:
+            n, b = _ukuran_folder(child)
+            total_files += n
+            total_bytes += b
+        else:
+            total_files += 1
+            try:
+                total_bytes += child.stat().st_size
+            except OSError:
+                pass
+
+    gagal: list[str] = []
+    dihapus = 0
+    for child, is_dir in target:
+        try:
+            if is_dir:
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+            dihapus += 1
+        except OSError as exc:
+            gagal.append(f"{child.name}: {exc}")
+
+    # `state.json` ditulis ulang oleh pipeline nanti; yang perlu sekarang hanya
+    # memastikan tidak ada item `done` yang menunjuk berkas yang sudah hilang.
+    items_removed = 0
+    st = state._load()
+    items = st.get("items", {})
+    for k in list(items.keys()):
+        outputs = items[k].get("outputs") or []
+        if not outputs or not any(Path(o).exists() for o in outputs):
+            del items[k]
+            items_removed += 1
+    if items_removed:
+        state.save()
+
+    # Folder keluaran harus hidup lagi sebelum request berikutnya, kalau tidak
+    # `before_request` akan mengembalikan 503 ke semua endpoint.
+    ensure_output_dirs(force=True)
+
+    pesan = f"{dihapus} entri dihapus dari output/ ({total_files} berkas"
+    if keep_cache:
+        pesan += ", cache halaman dipertahankan"
+    pesan += ")."
+    if gagal:
+        pesan += f" {len(gagal)} gagal."
+    return jsonify({
+        "success": not gagal,
+        "message": pesan,
+        "deleted": dihapus,
+        "files": total_files,
+        "bytes": total_bytes,
+        "items": items_removed,
+        "failed": gagal,
+    })
+
+
 @app.route("/api/run", methods=["POST"])
 def run_agent():
     """Run the tuton agent."""
@@ -685,7 +938,7 @@ def run_agent():
     # Pipel ini boleh paralel: tiap item = 1 proses opencode run, jumlah
     # keseluruhan tetap dikendalikan --jobs.
     try:
-        jobs = max(1, min(int(data.get("jobs") or 0) or Config.TUTON_JOBS, 8))
+        jobs = max(1, min(int(data.get("jobs") or 0) or Config.TUTON_JOBS, 12))
     except (TypeError, ValueError):
         jobs = max(1, Config.TUTON_JOBS)
 
@@ -848,7 +1101,7 @@ def solve_soal():
 
     stamp = int(time.time() * 1000)
     ensure_output_dirs()
-    jobs_dir = OUTPUT_DIR / ".jobs"
+    jobs_dir = ensure_dir(OUTPUT_JOBS_DIR)
     text_path = None
     if soal_text:
         text_path = jobs_dir / f"solve_{stamp}.md"
@@ -979,20 +1232,60 @@ def get_run_status():
 
 @app.route("/api/run/stop", methods=["POST"])
 def stop_run():
-    """Stop the running process."""
+    """Hentikan SELURUH proses run: induk pipeline, agen, dan anak-anaknya.
+
+    Urutannya penting. `_kill_proc_tree` lebih dulu membunuh grup proses,
+    karena itu yang memegang `main.py run` beserta semua `opencode run` di
+    bawahnya. Baru sesudah itu daftar sesi yang masih hidup disapu, untuk
+    menangkap anak yang somehow lepas dari grup (mis. dijalankan lewat shell
+    atau `setsid`).
+
+    Jumlah sesi yang ikut mati dikembalikan ke UI. Tanpa angka itu, "Stop"
+    yang terlihat berhasil bisa diam-diam membiarkan proses hidup: user
+    melihat log berhenti, lalu beberapa menit kemudian berkas item muncul
+    tanpa diminta.
+    """
     global running_process
     with process_lock:
-        if running_process and running_process.poll() is None:
-            _kill_proc_tree(running_process)
-            some_ref = running_process
-            process_output.append("user@tuton:~$ Proses dihentikan oleh pengguna")
-            # Tunggu di luar lock supaya thread pembaca bisa flush hasil akhir.
-            try:
-                some_ref.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                some_ref.kill()
-            return jsonify({"success": True, "message": "Process stopped"})
-        return jsonify({"success": False, "error": "No process running"})
+        proses = running_process
+        hidup = proses.poll() is None if proses else False
+        sisa = _live_agent_sessions()
+        if not hidup and not sisa:
+            return jsonify({
+                "success": False,
+                "error": "Tidak ada proses yang sedang berjalan.",
+                "killed": 0,
+            })
+
+    if hidup:
+        _kill_proc_tree(proses)
+        process_output.append(
+            "user@tuton:~$ Proses dihentikan oleh pengguna "
+            f"(1 proses pipeline + {len(sisa)} sesi agen)"
+        )
+        # Tunggu di luar lock supaya thread pembaca bisa flush hasil akhir.
+        try:
+            proses.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proses.kill()
+
+    # Sisa yang lolos dari killpg: bunuh langsung, tanpa log agar tidak
+    # mengotori output setelah stop.
+    for proses_sisa in _live_agent_sessions():
+        try:
+            proses_sisa.kill()
+        except OSError:
+            pass
+
+    return jsonify({
+        "success": True,
+        "message": (
+            f"Semua proses dihentikan: 1 pipeline + {len(sisa)} sesi agen."
+            if hidup
+            else f"{len(sisa)} sesi agen dihentikan."
+        ),
+        "killed": 1 + len(sisa) if hidup else len(sisa),
+    })
 
 
 def _cleanup_stale_jobs(max_age_hours: float = 24.0) -> int:
@@ -1000,7 +1293,7 @@ def _cleanup_stale_jobs(max_age_hours: float = 24.0) -> int:
 
     Tanpa ini upload menggantung menumpuk di output/.jobs selamanya karena file
     hanya dihapus setelah `main.py solve` memindahkannya ke folder lampiran."""
-    jobs_dir = OUTPUT_DIR / ".jobs"
+    jobs_dir = OUTPUT_JOBS_DIR
     if not jobs_dir.is_dir():
         return 0
     cutoff = time.time() - max_age_hours * 3600
@@ -1019,13 +1312,13 @@ if __name__ == "__main__":
     # Folder keluaran disiapkan sebelum apa pun yang menyentuh disk. Dipanggil
     # di sini, bukan hanya di `Config.require`, karena `/api/results` dan
     # `/api/status` tetap harus bisa dilayani walau `.env` belum lengkap.
-    ensure_output_dirs()
+    ensure_output_dirs(force=True)
 
     print("Starting Tuton Agent Web Server...")
     print(f"Output directory: {OUTPUT_DIR}")
     stale = _cleanup_stale_jobs()
     if stale:
-        print(f"Cleaned {stale} stale file(s) in {OUTPUT_DIR / '.jobs'}")
+        print(f"Cleaned {stale} stale file(s) in {OUTPUT_JOBS_DIR}")
     # use_reloader=False: watchdog reloader di Windows mematikan proses run
     # yang sedang berjalan (state process ada di memori). Dev tetap dapat
     # traceback (debug), hanya saja tidak auto-restart di tengah run.

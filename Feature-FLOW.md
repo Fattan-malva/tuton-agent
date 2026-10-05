@@ -29,11 +29,11 @@ menentukan nilai:
 | Instruksi khusus tutor ("minimal 500 kata", "format PDF spasi 1.5") | Jawaban salah bentuk |
 | Pedoman penilaian / rubrik | Nilai turun karena aspek rubrik terlewat |
 | Komposisi nilai & syarat kelulusan | Missed requirement |
-| Konteksi diskusi (post pembuka) | Menjawab pertanyaan yang salah |
+| Konteks diskusi (post pembuka) | Menjawab pertanyaan yang salah |
 | Tampilan instruksi di halaman seksi | Nomor soal tidak sinkron dengan yang diminta dosen |
 
 Dengan AI membaca halaman aslinya, semua itu ikut terbaca dan
-`generator/prompt.py` tinggalятся di URL + aturan kejujuran.
+`generator/prompt.py` tinggal memuat URL + aturan kejujuran.
 
 ---
 
@@ -63,31 +63,36 @@ tuton-agent/
 ├── main.py                        # CLI + orkestrasi pipeline
 ├── config.py                      # Konfigurasi & loader .env
 ├── server.py                      # Web UI (Flask) + endpoint Reader
-│
+ │
 ├── moodle/
-│   ├── auth.py                    # Session + retry/backoff
-│   ├── scraper.py                 # Course/section/activity
-│   ├── reader.py                  # HTML Moodle -> Markdown bersih
-│   ├── reader_server.py           # Server Reader 127.0.0.1
-│   ├── discovery.py               # Kumpulkan + verifikasi URL
-│   ├── downloader.py              # Unduh lampiran
-│   ├── transcribe.py              # Lampiran -> teks (+ cache hash)
-│   └── ocr.py                     # EasyOCR fallback
-│
+ │   ├── auth.py                    # Session + retry/backoff
+ │   ├── scraper.py                 # Course/section/activity
+ │   ├── reader.py                  # HTML Moodle -> Markdown bersih
+ │   ├── reader_server.py           # Server Reader 127.0.0.1
+ │   ├── discovery.py               # Kumpulkan + verifikasi URL
+ │   ├── downloader.py              # Unduh lampiran
+ │   ├── transcribe.py              # Lampiran -> teks (+ cache hash)
+ │   ├── bahan_ajar.py              # Buku resmi + kode matkul dari teks sesi
+ │   ├── lampiran_mahasiswa.py      # Pisahkan lampiran soal vs jawaban teman
+ │   ├── mathlayout.py              # Pola potret -> matriks, tanpa model
+ │   └── ocr.py                     # EasyOCR fallback
+ │
 ├── generator/
-│   ├── state.py                   # State persistence (thread-safe)
-│   ├── models.py                  # Resolver model per peran (writer/helper)
-│   ├── prompt.py                  # Prompt peta, referensi, penulis, form
-│   ├── docx.py                    # Markdown -> Word (OMML, template-driven)
-│   └── opencode_runner.py         # Wrapper subprocess OpenCode CLI
-│
+ │   ├── state.py                   # State persistence (thread-safe)
+ │   ├── models.py                  # Resolver model per peran (writer/helper)
+ │   ├── prompt.py                  # Prompt peta, referensi, penulis, form
+ │   ├── docx.py                    # Markdown -> Word (OMML, lembar jawaban)
+ │   ├── preview.py                 # DOCX -> HTML pratinjau (w:numPr, w:ind)
+ │   └── opencode_runner.py         # Wrapper subprocess OpenCode CLI
+ │
 ├── .opencode/agent/
-│   ├── tuton.md                   # Agen PENULIS jawaban (tanpa riset)
-│   ├── pemetak-soal.md            # Cari + pahami soal, sekali per sesi
-│   ├── mencari-pustaka.md         # Daftar referensi, sekali per item
-│   └── transcriber.md             # Lampiran gambar/PDF -> teks
+ │   ├── tuton.md                   # Agen PENULIS jawaban (tanpa riset)
+ │   ├── pemetak-soal.md            # Cari + pahami soal, sekali per sesi
+ │   ├── pencari-pustaka.md         # Daftar referensi, materi sesi dulu
+ │   └── transcriber.md             # Lampiran gambar/PDF -> teks
 ├── .opencode/skills/humanizer/    # Skill humanizer
-├── template/                      # Template Word (dokumen dasar semua .docx)
+├── tools/rapiapan_template.py     # Periksa/bersihkan template sekali pakai
+├── template/                      # Lembar jawaban (dokumen dasar semua .docx)
 ├── web/                           # Sumber Next.js (build -> web/out)
 ├── frontend/                      # Hasil static export, disajikan server.py
 └── output/
@@ -148,69 +153,105 @@ yang sama, dua kali bayar.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
- │ 1. CONFIG + AUTH                                                    │
- │    Config.require() → cek identitas & sesi                          │
- │    MoodleSession.check_login()                                      │
- │    retry 3x + backoff untuk timeout/5xx (auth.py)                   │
+ │ 1. CONFIG + AUTH                                                     │
+ │    Config.require() → cek identitas & sesi                           │
+ │    MoodleSession.check_login()                                       │
+ │    retry 3x + backoff untuk timeout/5xx (auth.py)                    │
 └──────────────────────────────────────────────────────────────────────┘
                                    ▼
 ┌──────────────────────────────────────────────────────────────────────┐
- │ 2. COURSE & SECTION DISCOVERY (scraper.py)                          │
- │    get_courses() → get_available_sections() → split_assignable()    │
- │    Lewati item yang statusnya sudah `done` (state.json)             │
+ │ 2. COURSE & SECTION DISCOVERY (scraper.py)                           │
+ │    get_courses() → get_available_sections() → split_assignable()     │
+ │    Lewati item yang statusnya sudah `done` (state.json)              │
 └──────────────────────────────────────────────────────────────────────┘
                                    ▼
 ┌──────────────────────────────────────────────────────────────────────┐
- │ TAHAP 0 — PETA SOAL, satu kali per (mata kuliah, sesi)              │
- │   Agent pemetak-soal (model kecil) → output/_petak/sesi<N>.md       │
- │     a. buka halaman seksi, cari soal di MENU APA SAJA               │
- │     b. tulis soal, rubrik, format jawaban, lampiran                │
- │     c. batas keras 12 halaman; tidak menjawab, tidak riset          │
- │   Cache dipakai ulang di run berikutnya.                            │
- │   --remap memaksa buat ulang dari nol.                              │
- │   GAGAL tidak menghentikan pipeline (lihat catatan bawah).          │
+ │ TAHAP 0 — PETA SOAL, satu kali per (mata kuliah, sesi)               │
+ │   Paralel per course (TUTON_MAP_WORKERS, 4):                         │
+ │     a. buka halaman seksi, cari soal di MENU APA SAJA                │
+ │     b. tulis soal, rubrik, format jawaban, lampiran                  │
+ │     c. WAJIB ikut melaporkan '## Bahan ajar wajib sesi ini' -        │
+ │        buku resmi yang disebut halaman sesi                          │
+ │     d. batas keras 12 halaman; tidak menjawab, tidak riset           │
+ │   -> output/_petak/sesi<N>.md. Cache dipakai ulang di run berikutnya.│
+ │   --remap memaksa buat ulang dari nol.                               │
+ │   GAGAL tidak menghentikan pipeline (lihat catatan bawah).           │
 └──────────────────────────────────────────────────────────────────────┘
                                    ▼
 ┌──────────────────────────────────────────────────────────────────────┐
- │ PREFETCH + TRANSKRIPSI — paralel (TUTON_PREFETCH_WORKERS, 6)        │
- │   SourceDiscovery.discover(activity, kind):                         │
- │     a. kumpulkan URL kandidat:                                      │
- │        halaman aktivitas | seksi | thread diskusi | lampiran        │
- │     b. VERIFIKASI tiap URL (reader.verify_url):                     │
- │        HTTP 200, bukan halaman login, isi ≥ 40 karakter             │
- │        atau lampiran ≥ 200 byte                                     │
- │     c. gagal semua → putar ulang tanpa cache (2x)                   │
- │     d. unduh lampiran → output/<Course>/sesi<N>/lampiran/           │
- │   Lalu transkripsi lampiran sesuai TUTON_TRANSCRIBE.                │
- │   Bisa paralel karena hanya menyentuh jaringan/disk.                │
+ │ PREFETCH + TRANSKRIPSI — paralel (TUTON_PREFETCH_WORKERS, 6)         │
+ │   SourceDiscovery.discover(activity, kind):                          │
+ │     a. kumpulkan URL kandidat:                                       │
+ │        halaman aktivitas | seksi | thread diskusi | lampiran         │
+ │     b. VERIFIKASI tiap URL (reader.verify_url):                      │
+ │        HTTP 200, bukan halaman login, isi ≥ 40 karakter              │
+ │        atau lampiran ≥ 200 byte                                      │
+ │     c. gagal semua → putar ulang tanpa cache (2x)                    │
+ │     d. unduh lampiran → output/<Course>/sesi<N>/lampiran/            │
+ │   Lalu transkripsi lampiran sesuai TUTON_TRANSCRIBE.                 │
+ │   Bisa paralel karena hanya menyentuh jaringan/disk.                 │
 └──────────────────────────────────────────────────────────────────────┘
                                    ▼
 ┌──────────────────────────────────────────────────────────────────────┐
- │ TAHAP 1 — DAFTAR PUSTAKA, satu kali per item                        │
- │   Agent mencari-pustaka (model kecil)                               │
- │     → output/<Course>/sesi<N>/referensi_<kind>_<n>.md               │
- │   Batas keras: maksimal TUTON_MAX_PUSTAKA (bawaan 5) entri,         │
- │   maksimal 1 websearch dan 1 webfetch per entri.                    │
- │   Cache per item. GAGAL tidak menghentikan pipeline.                │
+ │ TAHAP 1 — DAFTAR PUSTAKA, satu kali per item                         │
+ │   Jalur 1 (deterministik, tanpa model):                              │
+ │     moodle/bahan_ajar.py membaca 'Bahan ajar wajib sesi ini' dari    │
+ │     peta, lalu mengambil metadata nyata dari katalog UT. Hanya host  │
+ │     pustaka.ut.ac.id / opac.ut.ac.id yang dipercaya.                 │
+ │     Hasil: satu entri APA 7 polos + URL, sekitar 0.4 detik.          │
+ │   Jalur 2 (cadangan, paralel TUTON_HELPER_WORKERS, 4):               │
+ │     Agent mencari-pustaka (model kecil) membaca materi sesi dulu,    │
+ │     baru mencari di luar kalau memang kurang.                        │
+ │     -> output/<Course>/sesi<N>/referensi_<kind>_<n>.md               │
+ │   LAMPIRAN MAHASISWA LAIN DILEWATI: PDF jawaban teman (nama/NIM/
+ │   blok identitas) tidak ikut transkrip dan tidak disebut ke agen.    │
+ │   Batas keras: maksimal TUTON_MAX_PUSTAKA (bawaan 5) entri,          │
+ │   maksimal 1 websearch dan 1 webfetch per entri.                     │
+ │   Entri dari luar sesi harus terbit >= tahun berjalan -              │
+ │   TUTON_PUSTAKA_TAHUN_MAX (bawaan 10). Bahan ajar yang ditunjuk      │
+ │   sesi tetap dipakai walau lebih tua.                                │
+ │   Cache per item. GAGAL tidak menghentikan pipeline.                 │
 └──────────────────────────────────────────────────────────────────────┘
                                    ▼
 ┌──────────────────────────────────────────────────────────────────────┐
- │ TAHAP 2 — MENULIS, satu kali per item (TUTON_JOBS, 2)               │
- │   Satu item = satu proses opencode run (agent tuton)                │
- │     – baca peta + referensi + transkrip lampiran                    │
- │     – webfetch hanya cadangan kalau peta tidak ada                  │
- │     – salin daftar pustaka VERBATIM dari berkas referensi           │
- │     – retry sampai TUTON_RETRIES bila quality gate gagal            │
- │     – quality gate: answer_quality_issues()                         │
- │   Item gagal tidak memblokir item lain.                             │
- │   Log per-thread di-buffer lalu dicetak utuh ber-prefix,            │
- │   jadi dua item tidak saling mengacak barisnya.                     │
+ │ TAHAP 2 — MENULIS, satu kali per item (TUTON_JOBS, 4)                │
+ │   Satu item = satu proses opencode run (agent tuton)                 │
+ │     - baca peta + referensi + transkrip lampiran                     │
+ │     - webfetch hanya cadangan kalau peta tidak ada                   │
+ │     - MENULIS orang pertama: 'saya', bukan orang ketiga              │
+ │     - salin daftar pustaka VERBATIM dari berkas referensi            │
+ │     - quality gate: answer_quality_issues()                          │
+ │       (korup, tanpa Daftar Pustaka, tanpa 'saya', 'bayangkan',       │
+ │        skeleton humanizer bocor, referensi > 10 tahun, ISBN karangan)│
+ │     - gate gagal: tulis ulang satu kali, dan catatan masalahnya      │
+ │       disisipkan ke PROMPT, bukan ke berkas jawaban                  │
+ │     - lalu TUTON_RETRIES ke run berikutnya.                          │
+ │ STOP: satu klik mematikan SELURUH proses (lihat §6).                 │
+ │ Item yang belum selesai tetap pending, bukan failed.                 │
+ │   Log per-thread di-buffer lalu dicetak utuh ber-prefix,             │
+ │   jadi dua item tidak saling mengacak barisnya.                      │
 └──────────────────────────────────────────────────────────────────────┘
                                    ▼
 ┌──────────────────────────────────────────────────────────────────────┐
- │ DOKUMEN & STATE                                                     │
- │   save_doc(soal_text, jawaban_md, meta, template)                   │
- │   state.set_item({... urls: [sumber yang terverifikasi]})           │
+ │ DOKUMEN & STATE                                                      │
+ │   save_doc(jawaban_md, meta, template, include_soal=True,
+ │            gambar_soal=...)
+ │   Judul: "Diskusi 4 - <Mata Kuliah> (<KODE>)"                        │
+ │     - template = lembar jawaban: paragraf judul + tabel identitas    │
+ │       dipertahankan apa adanya; sisanya dibuang mulai Heading 2      │
+ │     - baris identitas tanpa nilai .env DIHAPUS, bukan dibiarkan      │
+ │       (template berisi identitas mahasiswa contoh)                   │
+ │     - penomoran butir memakai fitur List Number Word (w:numPr),      │
+ │       bukan angka yang diketik; tiap daftar punya startOverride      │
+ │     - Soal ditulis di depan jawaban: gambar disisipkan utuh,
+ │       teks ditempel setelah metadata Moodle dibuang
+ │     - Semua heading bold + hitam + Times New Roman (bukan biru Calibri
+ │       bawaan style Heading Word)
+ │     - Tanda ASCII di prosa diganti lambang yang benar
+ │     - Blok `$$` multi-baris jadi Word equation, tanpa equation kosong
+ │     - Daftar Pustaka = APA 7: A-Z, tanpa nomor, baris menggantung    │
+ │       0.5 inci (w:ind left=720 hanging=720)                          │
+ │   state.set_item({..., 'version': 2}) - versi beda = cache-bust      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -274,9 +315,37 @@ Logo, avatar, ikon tipe berkas: `/theme/`, `/theme_`, `/pix/`, `/user/icon/`,
 | **Teks layer PDF lebih dulu** | PDF non-scan diekstrak dengan pymupdf (instan) sebelum memanggil model vision. |
 | **Cache halaman (TTL)** | 1800 detik. Prefetch kedua dan `probe` berulang tidak memukul Moodle. |
 | **Prefetch paralel** | Verifikasi URL + unduh lampiran jaringan murni, 6 worker. |
-| **`--jobs` untuk item** | 2 item = 2 proses `opencode run` bersamaan. Ini pengatur utama. |
+| **Tiga tahap digabung jadi dua paralel** | Peta soal berjalan per mata kuliah (`TUTON_MAP_WORKERS`), tahap daftar pustaka per item (`TUTON_HELPER_WORKERS`). Keduanya murni memanggil agen pembantu, jadi boleh banyak. |
+| **Referensi tanpa model dulu** | `moodle/bahan_ajar.py` membaca teks halaman sesi + katalog UT dan menulis entri APA 7 dalam ~0.4 detik. Model hanya dipakai kalau jalur ini tidak menemukan apa-apa. |
+| **`--jobs` untuk item** | Jumlah proses `opencode run` yang berjalan bersamaan (bawaan 4, batas atas 12). Ini pengatur utama biaya waktu. |
+| **Model pembantu tanpa webfetch dicatat** | Kalau peta gagal karena model tidak punya tool `webfetch`, model itu ditandai di `.cache`; run berikutnya melewati peta seketika. Dari run sungguhan: 35 detik terpakai untuk peta yang pasti gagal. |
+| **Satu berkas jawaban saja** | Draf terpisah dihapus. Humanizer jalan in-place di berkas jawaban, jadi 2 operasi file, bukan 15. |
+| **Catatan kegagalan dikirim ke prompt** | Quality gate menamai frasa yang melanggar, dan pesan itu masuk ke prompt tulis-ulang. Tanpa ini satu kali tulis ulang mengulang kesalahan yang sama. |
 | **Retry 2x, bukan 3x** | Percobaan ketiga mengulang kesalahan yang sama dengan biaya penuh. |
 | **Prompt ramping** | Tidak ada lagi teks soal + transkripsi yang ditempel di prompt. |
+
+### Stop: satu klik, semua proses mati
+
+Tombol Stop dulu hanya menembak satu PID (`Popen.kill()`), sehingga pipeline
+berhenti di layar tapi **semua** `opencode run` dan `node` di bawahnya tetap
+jalan: masih memakai kuota, dan kalau sempat selesai menulis berkas setelah
+stop, berkas itu muncul tanpa diminta. Tiga lapis sekarang menutupnya:
+
+| Lapis | Yang dilakukan | Kenapa perlu |
+|---|---|---|
+| Grup proses | `main.py run` dijalankan dengan `start_new_session=True`, lalu `os.killpg(pgid, SIGTERM)` → `SIGKILL` | Satu sinyal untuk seluruh pohon proses. Windows tetap pakai `taskkill /T`. |
+| Registry proses | `generator/opencode_runner.py` mencatat setiap `Popen` yang hidup: `live_processes()`, `kill_all()`, `request_stop()` | Menangkap anak yang somehow lepas dari grup (mis. lewat shell atau `setsid`) |
+| Batalkan antrean | Future yang belum dimulai dibatalkan (`future.cancel()`); worker yang aktif ditunggu | Tidak membayar token untuk antrean yang memang tidak sempat jalan |
+
+Stop **tidak** sama dengan gagal. Dua-duanya dulu memicu hal yang sama, sehingga
+satu klik Stop cukup mengisi `state.json` dengan `failed` untuk item yang belum
+sempat dikerjakan — dan run berikutnya mengulang pekerjaan itu dari nol. Sekarang
+`RunStopped` (runner) dan `DihentikanUser` (pipeline) dipisahkan dari
+`TimeoutError`, jadi item yang dihentikan tetap `pending`.
+
+`/api/run/stop` mengembalikan `killed` (jumlah proses yang benar-benar dibunuh)
+dan UI menampilkannya. Tanpa angka itu, "Stop" yang gagal terlihat sama dengan
+yang berhasil.
 
 ### Batas biaya vision
 
@@ -293,10 +362,17 @@ per satu dan satu lampiran bisa menahan belasan menit.
 | Satu selector gagal -> soal kosong | 4 sumber URL per item, tiap satu diverifikasi |
 | Sesi Moodle kedaluwarsa | Deteksi halaman login; pesan jelas "perbarui MoodleSession di Settings"; item lain tetap jalan |
 | 1 soal tidak ketemu | Item itu ditandai `failed`, **sisa item di seksi tetap dikerjakan** (perilaku lama: satu gagalan memblokir satu seksi penuh) |
-| URL thread diskusi 404 | `normalize_url()` Merrygabungkan segmen kembar: `/mod/forum/mod/forum/discuss.php` -> `/mod/forum/discuss.php` |
+| URL thread diskusi 404 | `normalize_url()` menggabungkan segmen kembar: `/mod/forum/mod/forum/discuss.php` -> `/mod/forum/discuss.php` |
 | Jawaban korup / tanpa Daftar Pustaka | `answer_quality_issues()` + retry dengan instruksi perbaikan |
-| `state.json` korup saat paralel | Tulis ke `.tmp` lalu rename atomik; `RLock` protects read-modify-write |
-| Log antar item tercampur | stdout diroute per-thread, tiap item di-buffer lalu dicetak utuh ber-prefix |
+| Jawaban orang ketiga, ada kata "bayangkan", atau struktur hasil humanizer bocor | Gate yang sama menamai frasanya, lalu penulis disuruh menulis ulang satu kali |
+| Jawaban ikut menyalin dari mahasiswa lain | Empat lapis: (1) `moodle/lampiran_mahasiswa.py` memisahkan lain dari transkrip DAN dari daftar lampiran yang dilihat agen; (2) peta agent tidak boleh menempel isi post/lampiran mahasiswa lain; (3) prompt penulis melarangnya; (4) gate menolak frasa yang menyebut sumber lain atau teks rapi tanpa kata ganti orang pertama |
+| Referensi di luar sesi lebih tua dari 10 tahun, atau ISBN yang tidak bisa diperiksa | Gate menolak entri per entri, jadi item tidak lolos dengan daftar karangan |
+| Bahan ajar sesi tidak ditemukan di katalog UT | Jalur bahan ajar dianggap gagal, agen pencari referensi tetap jalan dengan konteks materi sesi |
+| Identitas mahasiswa contoh bocor ke berkas hasil | Baris tabel identitas tanpa nilai `.env` dihapus, bukan dibiarkan |
+| `output/` hilang di host tapi container masih jalan | `ensure_output_dirs()` dipanggil per request (`before_request`) dan memulihkan folder yang hilang; `ensure_dir` mengubah galat jadi pesan yang menyebut cara memperbaikinya |
+| Tombol Stop terlihat berhasil tapi proses masih hidup | Grup proses + registry proses + `killed` di respons stop |
+| `state.json` korup saat paralel | Tulis ke `.tmp` lalu rename atomik; `RLock` menjaga baca-modifikasi-tulis |
+| Log antar item tercampur | stdout dirute per-thread, tiap item di-buffer lalu dicetak utuh ber-prefix |
 | Timeout jaringan sesaat | retry 3x + backoff di `MoodleSession._request` |
 
 ---
@@ -338,17 +414,33 @@ dengan cara yang sama: dipakai sebagai dokumen dasar, bukan ditiru. Style
 `Normal`, `Heading 2`, `Heading 3`, dan tabel identitas diambil dari dokumen itu
 supaya perubahan template ikut terbawa.
 
+Template itu berperan sebagai **lembar jawaban**: paragraf judul dan tabel
+identitas dipertahankan apa adanya lalu diisi dari `.env`, dan sisanya —
+rubrik soal, contoh jawaban, Daftar Pustaka contoh — dibuang mulai dari
+`Heading 2` pertama. Karena itu teks soal tidak lagi ikut dicetak
+(`include_soal=False`): soalnya sudah ada di halaman Moodle, dan mencetaknya
+berarti template yang menentukan isinya, bukan penulis.
+
+Baris identitas yang tidak punya nilai di `.env` **dihapus**, bukan
+dibiarkan. Template diisi identitas mahasiswa contoh, jadi baris yang
+dibiarkan berarti nama dan NIM orang lain terbawa ke berkas yang diserahkan
+ke tutor.
+
 ---
 
 ## 9. Konfigurasi
 
 | Variabel | Default | Fungsi |
 |---|---|---|
-| `TUTON_JOBS` | `2` | Item dikerjakan bersamaan |
+| `TUTON_JOBS` | `4` | Item dikerjakan bersamaan (batas atas di Settings: 12) |
+| `TUTON_MAP_WORKERS` | `4` | Item peta soal yang dikerjakan bersamaan |
+| `TUTON_HELPER_WORKERS` | `4` | Agen pembantu (peta + cari referensi) bersamaan |
 | `TUTON_PREFETCH_WORKERS` | `6` | Worker pra-ambil (network-bound) |
+| `TUTON_TRANSCRIBE_WORKERS` | `3` | Worker transkripsi lampiran |
 | `TUTON_TIMEOUT` | `600` | Batas waktu satu item (detik) |
 | `TUTON_RETRIES` | `2` | Percobaan menjawab per item |
 | `TUTON_MAX_PUSTAKA` | `5` | Batas keras referensi per jawaban |
+| `TUTON_PUSTAKA_TAHUN_MAX` | `10` | Referensi luar sesi wajib terbit dalam 10 tahun terakhir |
 | `TUTON_TIMEOUT_HELPER` | `420` | Batas waktu satu pemanggilan agen pembantu |
 | `TUTON_HELPER_RETRIES` | `1` | Percobaan agen pembantu |
 | `OPENCODE_MODEL_HELPER` | (kosong) | Model pemetaan soal + cari referensi. Kosong = pilih otomatis |
@@ -393,9 +485,25 @@ biaya model (karena `run_opencode` di-stub):
 
 | Perintah | Cek | Cakupan |
 |---|---|---|
-| `python verify_reader.py` | 49 | Render Markdown (rubrik, gambar, tautan, forum), guard keamanan, server Reader end-to-end, deteksi model vision, isi prompt |
-| `python test_pipeline.py` | 70 | Rantai penuh URL → docx: discovery, transkripsi, tiga tahap agent, quality gate, template-driven docx, state, CLI |
-| `python test_format.py` | 61 | Field "Format Jawaban" (opsional), berkas format sebagai dokumen dasar, Semester + UT Daerah sampai ke dokumen, nama variabel `.env`, `output/` dibuat otomatis, aturan git, pagar class `pixel-*` |
+| `python verify_reader.py` | 73 | Render Markdown (rubrik, gambar, tautan, forum), guard keamanan, server Reader end-to-end, deteksi model vision, isi prompt, **stop mematikan seluruh proses** (registry, killpg, pembatalan future, pemisahan stop-vs-gagal), pratinjau docx (w:numPr, urut A-Z, baris menggantung) |
+| `python test_pipeline.py` | 129 | Rantai penuh URL → docx: discovery, transkripsi, tiga tahap agent, quality gate (orang pertama, "bayangkan", ISBN, jendela 10 tahun, **menyalin jawaban orang lain**), bahan ajar dari teks halaman, **lampiran jawaban mahasiswa lain dikecualikan**, template-driven docx, state, CLI |
+| `python test_format.py` | 132 | Field "Format Jawaban" (opsional), berkas format sebagai dokumen dasar, Semester + UT Daerah sampai ke dokumen, Daftar Pustaka APA 7 (urut A-Z, tanpa nomor, gantung 0,5 inci), penomoran DOCX native + startOverride, **tampilan dokumen** (judul + kode matkul, heading TNR hitam, soal + gambar, tanda `<`/`<>`/`<=`, blok `$$`), nama variabel `.env`, **pemulihan folder `output/` yang hilang** + pesan galat yang bisa dibaca, aturan git, pagar class `pixel-*` |
+
+Tiga skrip itu adalah ukuran kecepatan juga: semuanya bekerja pada berkas
+lokal dan stub, jadi kegagalan gaya tulis atau format ditemukan dalam
+hitungan detik -- bukan setelah satu sesi berjalan penuh.
+
+Kalau template `template/ContohFormatJawaban.docx` diganti, cek dulu
+sisa isinya:
+
+```
+python tools/rapiapan_template.py --check
+```
+
+Yang dilaporkan hanya sisa setelah `_siapkan_lembar` membuang isi dari
+`Heading 2` pertama. Baris identitas mahasiswa contoh wajib kosong, karena
+baris yang `meta` tidak punya nilainya akan DIHAPUS, bukan dipertahankan
+— kalau tidak, nama dan NIM orang lain ikut masuk ke berkas yang diserahkan.
 
 Stub di `test_pipeline.py` sadar-per-agen: agen peta menulis peta, agen
 pencari-pustaka menulis referensi, dan agen penulis menulis jawaban. Stub juga
