@@ -1146,6 +1146,20 @@ def main() -> int:
         check("berkas lampiran aslinya tetap ada di folder",
               _kiriman.is_file(), "")
 
+        print("\n[19] Prioritas materi sesi harus lebih tinggi dari diskusi")
+        from moodle.discovery import ROLE_DISCUSSION, ROLE_SECTION, SourceLink
+
+        prior = sorted(
+            [
+                SourceLink(url="https://ut/diskusi", role=ROLE_DISCUSSION, ok=True),
+                SourceLink(url="https://ut/section", role=ROLE_SECTION, ok=True),
+            ],
+            key=lambda link: (link.priority, -link.text_len),
+        )
+        check("seksi materi dipilih sebelum diskusi",
+              prior[0].role == ROLE_SECTION,
+              f"urut={ [x.role for x in prior] }")
+
     finally:
         server.shutdown()
         server.server_close()

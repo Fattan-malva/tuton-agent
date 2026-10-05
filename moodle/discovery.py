@@ -25,12 +25,15 @@ from moodle.reader import MoodleReader, _is_asset_url, normalize_url, verify_url
 from moodle.scraper import Activity
 
 # Peran URL, menentukan urutan prioritas dan cara AI membacanya.
+# Urutan ini sengaja mengutamakan materi sesi (`seksi`) di atas diskusi karena
+# di UT, soal dan cara penyelesaian sering ada di halaman materi/bahan ajar,
+# bukan pada thread diskusi atau jawaban mahasiswa lain.
 ROLE_PAGE = "halaman"       # halaman aktivitas (isi soal utama)
-ROLE_SECTION = "seksi"      # halaman course per seksi (instruksi tutor)
+ROLE_SECTION = "seksi"      # halaman course per seksi (instruksi tutor / materi)
 ROLE_DISCUSSION = "diskusi"  # thread diskusi (post pembuka)
 ROLE_ATTACHMENT = "lampiran"  # berkas soal (PDF/gambar/dokumen)
 
-_ROLE_ORDER = {ROLE_PAGE: 0, ROLE_DISCUSSION: 1, ROLE_SECTION: 2, ROLE_ATTACHMENT: 3}
+_ROLE_ORDER = {ROLE_PAGE: 0, ROLE_SECTION: 1, ROLE_DISCUSSION: 2, ROLE_ATTACHMENT: 3}
 
 _THREAD_RE = re.compile(r"(?:mod/forum/)?discuss\.php\?[^\"'#]*", re.I)
 _FILE_EXT_RE = re.compile(
