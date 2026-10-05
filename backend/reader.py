@@ -28,9 +28,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-import config
-import html2md
-import moodle
+from . import config
+from . import html2md
+from . import moodle
 
 
 def _kode(url: str) -> str:
@@ -266,7 +266,7 @@ class Reader:
 
     def _layani_berkas(self, handler, url: str, label: str) -> None:
         """Isi berkas biner, diubah menjadi teks sebelum dikirim."""
-        from attachments import teks_dari_berkas
+        from .attachments import teks_dari_berkas
 
         hasil = teks_dari_berkas(self.klien, url, label=label)
         if hasil.gagal:

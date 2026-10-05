@@ -21,9 +21,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-import config
-import html2md
-import moodle
+from . import config
+from . import html2md
+from . import moodle
 
 # Ekstensi yang isinya sudah berupa teks.
 TEKST_DATANG = {

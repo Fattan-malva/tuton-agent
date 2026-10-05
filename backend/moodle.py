@@ -21,7 +21,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
-import config
+from . import config
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

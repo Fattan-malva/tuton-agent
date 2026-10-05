@@ -33,8 +33,8 @@ from dataclasses import dataclass, field
 
 from bs4 import BeautifulSoup
 
-import config
-import moodle
+from . import config
+from . import moodle
 
 # --------------------------------------------------------------- pola nama
 

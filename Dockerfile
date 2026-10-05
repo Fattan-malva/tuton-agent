@@ -18,4 +18,4 @@ COPY . .
 
 EXPOSE 5000
 
-CMD ["python", "-u", "legacy/server.py"]
+CMD ["python", "-u", "server.py"]

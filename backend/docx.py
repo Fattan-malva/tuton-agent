@@ -2069,7 +2069,7 @@ def _simpan_aman(doc: Document, out_docx: Path) -> Path:
 
 def _default_template_path() -> Path | None:
     """Template standar; `None` kalau folder template tidak ada."""
-    from config import TEMPLATE_DIR
+    from backend.config import TEMPLATE_DIR
 
     if not TEMPLATE_DIR.is_dir():
         return None

@@ -30,13 +30,13 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import attachments
-import config
-import courses
-import html2md
-import moodle
-import reader as reader_mod
-from courses import MataKuliah, Sesi
+from . import attachments
+from . import config
+from . import courses
+from . import html2md
+from . import moodle
+from . import reader as reader_mod
+from .courses import MataKuliah, Sesi
 
 
 class PipelineGagal(Exception):
@@ -623,6 +623,14 @@ class Pipeline:
         self._log(f"  [2/8] {sesi.ringkas()}")
         for c in sesi.catatan:
             self._log(f"        {c}")
+
+        # Section ini tidak punya soal yang bisa dikerjakan (misal matkul
+        # tersebut tidak ada diskusinya): lewati langsung, jangan jalankan
+        # agent -- prompt tanpa soal membuat agent mengulang-ulang.
+        if not sesi.punya_soal:
+            raise PipelineGagal(
+                f"Sesi {self.nomor} pada {self.matkul.label} tidak memuat soal; dilewati."
+            )
 
         # 3. Nyalakan Reader. Semua akses agent ke Moodle lewat sini.
         self.reader = reader_mod.Reader(self.klien)

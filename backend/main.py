@@ -27,10 +27,10 @@ import argparse
 import re
 import sys
 
-import config
-import courses
-import moodle
-from pipeline import Pipeline, PipelineGagal
+from . import config
+from . import courses
+from . import moodle
+from .pipeline import Pipeline, PipelineGagal
 
 GARIS = "=" * 68
 

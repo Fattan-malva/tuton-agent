@@ -15,8 +15,9 @@ from pathlib import Path
 
 # ---------------------------------------------------------------- path kerja
 
-BASE_DIR = Path(__file__).resolve().parent
-TOOLS_DIR = BASE_DIR / "tools"
+BACKEND_DIR = Path(__file__).resolve().parent
+BASE_DIR = BACKEND_DIR.parent
+TOOLS_DIR = BACKEND_DIR
 TEMPLATE_DIR = BASE_DIR / "template"
 
 # `tools/docx.py` mengimpor `from config import TEMPLATE_DIR`, jadi nama di sini
