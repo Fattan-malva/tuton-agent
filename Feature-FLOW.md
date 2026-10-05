@@ -373,7 +373,33 @@ per satu dan satu lampiran bisa menahan belasan menit.
 | Tombol Stop terlihat berhasil tapi proses masih hidup | Grup proses + registry proses + `killed` di respons stop |
 | `state.json` korup saat paralel | Tulis ke `.tmp` lalu rename atomik; `RLock` menjaga baca-modifikasi-tulis |
 | Log antar item tercampur | stdout dirute per-thread, tiap item di-buffer lalu dicetak utuh ber-prefix |
+| Reset Hasil meninggalkan folder yang tidak terhapus | Nama folder yang gagal dikembalikan di `failed`, toast merah menyebutkannya; entri lain tetap terhapus |
 | Timeout jaringan sesaat | retry 3x + backoff di `MoodleSession._request` |
+
+### Reset Hasil: mengosongkan `output/` sampai ke cache
+
+Tombol di tab **Result**. Bukan sekadar menghapus `.docx` yang tampil di
+daftar: kalau cache transkrip ikut tersisa, isi jawaban mahasiswa yang bocor
+ke transkrip masih terbaca pada run berikutnya -- jadi "reset" hanya setengah
+jadi.
+
+| | Dihapus | Dipertahankan |
+|---|---|---|
+| **Reset (cache aman)** | jawaban, peta soal, transkrip, `state.json`, penanda cache model | `output/.cache/` |
+| **Reset Total** | semuanya di atas **plus** cache halaman dan cache transkrip | `template/`, `.env`, `moodle_credentials.json` |
+
+Empat hal yang sengaja dibuat begini:
+
+1. **Ditolak saat masih ada run** (`409`). Menghapus `output/` di tengah pipeline
+   berarti worker yang sedang berjalan menulis ke folder yang tidak ada.
+2. **Jumlah item dihitung sebelum dihapus.** `state.json` ikut terhapus, jadi
+   kalau dihitung sesudahnya angkanya selalu nol -- dan laporan nol tidak bisa
+   dipakai pengguna untuk memastikan apa yang hilang.
+3. **Kegagalan tidak ditelan.** `output/` di container ter-mount dari host dan
+   bisa dimiliki root, jadi `rmtree` kena `Permission denied`. Folder yang
+   gagal diberi tahu namanya dan toastnya merah; entri lain tetap terhapus.
+4. **Folder dibuat ulang setelah reset.** Kalau tidak, `before_request`
+   mengembalikan `503` ke semua endpoint sampai container restart.
 
 ---
 
@@ -485,7 +511,7 @@ biaya model (karena `run_opencode` di-stub):
 
 | Perintah | Cek | Cakupan |
 |---|---|---|
-| `python verify_reader.py` | 73 | Render Markdown (rubrik, gambar, tautan, forum), guard keamanan, server Reader end-to-end, deteksi model vision, isi prompt, **stop mematikan seluruh proses** (registry, killpg, pembatalan future, pemisahan stop-vs-gagal), pratinjau docx (w:numPr, urut A-Z, baris menggantung) |
+| `python verify_reader.py` | 90 | Render Markdown (rubrik, gambar, tautan, forum), guard keamanan, server Reader end-to-end, deteksi model vision, isi prompt, **stop mematikan seluruh proses** (registry, killpg, pembatalan future, pemisahan stop-vs-gagal), pratinjau docx (w:numPr, urut A-Z, baris menggantung), **Reset Hasil** (cache ikut terhapus, cache-aman, 409 saat ada run, laporan kegagalan) |
 | `python test_pipeline.py` | 129 | Rantai penuh URL → docx: discovery, transkripsi, tiga tahap agent, quality gate (orang pertama, "bayangkan", ISBN, jendela 10 tahun, **menyalin jawaban orang lain**), bahan ajar dari teks halaman, **lampiran jawaban mahasiswa lain dikecualikan**, template-driven docx, state, CLI |
 | `python test_format.py` | 132 | Field "Format Jawaban" (opsional), berkas format sebagai dokumen dasar, Semester + UT Daerah sampai ke dokumen, Daftar Pustaka APA 7 (urut A-Z, tanpa nomor, gantung 0,5 inci), penomoran DOCX native + startOverride, **tampilan dokumen** (judul + kode matkul, heading TNR hitam, soal + gambar, tanda `<`/`<>`/`<=`, blok `$$`), nama variabel `.env`, **pemulihan folder `output/` yang hilang** + pesan galat yang bisa dibaca, aturan git, pagar class `pixel-*` |
 

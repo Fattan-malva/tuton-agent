@@ -416,6 +416,146 @@ check("referensi pakai baris menggantung",
       "text-indent:-" in _html, _html[-400:])
 shutil.rmtree(_scratch, ignore_errors=True)
 
+
+# ---------------------------------------------------------------------------
+# 11) Reset Hasil: output/ dibersihkan sampai ke cache
+# ---------------------------------------------------------------------------
+# Reset harus mengosongkan SELURUH output/, bukan hanya .docx yang tampil di
+# tab Result. Kalau cache transkrip ikut tersisa, isi jawaban mahasiswa yang
+# bocor ke transkrip masih terbaca pada run berikutnya -- jadi "reset" hanya
+# setengah jadi.
+#
+# Uji ini memakai folder keluaran sendiri, BUKAN output/ produksi: endpoint ini
+# menghapus semuanya tanpappo overwhelming/tanya, dan test tidak boleh ikut
+# menghapus hasil run pengguna.
+print("\n[11] Reset Hasil mengosongkan output/ sepenuhnya")
+import shutil as _shutil  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+import server as _server  # noqa: E402
+
+_AWAL = {
+    "OUTPUT_DIR": _server.OUTPUT_DIR,
+    "OUTPUT_CACHE_DIR": _server.OUTPUT_CACHE_DIR,
+    "OUTPUT_JOBS_DIR": _server.OUTPUT_JOBS_DIR,
+    "ensure_output_dirs": _server.ensure_output_dirs,
+}
+_SCRATCH = Path("output") / ".verify_reset"
+if _SCRATCH.exists():
+    _shutil.rmtree(_SCRATCH)
+_SCRATCH.mkdir(parents=True, exist_ok=True)
+_server.OUTPUT_DIR = _SCRATCH
+_server.OUTPUT_CACHE_DIR = _SCRATCH / ".cache"
+_server.OUTPUT_JOBS_DIR = _SCRATCH / ".jobs"
+_server.ensure_output_dirs = lambda *a, **k: _server.ensure_dir(_SCRATCH)
+
+_kli = _server.app.test_client()
+
+
+def _isi_berkas(nama: str, isi: str = "isi") -> None:
+    (_SCRATCH / nama).parent.mkdir(parents=True, exist_ok=True)
+    (_SCRATCH / nama).write_text(isi, encoding="utf-8")
+
+
+def _sisa_berkas() -> list[str]:
+    return sorted(str(p.relative_to(_SCRATCH)) for p in _SCRATCH.rglob("*") if p.is_file())
+
+
+try:
+    # 1) Reset ditolak saat masih ada run.
+    import subprocess as _sp  # noqa: E402
+    import sys as _sys  # noqa: E402
+    import time as _time  # noqa: E402
+
+    _server.run_command_async([_sys.executable, "-c", "import time; time.sleep(30)"])
+    _time.sleep(0.4)
+    _r = _kli.post("/api/results/reset", json={})
+    check("reset ditolak saat ada proses run", _r.status_code == 409, str(_r.status_code))
+    _server._kill_proc_tree(_server.running_process)
+    try:
+        _server.running_process.wait(timeout=10)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 2) Reset total: hasil, peta, transkrip, dan cache ikut hilang.
+    _isi_berkas("MK_Uji/sesi1/MK_Tugas1.docx", "PK\x03\x04")
+    _isi_berkas("MK_Uji/_petak/sesi1.md", "peta soal")
+    _isi_berkas(
+        "MK_Uji/sesi1/lampiran/transkrip_diskusi4.md",
+        "Jawaban teman: x = 1, y = 2, z = 3",
+    )
+    _isi_berkas(".cache/pages/a.html", "x" * 100)
+    _isi_berkas(".cache/transkrip/t.txt", "transkrip")
+    _isi_berkas(".cache/helper_tanpa_webfetch/m.flag", "x")
+    _isi_berkas(".jobs/solve_1.pdf", "x")
+
+    _r = _kli.post("/api/results/reset", json={})
+    _d = _r.get_json()
+    check("reset total berhasil", _d.get("success") is True, str(_d)[:160])
+    check("tidak ada berkas tersisa setelah reset total", _sisa_berkas() == [], str(_sisa_berkas()))
+    check("cache ikut terhapus",
+          not list((_SCRATCH / ".cache").rglob("*.html")) if (_SCRATCH / ".cache").is_dir() else True,
+          str(_sisa_berkas()))
+    check("penanda cache model juga terhapus",
+          not (_SCRATCH / ".cache" / "helper_tanpa_webfetch" / "m.flag").is_file(), "")
+    check("laporan menyebut jumlah berkas", int(_d.get("files", 0)) >= 5, str(_d.get("files")))
+    check("laporan menyebut jumlah item state", "item status" in (_d.get("message") or ""),
+          str(_d.get("message"))[:120])
+    check("folder keluaran tetap hidup setelah reset", _SCRATCH.is_dir(), "")
+
+    # Endpoint lain harus tetap bisa dilayani: `before_request` menyiapkan
+    # folder, dan kalau tidak, semua request berikutnya jadi 503.
+    check("/api/health tetap hidup setelah reset", _kli.get("/api/health").status_code == 200, "")
+    check("/api/results tetap hidup setelah reset", _kli.get("/api/results").status_code == 200, "")
+
+    # 3) Reset dengan keep_cache: cache dipertahankan, sisanya hilang.
+    _isi_berkas("MK_Uji/sesi1/MK_Tugas1.docx", "PK\x03\x04")
+    _isi_berkas(".cache/pages/b.html", "y" * 100)
+    _r = _kli.post("/api/results/reset", json={"keep_cache": True})
+    _d = _r.get_json()
+    check("reset cache-aman berhasil", _d.get("success") is True, str(_d)[:160])
+    check("hasil hilang, cache dipertahankan",
+          _sisa_berkas() == [".cache/pages/b.html"], str(_sisa_berkas()))
+    check("pesan menyebut cache dipertahankan",
+          "dipertahankan" in (_d.get("message") or ""), str(_d.get("message"))[:120])
+
+    # 4) Reset yang GAGAL harus dilaporkan sebagai gagal, bukan sukses.
+    #
+    # Kegagalan nyata terjadi di container: `output/` ter-mount dari host dan
+    # foldernya bisa dimiliki root, jadi `rmtree` kena `Permission denied`.
+    # Kasus itu tidak bisa direproduksi lewat `chmod` karena container berjalan
+    # sebagai root -- dan chmod di bawah root diabaikan. Jadi kegagalannya
+    # disuntikkan: nama folder yang harus dihapus dipaksa `rmtree` gagal.
+    #
+    # Yang diuji bukan filesystem-nya, tapi LAPORANNYA: sebagian isi harus
+    # tetap terhapus, dan yang gagal harus disebut namanya.
+    _isi_berkas("MK_A/sesi1/a.docx", "PK\x03\x04")
+    _isi_berkas("MK_B/sesi1/b.docx", "PK\x03\x04")
+    _rw_asli = _server.shutil.rmtree
+
+    def _rmtree_gagal(path, *a, **k):
+        if "MK_B" in str(path):
+            raise OSError(13, "Permission denied")
+        return _rw_asli(path, *a, **k)
+
+    _server.shutil.rmtree = _rmtree_gagal
+    try:
+        _r = _kli.post("/api/results/reset", json={})
+    finally:
+        _server.shutil.rmtree = _rw_asli
+    _d = _r.get_json()
+    check("gagal hapus dilaporkan sebagai gagal", _d.get("success") is False, str(_d)[:160])
+    check("nama entri yang gagal disebut",
+          any("MK_B" in x for x in (_d.get("failed") or [])), str(_d.get("failed")))
+    check("entri lain tetap terhapus walau ada yang gagal",
+          not (_SCRATCH / "MK_A").exists(), str(_sisa_berkas()))
+    check("pesan menyebut jumlah yang gagal",
+          "gagal" in (_d.get("message") or "").lower(), str(_d.get("message"))[:160])
+finally:
+    _shutil.rmtree(_SCRATCH, ignore_errors=True)
+    for k, v in _AWAL.items():
+        setattr(_server, k, v)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 62)
 print(f"LULUS: {len(PASS)}   GAGAL: {len(FAIL)}")
