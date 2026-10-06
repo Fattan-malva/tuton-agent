@@ -49,6 +49,8 @@ _MOODLE_STATUS_CACHE: tuple[float, dict] | None = None
 _MOODLE_STATUS_LOCK = threading.Lock()
 _NILAI_CACHE: tuple[float, dict] | None = None
 _NILAI_LOCK = threading.Lock()
+_JADWAL_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_JADWAL_LOCK = threading.Lock()
 
 
 # ----------------------------------------------------------- multipart
@@ -266,6 +268,37 @@ def _nilai_semua() -> dict:
         except Exception as exc:  # noqa: BLE001
             hasil = {"courses": [], "sesi": [], "error": str(exc)}
         _NILAI_CACHE = (now, hasil)
+        return hasil
+
+
+def _jadwal(cid: str) -> dict:
+    """Jadwal Diskusi & Tugas satu course, di-cache 10 menit.
+
+    Mengambil tanggal `Opened:`/`Due:` dari tiap halaman activity -- bisa
+    belasan request saat pertama kali, jadi hasilnya disimpan di memori
+    dan halamannya sendiri sudah ikut tercache oleh klien Moodle.
+    """
+    with _JADWAL_LOCK:
+        now = time.monotonic()
+        entri = _JADWAL_CACHE.get(cid)
+        if entri and now - entri[0] < 600:
+            return entri[1]
+        try:
+            import moodle  # noqa: PLC0415
+            import courses  # noqa: PLC0415
+
+            klien = moodle.Moodle()
+            matkul = next(
+                (m for m in courses.daftar_mata_kuliah(klien) if m.id == cid),
+                None,
+            )
+            if matkul is None:
+                hasil = {"items": [], "error": "Mata kuliah tidak ditemukan."}
+            else:
+                hasil = {"items": courses.jadwal_mata_kuliah(klien, matkul)}
+        except Exception as exc:  # noqa: BLE001
+            hasil = {"items": [], "error": str(exc)}
+        _JADWAL_CACHE[cid] = (now, hasil)
         return hasil
 
 
@@ -488,6 +521,8 @@ class Handler(BaseHTTPRequestHandler):
                 return _kirim_json(self, MANAGER.courses())
             except Exception as exc:  # noqa: BLE001
                 return _kirim_json(self, {"error": str(exc)}, 400)
+        if path.startswith("/api/jadwal/"):
+            return _kirim_json(self, _jadwal(path.split("/")[3]))
         if path == "/api/results":
             return _kirim_json(self, _results_list())
         if path == "/api/jobs":

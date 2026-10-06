@@ -448,3 +448,76 @@ tr:hover td { background: var(--surface-2); }
   }
   a, button, label, input, select, textarea { touch-action: manipulation; }
 }
+
+/* ---- Courses: baris table & kalender jadwal --------------------------- */
+#course-table tbody tr.bisa-klik { cursor: pointer; }
+#course-table tbody tr.bisa-klik:hover { background: var(--surface-2); }
+#course-table tbody tr.aktif { background: var(--pale-blue); }
+#course-table .lihat-sesi { display: inline-flex; gap: 6px; align-items: center; }
+
+.jadwal-card { min-height: 0; justify-content: flex-start; padding: 16px 18px; }
+.jad-head {
+  display: flex; flex-wrap: wrap; gap: 10px 16px;
+  align-items: center; justify-content: space-between; margin-bottom: 12px;
+}
+.jad-nav { display: flex; align-items: center; gap: 8px; }
+.jad-judul { font-family: var(--serif); font-size: 17px; font-weight: 600; }
+.jad-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0; cursor: pointer;
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--ink-soft);
+}
+.jad-btn:hover { background: var(--surface-2); color: var(--ink); }
+.jad-btn svg { width: 16px; height: 16px; transform: rotate(90deg); }
+.jad-btn-kanan svg { transform: rotate(-90deg); }
+.jad-leg { display: flex; gap: 12px; flex-wrap: wrap; }
+.jad-leg-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); }
+.jad-leg-item i { width: 14px; height: 9px; border-radius: 3px; }
+.jad-leg-item i.diskusi { background: #1f6c9f; }
+.jad-leg-item i.tugas { background: #b5541d; }
+.jad-leg-item i.hari-ini {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--accent); opacity: .75;
+}
+
+.jad-grid { border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+.jad-row {
+  position: relative; display: grid; grid-template-columns: repeat(7, 1fr);
+  border-bottom: 1px solid var(--border); min-width: 540px;
+}
+.jad-row:last-child { border-bottom: none; }
+.jad-head-hari { min-width: 540px; background: var(--surface-2); }
+.jad-head-hari .jad-hari {
+  height: auto; padding: 7px 0; text-align: center;
+  font-size: 11px; font-weight: 600; color: var(--ink-soft);
+}
+.jad-hari {
+  height: 100%; box-sizing: border-box; padding: 4px 6px;
+  font-size: 12px; color: var(--ink-soft);
+  border-right: 1px solid var(--border);
+}
+.jad-hari:nth-child(7n) { border-right: none; }
+.jad-hari.luar { opacity: .35; }
+.jad-hari.ini span {
+  display: inline-block; min-width: 22px; padding: 2px 5px;
+  border-radius: 999px; background: var(--accent); color: #fff; text-align: center;
+}
+
+.jad-bar {
+  position: absolute; display: flex; align-items: center; overflow: hidden;
+  height: 16px; padding: 0 7px; border-radius: 8px;
+  font-size: 11px; line-height: 1; color: #fff; text-decoration: none;
+  white-space: nowrap; transition: filter .15s ease;
+}
+.jad-bar span { overflow: hidden; text-overflow: ellipsis; }
+.jad-bar.diskusi { background: #1f6c9f; }
+.jad-bar.tugas { background: #b5541d; }
+.jad-bar:hover { filter: brightness(1.18); }
+
+@media (max-width: 700px) {
+  .jad-head { flex-direction: column; align-items: flex-start; }
+  .jadwal-card { padding: 12px; }
+  .jad-hari { padding: 3px 3px; font-size: 11px; }
+  .jad-bar { font-size: 10px; padding: 0 5px; }
+}

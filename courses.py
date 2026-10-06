@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 
 from bs4 import BeautifulSoup
 
@@ -540,3 +541,97 @@ def sesi_berisi_soal(
         aktivitas = daftar_aktivitas(klien, matkul, s)
         hasil.append((s, sum(1 for a in aktivitas if a.boleh_ke_soal)))
     return hasil
+
+
+# --------------------------------------------------------------- jadwal
+
+_BULAN_INGGRIS = {
+    "january": 1, "february": 2, "march": 3, "april": 4,
+    "may": 5, "june": 6, "july": 7, "august": 8,
+    "september": 9, "october": 10, "november": 11, "december": 12,
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
+    "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _tanggal_setelah(html: str, label: str) -> str | None:
+    """Ambil tanggal setelah `<strong>Due:</strong>` / `<strong>Opened:</strong>`.
+
+    Teks Moodle berbahasa Inggris, contoh "Monday, 19 October 2026, 3:00 PM".
+    Hanya tanggalnya yang diambil (YYYY-MM-DD); jam dan zona waktu tidak
+    dipakai supaya batas hari di kalender tidak bergeser.
+    """
+    m = re.search(
+        rf"<strong>\s*{label}\s*:\s*</strong>\s*([^<]+)", html, re.I
+    )
+    if not m:
+        return None
+    d = re.search(r"(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})", m.group(1))
+    if not d:
+        return None
+    bulan = _BULAN_INGGRIS.get(d.group(2).lower())
+    if not bulan:
+        return None
+    return f"{int(d.group(3)):04d}-{bulan:02d}-{int(d.group(1)):02d}"
+
+
+def jadwal_mata_kuliah(klien: moodle.Moodle, matkul: MataKuliah) -> list[dict]:
+    """Jadwal Diskusi & Tugas satu course: dari kapan sampai tenggat.
+
+    Sumber tanggalnya halaman masing-masing activity, tempat Moodle
+    menampilkan `Opened:` (kapan dibuka) dan `Due:` (tenggat). Forum di UT
+    biasanya hanya punya `Due:`; untuk baris seperti itu awalnya dihitung
+    dari tenggat activity sebelumnya (hari setelahnya) supaya bar di
+    kalender tetap punya rentang. Penanda `mulai_turunan` menandai
+    tanggal mulai hasil hitungan itu, bukan tanggal buka asli.
+    """
+    sections = daftar_section(klien, matkul)
+    items: list[dict] = []
+    for s in sections:
+        for a in daftar_aktivitas(klien, matkul, s):
+            if a.modtype not in ("forum", "assign") or a.nomor is None:
+                continue
+            if not re.search(r"(diskusi|tugas)", a.nama, re.I):
+                continue
+            try:
+                halaman = klien.ambil(a.url)
+            except Exception:  # noqa: BLE001
+                continue
+            tenggat = _tanggal_setelah(halaman.html, "Due")
+            if not tenggat:
+                continue  # tanpa tenggat baris tidak bisa digambar
+            # Sesi mengikuti tempat activity berada; kalau tidak jelas,
+            # pakai aturan yang sama dengan laporan nilai.
+            sesi = a.section if a.section >= 1 else (
+                a.nomor if a.modtype == "forum" else 2 * a.nomor + 1
+            )
+            items.append(
+                {
+                    "jenis": "Diskusi" if a.modtype == "forum" else "Tugas",
+                    "nomor": a.nomor,
+                    "sesi": sesi,
+                    "nama": a.nama,
+                    "url": a.url,
+                    "mulai": _tanggal_setelah(halaman.html, "Opened"),
+                    "tenggat": tenggat,
+                }
+            )
+
+    items.sort(key=lambda x: x["tenggat"])
+    tenggat_sebelum: date | None = None
+    for it in items:
+        tgl_tenggat = date.fromisoformat(it["tenggat"])
+        tgl_mulai = date.fromisoformat(it["mulai"]) if it["mulai"] else None
+        turunan = False
+        if tgl_mulai is None or tgl_mulai > tgl_tenggat:
+            turunan = True
+            if tenggat_sebelum:
+                tgl_mulai = tenggat_sebelum + timedelta(days=1)
+            else:
+                tgl_mulai = tgl_tenggat - timedelta(days=7)
+            if tgl_mulai > tgl_tenggat:
+                tgl_mulai = tgl_tenggat
+        it["mulai"] = tgl_mulai.isoformat()
+        it["mulai_turunan"] = turunan
+        tenggat_sebelum = tgl_tenggat
+    return items

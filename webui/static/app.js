@@ -909,33 +909,166 @@ VIEWS.courses = async (routeId) => {
   setPills(`<span class="badge">${courses.length} courses</span>`);
   if (!courses.length) { view.innerHTML = '<p class="muted">Tidak ada mata kuliah (cek cookie Moodle).</p>'; return; }
   view.innerHTML = `
-    <table>
+    <p class="muted">Klik satu baris untuk melihat sesi dan jadwal Diskusi/Tugas-nya.</p>
+    <table id="course-table">
       <thead><tr><th>Mata kuliah</th><th>Kode</th><th>Kelas</th><th></th></tr></thead>
       <tbody>
         ${courses.map((c) => `
-          <tr>
+          <tr class="bisa-klik" data-cid="${esc(c.id)}" onclick="loadSessions('${esc(c.id)}', this)">
             <td>${esc(c.nama)}</td>
             <td>${esc(c.kode)}</td>
             <td>${esc(c.kelas)}</td>
-            <td><button class="link icon-link" onclick="loadSessions('${esc(c.id)}', this)">${icon("calendar")}<span>lihat sesi</span></button></td>
+            <td><span class="link lihat-sesi">${icon("calendar")}<span>lihat sesi</span></span></td>
           </tr>`).join("")}
       </tbody>
     </table>
     <div id="course-detail"></div>`;
 };
 
-window.loadSessions = async function (cid, btn) {
+window.loadSessions = async function (cid, tr) {
   const routeId = state.routeId;
   const detail = $("#course-detail");
   if (!detail) return;
-  const list = await api(`/api/courses/${cid}/sessions`).catch(() => []);
+  document.querySelectorAll("#course-table tbody tr").forEach((row) => row.classList.remove("aktif"));
+  const baris = tr || document.querySelector(`#course-table tr[data-cid="${cid}"]`);
+  if (baris) baris.classList.add("aktif");
+  detail.innerHTML = '<p class="muted">Memuat sesi dan jadwal dari Moodle...</p>';
+  const [list, jadwal] = await Promise.all([
+    api(`/api/courses/${cid}/sessions`).catch(() => []),
+    api(`/api/jadwal/${cid}`).catch(() => ({ items: [] })),
+  ]);
   if (routeId !== state.routeId || $("#course-detail") !== detail) return;
+  const items = (jadwal && jadwal.items) || [];
   detail.innerHTML = `
     <div class="section-title">Sesi dengan soal</div>
     <div class="row">
       ${list.map((s) => `<span class="badge blue">Sesi ${s.sesi} — ${s.jumlah} soal</span>`).join("") || '<span class="muted">tidak ada</span>'}
-    </div>`;
+    </div>
+    <div class="section-title">Jadwal Diskusi &amp; Tugas</div>
+    <div class="card jadwal-card" id="jadwal-card"></div>`;
+  pasangJadwal(items, jadwal && jadwal.error);
 };
+
+// Kalender besar: tiap bar adalah rentang Diskusi/Tugas dari tanggal
+// dibuka sampai tenggatnya, memanjang melewati kolom hari.
+function pasangJadwal(items, galat) {
+  const card = $("#jadwal-card");
+  if (!card) return;
+  if (galat) {
+    card.innerHTML = `<p class="muted">Jadwal tidak bisa dimuat: ${esc(galat)}</p>`;
+    return;
+  }
+  if (!items.length) {
+    card.innerHTML = '<p class="muted">Belum ada Diskusi/Tugas dengan tenggat di course ini.</p>';
+    return;
+  }
+
+  const D = (s) => new Date(s + "T00:00:00");
+  const rentang = items.map((it) => ({ ...it, s: D(it.mulai), e: D(it.tenggat) }));
+  const hariIni = new Date();
+  hariIni.setHours(0, 0, 0, 0);
+  const awalBulan = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
+  const akhirBulan = (d) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  const kunci = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+
+  // Mulai dari bulan berjalan; kalau tidak ada jadwal di sana, pindah ke
+  // tenggat terdekat supaya user langsung melihat bar-nya.
+  const diBulanIni = rentang.some((r) => r.s <= akhirBulan(hariIni) && r.e >= awalBulan(hariIni));
+  const berikut = rentang.filter((r) => r.e >= hariIni).sort((a, b) => a.e - b.e)[0];
+  const rujuk = diBulanIni ? hariIni : ((berikut && berikut.e) || rentang[rentang.length - 1].e);
+  let tampil = awalBulan(rujuk);
+
+  const NAMA_HARI = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
+  const NAMA_BULAN = ["Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+  const LANE_H = 20;
+
+  function gambar() {
+    const y = tampil.getFullYear();
+    const m = tampil.getMonth();
+    const pertama = new Date(y, m, 1);
+    const offset = (pertama.getDay() + 6) % 7;   // Senin = kolom 0
+    const gridMulai = new Date(y, m, 1 - offset);
+    const bulanAkhir = new Date(y, m + 1, 0);
+    const jumlahMinggu = Math.ceil((offset + bulanAkhir.getDate()) / 7);
+    const gridAkhir = new Date(gridMulai);
+    gridAkhir.setDate(gridMulai.getDate() + jumlahMinggu * 7 - 1);
+
+    const nampak = rentang
+      .filter((r) => r.s <= gridAkhir && r.e >= gridMulai)
+      .sort((a, b) => a.s - b.s || a.e - b.e);
+    // lane = baris agar bar yang tumpang tindih tidak saling menutupi
+    const akhirLane = [];
+    for (const r of nampak) {
+      let lane = akhirLane.findIndex((t) => t < r.s);
+      if (lane === -1) { lane = akhirLane.length; akhirLane.push(r.e); }
+      else { akhirLane[lane] = r.e; }
+      r.lane = lane;
+    }
+    const tinggiBaris = Math.max(76, 24 + akhirLane.length * LANE_H + 6);
+
+    let rows = "";
+    for (let w = 0; w < jumlahMinggu; w++) {
+      const awal = new Date(gridMulai);
+      awal.setDate(gridMulai.getDate() + w * 7);
+      const akhir = new Date(awal);
+      akhir.setDate(awal.getDate() + 6);
+      let cells = "";
+      for (let d = 0; d < 7; d++) {
+        const tgl = new Date(awal);
+        tgl.setDate(awal.getDate() + d);
+        const cls = ["jad-hari"];
+        if (tgl.getMonth() !== m) cls.push("luar");
+        if (kunci(tgl) === kunci(hariIni)) cls.push("ini");
+        cells += `<div class="${cls.join(" ")}"><span>${tgl.getDate()}</span></div>`;
+      }
+      let bars = "";
+      for (const r of nampak) {
+        if (r.e < awal || r.s > akhir) continue;
+        const cs = r.s < awal ? 0 : Math.round((r.s - awal) / 86400000);
+        const ce = r.e > akhir ? 6 : Math.round((r.e - awal) / 86400000);
+        // label hanya di minggu pertama bar ini tampil di bulan ini,
+        // walau bar-nya sudah dimulai di bulan sebelumnya
+        const hari0 = Math.max(0, Math.round((r.s - gridMulai) / 86400000));
+        const awalSeg = w === Math.floor(hari0 / 7);
+        const left = (cs / 7) * 100;
+        const width = ((ce - cs + 1) / 7) * 100;
+        const label = awalSeg ? `<span>${esc(r.jenis)} ${r.nomor}</span>` : "";
+        const ket = `${r.nama} — Sesi ${r.sesi} · ${r.mulai} → ${r.tenggat}`
+          + (r.mulai_turunan ? " (awal dihitung dari tenggat sebelumnya)" : "");
+        bars += `<a class="jad-bar ${r.jenis.toLowerCase()}" href="${esc(r.url)}" target="_blank" rel="noopener"
+          title="${esc(ket)}"
+          style="left:calc(${left}% + 3px); width:calc(${width}% - 6px); top:${24 + r.lane * LANE_H}px">${label}</a>`;
+      }
+      rows += `<div class="jad-row" style="height:${tinggiBaris}px">${cells}${bars}</div>`;
+    }
+
+    card.innerHTML = `
+      <div class="jad-head">
+        <div class="jad-nav">
+          <button class="jad-btn" data-nav="-1" aria-label="Bulan sebelumnya">${icon("chevron")}</button>
+          <strong class="jad-judul">${NAMA_BULAN[m]} ${y}</strong>
+          <button class="jad-btn jad-btn-kanan" data-nav="1" aria-label="Bulan berikutnya">${icon("chevron")}</button>
+        </div>
+        <div class="jad-leg">
+          <span class="jad-leg-item"><i class="diskusi"></i>Diskusi</span>
+          <span class="jad-leg-item"><i class="tugas"></i>Tugas</span>
+          <span class="jad-leg-item"><i class="hari-ini"></i>Hari ini</span>
+        </div>
+      </div>
+      <div class="jad-grid">
+        <div class="jad-row jad-head-hari">${NAMA_HARI.map((h) => `<div class="jad-hari">${h}</div>`).join("")}</div>
+        ${rows}
+      </div>`;
+    card.querySelectorAll("[data-nav]").forEach((b) => {
+      b.addEventListener("click", () => {
+        tampil = new Date(tampil.getFullYear(), tampil.getMonth() + Number(b.dataset.nav), 1);
+        gambar();
+      });
+    });
+  }
+  gambar();
+}
 
 VIEWS.settings = async (routeId) => {
   const items = await api("/api/settings");
