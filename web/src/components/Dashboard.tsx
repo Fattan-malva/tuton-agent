@@ -130,7 +130,7 @@ export default function Dashboard() {
     }
     try {
       const res = await apiClient.startRun({
-        course_id: Number(runCourse),
+        course_id: (runCourse === 'all' ? ('all' as unknown as number) : Number(runCourse)),
         sesi: Number(runSesi),
         kind: runKind as 'all' | 'tugas' | 'diskusi',
       });
@@ -293,6 +293,7 @@ export default function Dashboard() {
                       <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Mata Kuliah</label>
                       <select value={runCourse} onChange={(e) => setRunCourse(e.target.value)} className="w-full bg-slate-50 border border-cardBorder rounded-2xl px-4 py-3 text-sm text-slate-800 appearance-none focus:outline-none focus:border-amber-500 shadow-inner">
                         <option value="">Pilih mata kuliah...</option>
+                        <option value="all">Semua Mata Kuliah</option>
                         {courses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                       </select>
                     </div>

@@ -95,7 +95,7 @@ def _kill_tree(proc: subprocess.Popen) -> int:
     return killed
 
 
-def _read_output(proc: subprocess.Popen, state_key: str | None, matkul: str, sesi: Any) -> None:
+def _read_output(proc: subprocess.Popen, state_key: str | None, matkul: str, sesi: Any, slug: str | None = None) -> None:
     global running_process, _process_start_time, _current_state_key, process_output
     try:
         while True:
@@ -115,11 +115,15 @@ def _read_output(proc: subprocess.Popen, state_key: str | None, matkul: str, ses
         duration = round(time.time() - _process_start_time, 1)
         outputs: list[str] = []
         if state_key:
-            mk_dirs = sorted(cfg.OUTPUT_DIR.glob("*/sesi-*"))
-            for d in cfg.OUTPUT_DIR.glob("*"):
-                sd = d / f"sesi-{sesi}"
+            if slug:
+                sd = cfg.OUTPUT_DIR / slug / f"sesi-{sesi}"
                 if sd.is_dir():
                     outputs.extend(str(p) for p in sorted(sd.glob("*.docx")))
+            else:
+                for d in cfg.OUTPUT_DIR.glob("*"):
+                    sd = d / f"sesi-{sesi}"
+                    if sd.is_dir():
+                        outputs.extend(str(p) for p in sorted(sd.glob("*.docx")))
             if rc == 0:
                 _state_set(
                     state_key,
@@ -154,7 +158,7 @@ def _read_output(proc: subprocess.Popen, state_key: str | None, matkul: str, ses
             _current_state_key = None
 
 
-def run_command_async(cmd: list[str], cwd: str | None, state_key: str | None, matkul: str, sesi: Any) -> dict:
+def run_command_async(cmd: list[str], cwd: str | None, state_key: str | None, matkul: str, sesi: Any, slug: str | None = None) -> dict:
     global running_process, process_output, _process_start_time, _current_state_key
     with process_lock:
         if running_process is not None and running_process.poll() is None:
@@ -182,7 +186,7 @@ def run_command_async(cmd: list[str], cwd: str | None, state_key: str | None, ma
             created_at=time.strftime(STAMP),
             outputs=[],
         )
-    threading.Thread(target=_read_output, args=(running_process, state_key, matkul, sesi), daemon=True).start()
+    threading.Thread(target=_read_output, args=(running_process, state_key, matkul, sesi, slug), daemon=True).start()
     return {"success": True, "message": "Process started"}
 
 
@@ -555,11 +559,23 @@ def run_agent():
     body = request.get_json(silent=True) or {}
     course_id = body.get("course_id")
     sesi = body.get("sesi")
+    # "all" / "semua" -> proses seluruh mata kuliah berurutan untuk sesi ini.
+    if str(course_id).lower() in ("all", "semua", "*"):
+        try:
+            sesi_int = int(sesi)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "sesi harus angka"}), 400
+        state_key = f"all:sesi-{sesi_int}"
+        cmd = [sys.executable, "-u", "-m", "backend.main", "--semua", "--sesi", str(sesi_int)]
+        result = run_command_async(cmd, cwd=str(cfg.BASE_DIR), state_key=state_key, matkul="Semua Mata Kuliah", sesi=sesi_int)
+        return jsonify(result)
+
     try:
         course_id_int = int(course_id) if course_id is not None else None
         sesi_int = int(sesi) if sesi is not None else None
     except (TypeError, ValueError):
         return jsonify({"success": False, "error": "course_id dan sesi harus angka"}), 400
+
     if course_id_int is None or sesi_int is None:
         return jsonify({"success": False, "error": "course_id dan sesi wajib diisi"}), 400
     try:
@@ -568,7 +584,7 @@ def run_agent():
         return jsonify({"success": False, "error": str(e)}), 404
     state_key = f"{course_id_int}:sesi-{sesi_int}"
     cmd = [sys.executable, "-u", "-m", "backend.main", "--matkul", m["name"], "--sesi", str(sesi_int)]
-    result = run_command_async(cmd, cwd=str(cfg.BASE_DIR), state_key=state_key, matkul=m["name"], sesi=sesi_int)
+    result = run_command_async(cmd, cwd=str(cfg.BASE_DIR), state_key=state_key, matkul=m["name"], sesi=sesi_int, slug=m["folder_name"])
     return jsonify(result)
 
 
@@ -612,8 +628,9 @@ def solve():
 
     ts = int(time.time())
     state_key = f"solve:{ts}"
+    slug = cfg.slugify(title) or "kustom"
     cmd = [sys.executable, "-u", "-m", "backend.solve", "--title", title, "--sesi", str(sesi), "--soal", soal_text, "--state-key", state_key]
-    result = run_command_async(cmd, cwd=str(cfg.BASE_DIR), state_key=state_key, matkul=title, sesi=sesi)
+    result = run_command_async(cmd, cwd=str(cfg.BASE_DIR), state_key=state_key, matkul=title, sesi=sesi, slug=slug)
     return jsonify(result)
 
 

@@ -98,7 +98,7 @@ def _sesi_per_mata_kuliah(
     for mk in daftar:
         try:
             hasil[mk.id] = {
-                s for s in courses.daftar_section(klien, mk) if s > 0
+                s for s, jumlah in courses.sesi_berisi_soal(klien, mk) if jumlah > 0
             }
         except moodle.MoodleError as exc:
             print(f"  ! Gagal membaca section {mk.nama}: {exc}")
