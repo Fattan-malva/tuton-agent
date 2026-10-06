@@ -45,85 +45,56 @@ export default function Login({ onAuthenticated }: LoginProps) {
   };
 
   return (
-    <main className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-primary px-4 py-10">
-      <div className="pixel-world" aria-hidden="true" />
+    <main className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-brandBg px-4 py-10">
       <div className="relative z-10 w-full max-w-md">
-        <div className="pixel-panel-strong px-6 py-8 sm:px-9 sm:py-10">
+        <div className="bg-cardBg border border-cardBorder rounded-3xl px-6 py-8 sm:px-9 sm:py-10 shadow-lg">
           <div className="mb-8 text-center">
-            <div className="pixel-logo-large mx-auto mb-5" aria-hidden="true">
-              <Cpu size={34} strokeWidth={2.4} />
+            <div className="w-12 h-12 rounded-2xl bg-accentLight text-amber-600 flex items-center justify-center font-bold text-xl mx-auto mb-4 border border-accentPrimary/20">
+              <Cpu size={26} />
             </div>
-            <h1 className="font-display text-xl leading-snug text-text sm:text-2xl">Tuton Agent</h1>
-            <p className="mt-2 font-terminal text-[10px] uppercase tracking-[0.16em] text-accent">
-              Auto-Grader &amp; Submission Controller
-            </p>
+            <h1 className="font-bold text-xl text-slate-900">Tuton Agent</h1>
+            <p className="mt-2 text-xs font-semibold text-amber-600 uppercase tracking-wider">Auto-Grader &amp; Submission Controller</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label htmlFor="username" className="pixel-label">Username Moodle / Admin</label>
-              <div className="relative">
-                <User className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={17} aria-hidden="true" />
+              <label htmlFor="username" className="block text-xs font-semibold text-slate-500 uppercase">Username</label>
+              <div className="relative mt-1">
+                <User className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
                 <input
                   id="username"
-                  name="username"
                   type="text"
-                  autoComplete="username"
                   value={username}
-                  onChange={(event) => setUsername(event.target.value)}
+                  onChange={(e) => setUsername(e.target.value)}
                   placeholder="Masukkan username"
-                  className="pixel-input pixel-input-icon w-full"
+                  className="w-full bg-slate-50 border border-cardBorder rounded-2xl pl-10 pr-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"
                   disabled={isLoading}
                 />
               </div>
             </div>
 
             <div>
-              <label htmlFor="password" className="pixel-label">Kata Sandi</label>
-              <div className="relative">
-                <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={17} aria-hidden="true" />
+              <label htmlFor="password" className="block text-xs font-semibold text-slate-500 uppercase">Kata Sandi</label>
+              <div className="relative mt-1">
+                <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
                 <input
                   id="password"
-                  name="password"
                   type="password"
-                  autoComplete="current-password"
                   value={password}
-                  onChange={(event) => setPassword(event.target.value)}
+                  onChange={(e) => setPassword(e.target.value)}
                   placeholder="Masukkan kata sandi"
-                  className="pixel-input pixel-input-icon w-full"
+                  className="w-full bg-slate-50 border border-cardBorder rounded-2xl pl-10 pr-4 py-3 text-slate-800 focus:outline-none focus:border-amber-500 shadow-inner"
                   disabled={isLoading}
                 />
               </div>
             </div>
 
-            {error && (
-              <div className="pixel-alert pixel-alert-error" role="alert">
-                {error}
-              </div>
-            )}
+            {error && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-2xl px-4 py-3">{error}</div>}
 
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="pixel-button pixel-button-primary w-full justify-center"
-            >
-              {isLoading ? (
-                <>
-                  <LoaderCircle className="animate-spin" size={18} aria-hidden="true" />
-                  <span>Memverifikasi...</span>
-                </>
-              ) : (
-                <>
-                  <span>Akses Sistem</span>
-                  <ArrowRight size={18} aria-hidden="true" />
-                </>
-              )}
+            <button type="submit" disabled={isLoading} className="w-full py-3.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-2xl transition shadow-md shadow-amber-500/20 flex items-center justify-center space-x-2">
+              {isLoading ? (<><LoaderCircle className="animate-spin" size={18} /><span>Memverifikasi...</span></>) : (<><span>Akses Sistem</span><ArrowRight size={18} /></>)}
             </button>
           </form>
-
-          <div className="mt-7 border-t-2 border-border pt-4 text-center">
-            <p className="font-terminal text-[9px] uppercase tracking-[0.14em] text-muted">Secure local controller</p>
-          </div>
         </div>
       </div>
     </main>

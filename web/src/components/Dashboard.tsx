@@ -214,16 +214,17 @@ export default function Dashboard() {
 
   return (
     <div className="bg-brandBg text-slate-700 font-sans min-h-screen md:h-screen flex flex-col md:overflow-hidden select-none">
-      {/* Mobile nav */}
-      <nav className="md:hidden flex overflow-x-auto bg-sidebarBg border-b border-cardBorder text-xs font-semibold shrink-0">
+      {/* Mobile nav: tombol di bawah layar */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 flex overflow-x-auto bg-sidebarBg border-t border-cardBorder text-xs font-semibold shadow-lg">
         {(['status', 'result', 'run', 'form', 'settings'] as TabId[]).map((id) => (
-          <button key={id} onClick={() => setTab(id)} className={`px-4 py-3 whitespace-nowrap ${tab === id ? 'text-amber-600' : 'text-slate-500'}`}>
-            {TITLES[id].replace(' Pekerjaan', '').replace(' Dokumen', '').replace(' Sistem', '')}
+          <button key={id} onClick={() => setTab(id)} className={`flex-1 min-w-[64px] flex flex-col items-center gap-1 px-3 py-2.5 whitespace-nowrap ${tab === id ? 'text-amber-600 border-t-2 border-amber-500' : 'text-slate-500'}`}>
+            <i className={`fa-solid ${id === 'status' ? 'fa-chart-pie' : id === 'result' ? 'fa-folder-open' : id === 'run' ? 'fa-play' : id === 'form' ? 'fa-file-pen' : 'fa-sliders'}`}></i>
+            <span className="text-[10px]">{TITLES[id].replace(' Pekerjaan', '').replace(' Dokumen', '').replace(' Sistem', '')}</span>
           </button>
         ))}
       </nav>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden pb-[52px] md:pb-0">
         {/* Sidebar */}
         <aside className="hidden md:flex w-72 bg-sidebarBg border-r border-cardBorder flex-col justify-between shrink-0 shadow-sm z-20">
           <div>
@@ -543,7 +544,10 @@ export default function Dashboard() {
                           </select>
                         </div>
                       </div>
-                      <div className="flex justify-end pt-4">
+                      <div className="flex justify-end pt-4 space-x-3">
+                        <button onClick={() => { window.localStorage.removeItem('tuton_logged_in'); window.location.reload(); }} className="px-6 py-3.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold rounded-2xl transition text-sm tracking-wide flex items-center space-x-2">
+                          <i className="fa-solid fa-arrow-right-from-bracket"></i><span>Keluar</span>
+                        </button>
                         <button onClick={saveSettings} className="px-6 py-3.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-2xl transition shadow-md shadow-amber-500/20 flex items-center space-x-2 text-sm tracking-wide">
                           <i className="fa-solid fa-floppy-disk"></i><span>Simpan Settings</span>
                         </button>
