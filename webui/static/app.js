@@ -1212,7 +1212,7 @@ $("#logout").addEventListener("click", async () => {
   });
   if (!ya) return;
   state.sesi = false;
-  await api("/api/logout").catch(() => {});
+  await api("/api/logout", { method: "POST" }).catch(() => {});
   location.hash = "#dashboard";
   showLogin();
 });

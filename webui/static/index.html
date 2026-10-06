@@ -4,9 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tuton — Dashboard Pipeline</title>
-  <!-- Ikon tab memakai icons.png asli; apple-touch-icon (PNG180 di atas
-       latar putih) dipakai iOS saat ditambahkan ke layar utama, karena iOS
-       mengabaikan kanal alpha dan menganggap area transparan jadi hitam. -->
+  <!-- Ikon tab memakai icons.png asli; apple-touch-icon (PNG180 full-bleed,
+       opaque) dipakai iOS saat ditambahkan ke layar utama. Area transparan
+       sudah di-crop ke bidang solid berwarna sama dengan bg ikon, jadi mask
+       iOS tidak meninggalkan cincin putih di sekeliling ikon. -->
   <link rel="icon" type="image/png" sizes="1254x1254" href="/static/icons/icons.png" />
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
   <meta name="theme-color" content="#f7f6f3" />
