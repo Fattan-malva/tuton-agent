@@ -348,16 +348,16 @@ VIEWS.agents = async (routeId) => {
 };
 
 VIEWS.results = async (routeId) => {
-  const jobs = await api("/api/jobs");
+  const files = await api("/api/results").catch(() => []);
   if (routeId !== state.routeId) return;
+  const list = Array.isArray(files) ? files : [];
   const groups = new Map();
-  for (const job of jobs) {
-    if (job.status !== "done" || !job.hasil || !job.hasil.docx) continue;
-    const matkul = String(job.matkul || "Mata kuliah").trim() || "Mata kuliah";
+  for (const f of list) {
+    const matkul = String(f.slug || "Lainnya").replace(/-/g, " ");
     if (!groups.has(matkul)) groups.set(matkul, []);
-    groups.get(matkul).push(job);
+    groups.get(matkul).push(f);
   }
-  const total = [...groups.values()].reduce((count, files) => count + files.length, 0);
+  const total = list.length;
   setPills(`<span class="badge">${total} DOCX</span>`);
   if (!total) {
     view.innerHTML = '<div class="empty-state"><h2>Belum ada hasil</h2><p>Dokumen DOCX dari tugas yang selesai akan muncul di sini.</p></div>';
@@ -372,14 +372,16 @@ VIEWS.results = async (routeId) => {
             <span class="badge">${files.length} DOCX</span>
           </header>
           <ul class="result-files">
-            ${files.map((job) => {
-              const filename = String(job.hasil.docx).split(/[\\/]/).pop();
-              const tanggal = job.dibuat
-                ? new Date(Number(job.dibuat) * 1000).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })
+            ${files.map((f) => {
+              const tanggal = f.waktu
+                ? new Date(Number(f.waktu) * 1000).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })
                 : "";
-              const detail = [`Sesi ${job.sesi || "—"}`, job.jenis || (job.kind === "manual" ? "Input manual" : "Tugas"), tanggal].filter(Boolean).join(" · ");
-              return `<li><a class="result-file" href="/api/download/${encodeURIComponent(job.id)}" title="Unduh ${esc(filename)}">
-                ${icon("file")}<span class="result-file-main"><strong>${esc(filename)}</strong><small>${esc(detail)}</small></span>${icon("download")}
+              const mb = (Number(f.ukuran || 0) / 1048576).toFixed(2);
+              const detail = [String(f.sesi || "").replace("sesi-", "Sesi "), `${mb} MB`, tanggal].filter(Boolean).join(" · ");
+              const rel = `${f.slug}/${f.sesi}/${f.nama}`;
+              const href = `/api/download-output/${rel.split("/").map(encodeURIComponent).join("/")}`;
+              return `<li><a class="result-file" href="${href}" title="Unduh ${esc(f.nama)}">
+                ${icon("file")}<span class="result-file-main"><strong>${esc(f.nama)}</strong><small>${esc(detail)}</small></span>${icon("download")}
               </a></li>`;
             }).join("")}
           </ul>
@@ -423,16 +425,13 @@ VIEWS.buat = async (routeId) => {
     <div id="pane-manual" class="hidden">
       <div class="row">
         <div class="col"><label class="field">Mata kuliah</label>
-          <input id="mn-matkul" placeholder="nama mata kuliah"></div>
-        <div class="col"><label class="field">Kode</label>
-          <input id="mn-kode" placeholder="ALEA4213"></div>
-        <div class="col"><label class="field">Kelas</label>
-          <input id="mn-kelas" placeholder="95"></div>
+          <select id="mn-matkul"><option value="">— memuat —</option></select></div>
         <div class="col"><label class="field">Sesi</label>
           <input id="mn-sesi" type="number" value="1" min="1"></div>
         <div class="col"><label class="field">Jenis</label>
           <select id="mn-jenis"><option>Tugas</option><option>Diskusi</option></select></div>
       </div>
+      <div id="mn-matkul-info" class="files-note"></div>
       <label class="field">Soal (tempel teks)</label>
       <textarea id="mn-soal" placeholder="Tempel rumusan soal di sini..."></textarea>
       <label class="field">Unggah berkas soal (doc, pdf, gambar, dll) — bisa banyak</label>
@@ -471,6 +470,19 @@ VIEWS.buat = async (routeId) => {
   if (!sel) return;
   sel.innerHTML = '<option value="">— pilih —</option>' +
     courses.map((c) => `<option value="${esc(c.id)}">${esc(c.nama)}${c.kode ? " (" + esc(c.kode) + ")" : ""}</option>`).join("");
+
+  const mnSel = $("#mn-matkul");
+  if (mnSel) {
+    mnSel.innerHTML = '<option value="">— pilih —</option>' +
+      courses.map((c) => `<option value="${esc(c.id)}" data-nama="${esc(c.nama)}" data-kode="${esc(c.kode)}" data-kelas="${esc(c.kelas)}">${esc(c.nama)}${c.kode ? " (" + esc(c.kode) + ")" : ""}</option>`).join("");
+    mnSel.addEventListener("change", () => {
+      const opt = mnSel.selectedOptions[0];
+      const info = $("#mn-matkul-info");
+      if (info) info.textContent = opt && opt.value
+        ? `Kode: ${opt.dataset.kode || "-"} · Kelas: ${opt.dataset.kelas || "-"}`
+        : "";
+    });
+  }
 
   sel.addEventListener("change", async () => {
     const changeRouteId = state.routeId;
@@ -517,10 +529,12 @@ VIEWS.buat = async (routeId) => {
 
   $("#mn-submit").addEventListener("click", async () => {
     const submitRouteId = state.routeId;
+    const opt = $("#mn-matkul").selectedOptions[0];
+    if (!opt || !opt.value) { $("#mn-msg").textContent = "Pilih mata kuliah."; return; }
     const fd = new FormData();
-    fd.append("matkul_nama", $("#mn-matkul").value);
-    fd.append("matkul_kode", $("#mn-kode").value);
-    fd.append("matkul_kelas", $("#mn-kelas").value);
+    fd.append("matkul_nama", opt.dataset.nama || "");
+    fd.append("matkul_kode", opt.dataset.kode || "");
+    fd.append("matkul_kelas", opt.dataset.kelas || "");
     fd.append("sesi", $("#mn-sesi").value);
     fd.append("jenis", $("#mn-jenis").value);
     fd.append("question", $("#mn-soal").value);
@@ -553,7 +567,38 @@ VIEWS.log = async (routeId) => {
       <div class="col log-action"><button class="btn" id="log-go">${icon("play")}<span>Tampilkan</span></button></div>
     </div>
     ${stoppable ? `<div class="log-stop-row"><button class="btn danger" id="log-stop">${icon("stop")}<span>Hentikan job</span></button></div>` : ""}
-    <div class="console" id="console" style="margin-top:16px"><span class="muted">Pilih job lalu tekan Tampilkan.</span></div>`;
+    <div class="console-bar">
+      <span id="console-spinner" class="spinner hidden"></span>
+      <span id="console-status" class="console-status">siap</span>
+      <span class="spacer"></span>
+      <span class="btns">
+        <button class="btn sm" id="log-copy" type="button">Salin</button>
+        <button class="btn sm" id="log-clear" type="button">Bersihkan</button>
+        <button class="btn sm" id="log-follow" type="button" aria-pressed="true">Gulir otomatis</button>
+      </span>
+    </div>
+    <div class="console" id="console"><span class="muted">Pilih job lalu tekan Tampilkan.</span></div>`;
+
+  state.logFollow = state.logFollow !== false;
+  const followBtn = $("#log-follow");
+  followBtn.setAttribute("aria-pressed", String(state.logFollow));
+  followBtn.addEventListener("click", () => {
+    state.logFollow = !state.logFollow;
+    followBtn.setAttribute("aria-pressed", String(state.logFollow));
+    const c = $("#console");
+    if (state.logFollow && c) c.scrollTop = c.scrollHeight;
+  });
+  $("#log-clear").addEventListener("click", () => {
+    const c = $("#console");
+    if (!c) return;
+    c.innerHTML = '<span class="ln info">Log dibersihkan. Menunggu baris baru<span class="dots"></span></span>';
+  });
+  $("#log-copy").addEventListener("click", async () => {
+    const c = $("#console");
+    if (!c) return;
+    try { await navigator.clipboard.writeText(c.innerText); }
+    catch (e) { /* clipboard ditolak */ }
+  });
 
   $("#log-sel").innerHTML = '<option value="">— pilih job —</option>' +
     jobs.map((j) => `<option value="${esc(j.id)}">${esc(j.id)} · ${esc(j.matkul)} · ${esc(j.status)}</option>`).join("");
@@ -588,15 +633,22 @@ async function attach(id, routeId = state.routeId) {
   const consoleEl = $("#console");
   if (!consoleEl) return;
   consoleEl.innerHTML = "";
+  consoleEl.classList.remove("live");
+  const statusEl = $("#console-status");
+  const spinEl = $("#console-spinner");
+  if (statusEl) { statusEl.textContent = "menghubungkan"; statusEl.className = "console-status running"; }
+  if (spinEl) spinEl.classList.remove("hidden");
   const evs = await api(`/api/jobs/${id}/events`).catch(() => []);
   if (routeId !== state.routeId || $("#console") !== consoleEl) return;
   evs.forEach((e) => appendLine(consoleEl, e));
-  consoleEl.scrollTop = consoleEl.scrollHeight;
+  if (state.logFollow !== false) consoleEl.scrollTop = consoleEl.scrollHeight;
 
   if (state.es) state.es.close();
   if (routeId !== state.routeId) return;
   const es = new EventSource(`/api/jobs/${id}/stream`);
   state.es = es;
+  consoleEl.classList.add("live");
+  if (statusEl) { statusEl.textContent = "mengalir"; statusEl.className = "console-status running"; }
   es.onmessage = (ev) => {
     if (routeId !== state.routeId || $("#console") !== consoleEl) {
       es.close();
@@ -605,7 +657,7 @@ async function attach(id, routeId = state.routeId) {
     }
     try { appendLine(consoleEl, JSON.parse(ev.data)); }
     catch (e) { /* abaikan */ }
-    consoleEl.scrollTop = consoleEl.scrollHeight;
+    if (state.logFollow !== false) consoleEl.scrollTop = consoleEl.scrollHeight;
   };
   es.addEventListener("done", (event) => {
     if (routeId !== state.routeId || $("#console") !== consoleEl) {
@@ -613,18 +665,36 @@ async function attach(id, routeId = state.routeId) {
       if (state.es === es) state.es = null;
       return;
     }
+    consoleEl.classList.remove("live");
     const d = document.createElement("span");
     d.className = "ln info";
     let status = "done";
     try { status = JSON.parse(event.data).status || status; }
     catch (e) { /* abaikan */ }
-    d.textContent = status === "stopped" ? "\n=== job dihentikan ===" : "\n=== job selesai ===";
+    d.textContent = status === "stopped" ? "\n=== job dihentikan ==="
+      : status === "error" ? "\n=== job gagal ===" : "\n=== job selesai ===";
     consoleEl.appendChild(d);
-    consoleEl.scrollTop = consoleEl.scrollHeight;
+    if (state.logFollow !== false) consoleEl.scrollTop = consoleEl.scrollHeight;
     es.close();
     if (state.es === es) state.es = null;
+    if (statusEl) {
+      statusEl.textContent = status === "error" ? "gagal"
+        : status === "stopped" ? "dihentikan" : "selesai";
+      statusEl.className = "console-status " + (status === "error" ? "error"
+        : status === "stopped" ? "stopped" : "done");
+    }
+    if (spinEl) spinEl.classList.add("hidden");
   });
-  es.onerror = () => { if (routeId !== state.routeId) es.close(); };
+  es.onerror = () => {
+    if (routeId !== state.routeId) {
+      es.close();
+      return;
+    }
+    if (consoleEl.isConnected && state.es === es) {
+      if (statusEl) statusEl.textContent = "mencoba ulang";
+      if (spinEl) spinEl.classList.remove("hidden");
+    }
+  };
 }
 
 function appendLine(consoleEl, e) {

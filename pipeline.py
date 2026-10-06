@@ -809,10 +809,31 @@ class Pipeline:
             self._tahap_jawaban(referensi, soal_teks)
             if not self.tanpa_docx:
                 self._tahap_docx(soal_teks)
+                if self.hasil.docx:
+                    self._bersihkan_kerja()
         finally:
             self.reader.berhenti()
 
         return self.hasil
+
+    def _bersihkan_kerja(self) -> None:
+        """Hapus folder `_kerja` mata kuliah ini setelah dokumen jadi.
+
+        Lampiran PDF, halaman render, montase, gambar soal, dan draf jawaban
+        menumpuk puluhan--ratusan MB per sesi. Begitu DOCX berhasil ditulis,
+        semuanya tidak lagi dibutuhkan dan hanya membuat disk membengkak,
+        jadi folder kerja satu mata kuliah dihapus utuh. Hasil akhir tetap
+        bisa diunduh dari `output/`.
+        """
+        akar = config.KERJA_DIR / self.matkul.slug
+        if not akar.is_dir():
+            return
+        try:
+            shutil.rmtree(akar)
+        except OSError as exc:
+            self._log(f"  ! Folder kerja {akar} gagal dibersihkan: {exc}")
+            return
+        self._log(f"  [bersih] {akar} dihapus; dokumen akhir ada di output/")
 
     # ----------------------------------------------- jalur input manual
 
@@ -904,6 +925,8 @@ class Pipeline:
             self._tahap = "5/5 docx"
             self._log("  [5/5] Membuat dokumen .docx...")
             self._tahap_docx(pertanyaan)
+            if self.hasil.docx:
+                self._bersihkan_kerja()
         else:
             self._log("  [5/5] Tahap DOCX dilewati (--tanpa-docx)")
         return self.hasil
@@ -956,10 +979,15 @@ class Pipeline:
             config.output_dir(self.matkul.slug, self.nomor)
             / f"{self.matkul.slug}-sesi-{self.nomor}.docx"
         )
-        selesai = jawaban.is_file() and jawaban.stat().st_size > 500 and docx.is_file() and docx.stat().st_size > 4096
+        # Folder `_kerja` dihapus begitu DOCX jadi, jadi berkas jawaban tidak
+        # boleh jadi syarat skip: kalau ya, sesi yang sudah selesai akan
+        # dikerjakan ulang dari nol hanya karena artefak kerjanya sudah
+        # dibersihkan. DOCX di `output/` saja sudah cukup jadi penanda.
+        selesai = docx.is_file() and docx.stat().st_size > 4096
         if selesai:
-            self.hasil.jawaban = jawaban
             self.hasil.docx = docx
+            if jawaban.is_file():
+                self.hasil.jawaban = jawaban
         return selesai
 
     # ------------------------------------------------------ 4. kumpulkan soal
@@ -1171,14 +1199,10 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
             for a in self.hasil.sesi.materi
             if a.modtype == "resource" and a.url
         ]
-        # Lampiran soal yang menempel pada posting forum. Forum Diskusi UT
-        # sering menyimpan soal sebagai lampiran, bukan sebagai resource di
-        # halaman section, jadi tidak terlihat dari `sesi.materi`.
-        for a in self.hasil.sesi.soal:
-            if a.modtype == "forum" and a.url:
-                pasangan.extend(
-                    attachments.cari_lampiran_forum(self.klien, a.url)
-                )
+        # Lampiran dari posting forum dan balasan mahasiswa TIDAK diambil.
+        # Itu jawaban mahasiswa lain: mengunduhnya membuang unduhan, dan
+        # mengirimkannya ke model vision membuang waktu transcribing diskusi
+        # yang tidak punya hubungan dengan bahan ajar resmi.
         if not pasangan:
             self._log("  [5/8] Tidak ada lampiran bahan ajar untuk diunduh")
             return []

@@ -89,6 +89,33 @@ def _parse_multipart(body: bytes, boundary: str) -> list[tuple[str, str | None, 
 # ------------------------------------------------------------- helpers
 
 
+def _results_list() -> list[dict]:
+    """Daftar DOCX yang ada di disk, dari folder kerja.
+
+    Sumber kebenaran hasil adalah folder `output/`, bukan state job di
+    memori: setelah server di-restart, job lama hilang dari memori padahal
+    berkasnya tetap ada. Tanpa ini tab Result kosong walau output penuh.
+    """
+    out: list[dict] = []
+    base = config.OUTPUT_DIR
+    if base.is_dir():
+        for path in sorted(base.glob("*/*/*.docx")):
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            out.append(
+                {
+                    "slug": path.parent.parent.name,
+                    "sesi": path.parent.name,
+                    "nama": path.name,
+                    "ukuran": st.st_size,
+                    "waktu": st.st_mtime,
+                }
+            )
+    return sorted(out, key=lambda x: x["waktu"], reverse=True)
+
+
 def _kirim_json(handler, obj, status: int = 200) -> None:
     body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
@@ -421,6 +448,8 @@ class Handler(BaseHTTPRequestHandler):
                 return _kirim_json(self, MANAGER.courses())
             except Exception as exc:  # noqa: BLE001
                 return _kirim_json(self, {"error": str(exc)}, 400)
+        if path == "/api/results":
+            return _kirim_json(self, _results_list())
         if path == "/api/jobs":
             return _kirim_json(self, self._jobs_list())
         if path.startswith("/api/jobs/") and path.endswith("/events"):
@@ -439,6 +468,8 @@ class Handler(BaseHTTPRequestHandler):
             return _kirim_json(self, _settings_get())
         if path.startswith("/api/download/"):
             return self._download(path.split("/")[3])
+        if path.startswith("/api/download-output/"):
+            return self._download_output(urllib.parse.unquote(path[len("/api/download-output/"):]))
         self._not_found()
 
     # ---- API POST
@@ -557,6 +588,11 @@ class Handler(BaseHTTPRequestHandler):
                         events.append(json.loads(baris))
                     except ValueError:
                         pass
+        elif job.events:
+            # Folder kerja bisa sudah dibersihkan setelah DOCX jadi, jadi
+            # berkas event ikut hilang. Fallback ke buffer di memori supaya
+            # muat ulang halaman tetap menampilkan log yang sama.
+            events = list(job.events)
         _kirim_json(self, events)
 
     # ---- SSE
@@ -595,6 +631,31 @@ class Handler(BaseHTTPRequestHandler):
             return
 
     # ---- download
+    def _download_output(self, rel: str) -> None:
+        """Unduh DOCX dari folder `output/` tanpa harus lewat job di memori."""
+        base = config.OUTPUT_DIR.resolve()
+        try:
+            path = (base / rel).resolve()
+        except OSError:
+            return self._not_found()
+        if not str(path).startswith(str(base)) or not path.is_file():
+            return self._not_found()
+        try:
+            fh = open(path, "rb")
+        except OSError:
+            return self._not_found()
+        try:
+            size = os.fstat(fh.fileno()).st_size
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+            self.end_headers()
+            shutil.copyfileobj(fh, self.wfile)
+        finally:
+            fh.close()
+
     def _download(self, jid: str) -> None:
         job = MANAGER.jobs.get(jid)
         if job is None or not job.hasil.get("docx"):
@@ -602,16 +663,26 @@ class Handler(BaseHTTPRequestHandler):
         path = Path(job.hasil["docx"])
         if not path.is_file():
             return self._not_found()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-        self.send_header("Content-Length", str(path.stat().st_size))
-        self.send_header(
-            "Content-Disposition",
-            f'attachment; filename="{path.name}"',
-        )
-        self.end_headers()
-        with open(path, "rb") as fh:
+        # Buka dulu, lalu pakai fstat pada handle yang sama untuk
+        # Content-Length. Dengan begitu yang dikirim selalu satu versi
+        # berkas yang utuh walau pipeline menimpanya (inode lama tetap
+        # hidup sampai handle ditutup). Mengambil `path.stat()` sebelum
+        # buka bisa mismatch dan menghasilkan unduhan terpotong/corrupt.
+        try:
+            fh = open(path, "rb")
+        except OSError:
+            return self._not_found()
+        try:
+            size = os.fstat(fh.fileno()).st_size
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+            self.end_headers()
             shutil.copyfileobj(fh, self.wfile)
+        finally:
+            fh.close()
 
 
 # --------------------------------------------------------------- main
