@@ -452,6 +452,7 @@ VIEWS.buat = async (routeId) => {
     </div>`;
 
   bindModelPickers(view);
+  loadModelOptions();  // sama seperti halaman Settings: model sudah siap saat picker dibuka
 
   // tab switch
   document.querySelectorAll(".tabs button").forEach((b) =>
@@ -700,6 +701,10 @@ VIEWS.settings = async (routeId) => {
     <button class="btn" id="set-save" style="margin-top:18px">Simpan</button>
     <div id="set-msg" class="err"></div>`;
   bindModelPickers(view);
+  // Pra-muat daftar model sekarang, bukan saat picker diklik. Di Linux
+  // `opencode models` butuh ±1,5 detik; kalau dimulai dari klik, picker
+  // terlihat kosong/memuat lama. Hasilnya di-cache 5 menit di kedua sisi.
+  loadModelOptions();
   $("#set-save").addEventListener("click", async () => {
     const saveRouteId = state.routeId;
     const payload = {};

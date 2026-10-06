@@ -22,6 +22,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -121,10 +122,17 @@ def _terautentikasi(handler) -> bool:
 def _butuh_auth(handler) -> bool:
     if _terautentikasi(handler):
         return False
+    # Content-Length WAJIB ikut ditulis. Tanpa itu, dengan HTTP/1.1 klien
+    # (nginx maupun browser) menunggu connection close untuk tahu body sudah
+    # selesai -- respons menggantung sampai proxy_read_timeout nginx (300
+    # detik). Karena browser cuma punya 6 koneksi per origin, enam request
+    # yang menggantung membuat SELURUH halaman berikutnya ikut macet.
+    body = b'{"error":"auth"}'
     handler.send_response(401)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
-    handler.wfile.write(b'{"error":"auth"}')
+    handler.wfile.write(body)
     return True
 
 
@@ -384,10 +392,15 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _not_found(self) -> None:
+        # Content-Length wajib ada, sama seperti respons 401 di `_butuh_auth`:
+        # `/favicon.ico` (diminta otomatis tiap kali tab dibuka) juga lewat
+        # sini, jadi tanpa header ini satu koneksi browser ikut menggantung.
+        body = b"Tidak ditemukan"
         self.send_response(404)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(b"Tidak ditemukan")
+        self.wfile.write(body)
 
     # ---- API GET
     def _api_get(self, path: str) -> None:
@@ -615,6 +628,10 @@ class QuietHTTPServer(ThreadingHTTPServer):
     """
 
     allow_reuse_address = False
+    # Koneksi yang masih terbuka (stream SSE log, misalnya) tidak boleh
+    # menahan proses saat server dimatikan: tanpa ini shutdown berakhir
+    # menunggu thread non-daemon sampai akhirnya kena SIGKILL.
+    daemon_threads = True
 
     def handle_error(self, request, client_address) -> None:
         import sys as _sys
@@ -648,11 +665,39 @@ def main() -> None:
     print(f"UI Tuton jalan di http://{host}:{port}")
     if not config.env("APP_PASSWORD"):
         print("  (APP_PASSWORD kosong: gerbang login dimatikan)")
+
+    # podman/docker mengirim SIGTERM ke PID 1 saat `stop`/recreate. Python
+    # tidak memasang handler SIGTERM, dan untuk PID 1 sinyal dengan aksi
+    # default justru DIABAIKAN -- prosesnya tidak pernah mati sampai podman
+    # menunggu grace period 10 detik lalu melempar SIGKILL (terlihat di log:
+    # "StopSignal SIGTERM failed ... resorting to SIGKILL"). Tiap redeploy jadi
+    # rugi 10 detik. Handler ini menghentikan loop server dengan rapi.
+    def _hentikan_sinyal(*_args: object) -> None:
+        threading.Thread(target=httpd.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, _hentikan_sinyal)
+    signal.signal(signal.SIGINT, _hentikan_sinyal)
+
+    # Panaskan cache opencode di background. Versi dan daftar model sama-sama
+    # butuh menjalankan subproses `opencode` (±1-6 detik, tergantung kecepatan
+    # provider). Kalau baru dihitung saat request pertama tiba, Dashboard dan
+    # Settings terasa macet sekali tiap kali server di-restart.
+    def _panaskan_cache() -> None:
+        try:
+            _opencode_version()
+            _opencode_models()
+        except Exception:  # noqa: BLE001
+            pass
+
+    threading.Thread(target=_panaskan_cache, daemon=True).start()
+
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()
         print("\nDihentikan.")
-        httpd.shutdown()
 
 
 if __name__ == "__main__":

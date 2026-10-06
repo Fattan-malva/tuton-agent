@@ -343,3 +343,23 @@ tr:hover td { background: var(--surface-2); }
   .content { padding-inline: 14px; }
   .topbar { align-items: flex-start; flex-direction: column; }
 }
+
+/* ---- Form tidak mem-zoom layar (iOS/Android) ---------------------------
+   Safari iOS memaksa zoom ke kolom yang font-size-nya di bawah 16px begitu
+   kolomnya disentuh, jadi halaman melompat besar saat mengetik di HP/tablet.
+   Di perangkat sentuh semua kontrol form dinaikkan ke 16px; tampilan desktop
+   tidak berubah. `touch-action: manipulation` mematikan zoom dua-ketuk, dan
+   `-webkit-text-size-adjust` mencegah pembesaran teks otomatis.
+
+   `(max-width: 900px)` ikut ditulis sebagai cadangan untuk browser lawas
+   yang belum mengenali `pointer: coarse`. */
+@media (pointer: coarse), (max-width: 900px) {
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  input, select, textarea,
+  input[type="text"], input[type="password"], input[type="number"],
+  input[type="file"], .model-input {
+    font-size: 16px;
+    -webkit-text-size-adjust: 100%;
+  }
+  a, button, label, input, select, textarea { touch-action: manipulation; }
+}
