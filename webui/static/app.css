@@ -65,8 +65,39 @@ body {
   font: inherit; background: var(--surface-2);
 }
 .login-card input:focus { outline: none; border-color: var(--ink); }
+.login-card label.ingat {
+  display: flex; align-items: center; gap: 8px;
+  margin: 14px 0 0; font-size: 13px; color: var(--ink-soft); cursor: pointer;
+}
+.login-card label.ingat input {
+  width: 16px; height: 16px; margin: 0; padding: 0; flex: none;
+  accent-color: var(--accent); cursor: pointer;
+}
+.login-card label.ingat:hover { color: var(--ink); }
 .login-card .brand { margin: 0 0 16px; }
 .login-card .btn { width: 100%; margin-top: 12px; }
+
+/* ---- Modal konfirmasi (dipakai untuk konfirmasi keluar) ---- */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 70;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(47, 52, 55, .4);
+}
+.modal {
+  width: min(100%, 340px); padding: 22px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 14px 34px rgba(47, 52, 55, .2);
+  animation: modal-masuk .14s ease-out;
+}
+@keyframes modal-masuk {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.modal h3 { font-family: var(--serif); font-size: 16px; font-weight: 600; margin: 0 0 8px; }
+.modal p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink-soft); }
+.modal-aksi { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.modal-aksi .btn { min-height: 36px; padding: 7px 14px; font-size: 13px; }
 
 /* ---- Layout ---- */
 .app { display: flex; min-height: 100vh; }
@@ -471,53 +502,82 @@ tr:hover td { background: var(--surface-2); }
 .jad-btn:hover { background: var(--surface-2); color: var(--ink); }
 .jad-btn svg { width: 16px; height: 16px; transform: rotate(90deg); }
 .jad-btn-kanan svg { transform: rotate(-90deg); }
-.jad-leg { display: flex; gap: 12px; flex-wrap: wrap; }
+.jad-leg { display: flex; gap: 14px; flex-wrap: wrap; }
 .jad-leg-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); }
-.jad-leg-item i { width: 14px; height: 9px; border-radius: 3px; }
-.jad-leg-item i.diskusi { background: #1f6c9f; }
-.jad-leg-item i.tugas { background: #b5541d; }
+.jad-leg-item i { width: 15px; height: 10px; border-radius: 3px; }
+/* pil pucat + tepi warna, sama seperti badge di seluruh tema */
+.jad-leg-item i.diskusi { background: var(--pale-blue); box-shadow: inset -2px 0 0 var(--blue); }
+.jad-leg-item i.tugas { background: var(--pale-yellow); box-shadow: inset -2px 0 0 var(--yellow); }
+.jad-leg-item i.garis { width: 2px; height: 13px; border-radius: 1px; background: var(--ink-faint); }
 .jad-leg-item i.hari-ini {
   width: 11px; height: 11px; border-radius: 50%;
   background: var(--accent); opacity: .75;
 }
 
-.jad-grid { border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+.jad-grid {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  overflow-x: auto; background: var(--surface);
+}
 .jad-row {
   position: relative; display: grid; grid-template-columns: repeat(7, 1fr);
   border-bottom: 1px solid var(--border); min-width: 540px;
 }
 .jad-row:last-child { border-bottom: none; }
+.jad-row:not(.jad-head-hari):hover { background: var(--surface-2); }
 .jad-head-hari { min-width: 540px; background: var(--surface-2); }
 .jad-head-hari .jad-hari {
   height: auto; padding: 7px 0; text-align: center;
-  font-size: 11px; font-weight: 600; color: var(--ink-soft);
+  font-size: 10px; font-weight: 600; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--ink-faint);
 }
 .jad-hari {
-  height: 100%; box-sizing: border-box; padding: 4px 6px;
+  height: 100%; box-sizing: border-box; padding: 4px 7px;
   font-size: 12px; color: var(--ink-soft);
   border-right: 1px solid var(--border);
 }
+/* akhir pekan diberi nada tipis, pakai warna tema */
+.jad-hari:nth-child(7n+6), .jad-hari:nth-child(7n+7) { background: rgba(47, 52, 55, .022); }
 .jad-hari:nth-child(7n) { border-right: none; }
-.jad-hari.luar { opacity: .35; }
+.jad-hari.luar { opacity: .4; }
 .jad-hari.ini span {
-  display: inline-block; min-width: 22px; padding: 2px 5px;
+  display: inline-block; min-width: 23px; padding: 2px 5px;
   border-radius: 999px; background: var(--accent); color: #fff; text-align: center;
 }
+/* tanggal jatuh tempo: angkanya ditebalkan supaya garisnya terbaca */
+.jad-hari.tenggat > span { font-weight: 700; color: var(--ink); }
 
+/* bar = rentang Diskusi/Tugas, pil pucat dengan ujung tegas di hari tenggat */
 .jad-bar {
   position: absolute; display: flex; align-items: center; overflow: hidden;
-  height: 16px; padding: 0 7px; border-radius: 8px;
-  font-size: 11px; line-height: 1; color: #fff; text-decoration: none;
-  white-space: nowrap; transition: filter .15s ease;
+  height: 17px; padding: 0 7px; border-radius: var(--radius);
+  font-size: 11px; line-height: 1; text-decoration: none; z-index: 1;
+  white-space: nowrap;
+  transition: background-color .15s ease;
 }
-.jad-bar span { overflow: hidden; text-overflow: ellipsis; }
-.jad-bar.diskusi { background: #1f6c9f; }
-.jad-bar.tugas { background: #b5541d; }
-.jad-bar:hover { filter: brightness(1.18); }
+.jad-bar span { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.jad-bar.diskusi {
+  background: var(--pale-blue); color: var(--blue);
+  border-right: 2px solid var(--blue);
+}
+.jad-bar.tugas {
+  background: var(--pale-yellow); color: var(--yellow);
+  border-right: 2px solid var(--yellow);
+}
+.jad-bar.diskusi:hover { background: #d5edfd; }
+.jad-bar.tugas:hover { background: #f6ead0; }
+.jad-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* garis tegak penanda tenggat: menyambung bar ke batas hari berikutnya */
+.jad-tenggat {
+  position: absolute; top: 0; bottom: 0; width: 1px;
+  pointer-events: none; z-index: 2; opacity: .5;
+}
+.jad-tenggat.diskusi { background: var(--blue); }
+.jad-tenggat.tugas { background: var(--yellow); }
 
 @media (max-width: 700px) {
   .jad-head { flex-direction: column; align-items: flex-start; }
   .jadwal-card { padding: 12px; }
-  .jad-hari { padding: 3px 3px; font-size: 11px; }
-  .jad-bar { font-size: 10px; padding: 0 5px; }
+  .jad-hari { padding: 3px 4px; font-size: 11px; }
+  .jad-bar { font-size: 10px; padding: 0 5px; height: 16px; }
 }

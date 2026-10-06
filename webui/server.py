@@ -486,6 +486,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         if target.suffix in {".html", ".js", ".css"}:
             self.send_header("Cache-Control", "no-cache")
+        elif target.suffix in {".png", ".svg", ".ico", ".webp"}:
+            # Ikon statis boleh disimpan peramban lama; icons.png berukuran
+            # besar jadi tidak perlu diunduh ulang tiap kali tab dibuka.
+            self.send_header("Cache-Control", "public, max-age=86400")
         self.end_headers()
         self.wfile.write(data)
 
@@ -552,7 +556,19 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/login":
             return self._login()
         if path == "/api/logout":
-            _kirim_json(self, {"ok": True})
+            # Cookie harus benar-benar dihapus (Max-Age=0). Kalau cuma
+            # mengembalikan {"ok":true}, browser masih membawa token yang
+            # sah sehingga halaman yang dimuat ulang tetap terlihat masuk.
+            body = b'{"ok":true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header(
+                "Set-Cookie",
+                f"{COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+            )
+            self.end_headers()
+            self.wfile.write(body)
             return
         if _butuh_auth(self):
             return
@@ -603,16 +619,20 @@ class Handler(BaseHTTPRequestHandler):
             config.env("APP_USERNAME", config.APP_USERNAME),
             config.env("APP_PASSWORD", config.APP_PASSWORD),
         ):
-            token = auth.tanda(SECRET, user)
+            # "Ingat saya" dicentang (default): token & cookie berlaku30 hari.
+            # Tanpa centang, cookie sengaja TANPA Max-Age supaya berupa
+            # session cookie -- ikut hilang begitu peramban ditutup.
+            ingat = bool(payload.get("remember", True))
+            masa = 60 * 60 * 24 * 30 if ingat else 60 * 60 * 12
+            token = auth.tanda(SECRET, user, masa)
             body = b'{"ok":true}'
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header(
-                "Set-Cookie",
-                f"{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; "
-                f"Max-Age=43200",
-            )
+            cookie = f"{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax"
+            if ingat:
+                cookie += f"; Max-Age={masa}"
+            self.send_header("Set-Cookie", cookie)
             self.end_headers()
             self.wfile.write(body)
         else:

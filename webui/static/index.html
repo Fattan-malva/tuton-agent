@@ -4,6 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tuton — Dashboard Pipeline</title>
+  <!-- Ikon tab memakai icons.png asli; apple-touch-icon (PNG180 di atas
+       latar putih) dipakai iOS saat ditambahkan ke layar utama, karena iOS
+       mengabaikan kanal alpha dan menganggap area transparan jadi hitam. -->
+  <link rel="icon" type="image/png" sizes="1254x1254" href="/static/icons/icons.png" />
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
+  <meta name="theme-color" content="#f7f6f3" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Tuton" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body>
@@ -17,6 +27,10 @@
         <input id="login-user" type="text" autocomplete="username" />
         <label>Kata sandi</label>
         <input id="login-pass" type="password" autocomplete="current-password" />
+        <label class="ingat" title="Token tetap berlaku30 hari. Tanpa centang, sesi ikut tutup saat peramban ditutup.">
+          <input id="login-remember" type="checkbox" checked />
+          <span>Ingat saya di peramban ini</span>
+        </label>
         <button type="submit" class="btn"><span data-icon="login"></span><span>Masuk</span></button>
         <div id="login-err" class="err"></div>
       </form>

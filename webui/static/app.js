@@ -4,7 +4,7 @@
 
 const $ = (sel) => document.querySelector(sel);
 const view = $("#view");
-const state = { es: null, timer: null, routeId: 0, routeController: null };
+const state = { es: null, timer: null, routeId: 0, routeController: null, sesi: null };
 const ICONS = {
   login: '<path d="M10 17l5-5-5-5M15 12H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/>',
   logout: '<path d="M14 17l5-5-5-5M19 12H9"/><path d="M12 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/>',
@@ -187,6 +187,7 @@ async function api(path, opts = {}) {
   }
   const res = await fetch(path, options);
   if (res.status === 401) {
+    state.sesi = false;
     showLogin("Sesi berakhir. Silakan masuk kembali.");
     throw new Error("auth");
   }
@@ -224,26 +225,47 @@ function setPills(html) { $("#pills").innerHTML = html || ""; }
 
 /* ============================================================ auth */
 
+/* `state.sesi` adalah penjaga rute: null = belum dicek, true/false =
+   status autentikasi server. Semua rute memeriksanya sebelum merender. */
+async function cekSesi() {
+  try {
+    const res = await fetch("/api/session", { cache: "no-store" });
+    const s = await res.json();
+    state.sesi = !!s.authenticated;
+  } catch (e) {
+    state.sesi = false;
+  }
+  return state.sesi;
+}
+
 function showLogin(message = "") {
+  if (state.sesi === true) {
+    // Sudah login: halaman login ditolak, kembali ke dashboard.
+    $("#login").classList.add("hidden");
+    $("#app").classList.remove("hidden");
+    if (location.hash && location.hash !== "#dashboard") location.hash = "#dashboard";
+    else route();
+    return;
+  }
   state.routeId += 1;
   state.routeController?.abort();
   state.routeController = null;
   if (state.es) { state.es.close(); state.es = null; }
   if (state.timer) { clearInterval(state.timer); state.timer = null; }
+  const sebelumnyaTampil = !$("#login").classList.contains("hidden");
   $("#login").classList.remove("hidden");
   $("#app").classList.add("hidden");
-  $("#login-err").textContent = message;
+  // Pesan hanya ditimpa kalau ada isinya, supaya pesan keluar tidak
+  // hilang ketika route() ikut memanggil showLogin lewat guard rute.
+  if (message || !sebelumnyaTampil) $("#login-err").textContent = message;
 }
 
 async function init() {
-  let session;
-  try {
-    const res = await fetch("/api/session");
-    session = await res.json();
-  }
-  catch (e) { return; }
-  if (!session.authenticated) {
-    showLogin();
+  const masuk = await cekSesi();
+  if (!masuk) {
+    // Datang langsung dengan rute aplikasi (mis. /#courses) sambil belum
+    // masuk: pesan guard ikut ditampilkan, bukan halaman login yang hening.
+    showLogin(location.hash ? "Silakan masuk terlebih dahulu." : "");
     return;
   }
   $("#login").classList.add("hidden");
@@ -261,6 +283,7 @@ async function doLogin(e) {
       body: JSON.stringify({
         username: $("#login-user").value,
         password: $("#login-pass").value,
+        remember: !!$("#login-remember")?.checked,
       }),
     });
     r = await res.json();
@@ -272,6 +295,7 @@ async function doLogin(e) {
 }
 
 function showApp() {
+  state.sesi = true;
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
   $("#side-user").textContent = "sesi aktif";
@@ -291,6 +315,15 @@ async function route() {
   state.routeController = new AbortController();
   if (state.es) { state.es.close(); state.es = null; }
   if (state.timer) { clearInterval(state.timer); state.timer = null; }
+  // Middleware rute: tanpa sesi aktif tidak ada view yang boleh dibuka;
+  // status sesi dipastikan ke server kalau belum pernah dicek.
+  if (!(state.sesi === true || (state.sesi === null && await cekSesi()))) {
+    // Pesan hanya untuk kunjungan rute langsung; kalau halaman login sudah
+    // terbuka (mis. baru saja keluar), pesan lama tidak ditimpa.
+    showLogin($("#login").classList.contains("hidden") ? "Silakan masuk terlebih dahulu." : "");
+    return;
+  }
+  if (routeId !== state.routeId) return;
   const name = (location.hash || "#dashboard").slice(1).split(":", 1)[0];
   document.querySelectorAll("#nav a").forEach((a) =>
     a.classList.toggle("active", a.dataset.view === name));
@@ -1013,13 +1046,27 @@ function pasangJadwal(items, galat) {
       awal.setDate(gridMulai.getDate() + w * 7);
       const akhir = new Date(awal);
       akhir.setDate(awal.getDate() + 6);
+      // Tenggat di minggu ini: satu Map per tanggal supaya garisnya
+      // tidak dobel kalau dua activity jatuh tempo pada hari yang sama.
+      const tenggatMinggu = new Map();
+      for (const r of nampak) {
+        if (r.e >= awal && r.e <= akhir && !tenggatMinggu.has(kunci(r.e))) {
+          tenggatMinggu.set(kunci(r.e), r.jenis.toLowerCase());
+        }
+      }
       let cells = "";
+      const garis = [];
       for (let d = 0; d < 7; d++) {
         const tgl = new Date(awal);
         tgl.setDate(awal.getDate() + d);
         const cls = ["jad-hari"];
         if (tgl.getMonth() !== m) cls.push("luar");
         if (kunci(tgl) === kunci(hariIni)) cls.push("ini");
+        const jenisTenggat = tenggatMinggu.get(kunci(tgl));
+        if (jenisTenggat) {
+          cls.push("tenggat");
+          garis.push({ col: d, jenis: jenisTenggat });
+        }
         cells += `<div class="${cls.join(" ")}"><span>${tgl.getDate()}</span></div>`;
       }
       let bars = "";
@@ -1038,9 +1085,11 @@ function pasangJadwal(items, galat) {
           + (r.mulai_turunan ? " (awal dihitung dari tenggat sebelumnya)" : "");
         bars += `<a class="jad-bar ${r.jenis.toLowerCase()}" href="${esc(r.url)}" target="_blank" rel="noopener"
           title="${esc(ket)}"
-          style="left:calc(${left}% + 3px); width:calc(${width}% - 6px); top:${24 + r.lane * LANE_H}px">${label}</a>`;
+          style="left:calc(${left}% + 3px); width:calc(${width}% - 3px); top:${24 + r.lane * LANE_H}px">${label}</a>`;
       }
-      rows += `<div class="jad-row" style="height:${tinggiBaris}px">${cells}${bars}</div>`;
+      const garisHtml = garis.map((g) =>
+        `<i class="jad-tenggat ${g.jenis}" style="left:calc(${((g.col + 1) / 7) * 100}% - 1px)"></i>`).join("");
+      rows += `<div class="jad-row" style="height:${tinggiBaris}px">${cells}${bars}${garisHtml}</div>`;
     }
 
     card.innerHTML = `
@@ -1053,6 +1102,7 @@ function pasangJadwal(items, galat) {
         <div class="jad-leg">
           <span class="jad-leg-item"><i class="diskusi"></i>Diskusi</span>
           <span class="jad-leg-item"><i class="tugas"></i>Tugas</span>
+          <span class="jad-leg-item"><i class="garis"></i>Garis tenggat</span>
           <span class="jad-leg-item"><i class="hari-ini"></i>Hari ini</span>
         </div>
       </div>
@@ -1117,12 +1167,54 @@ VIEWS.settings = async (routeId) => {
   });
 };
 
+/* ============================================================ modal */
+
+// Dialog konfirmasi kecil. Mengembalikan Promise<boolean>; Esc, klik area
+// gelap, dan tombol batal semuanya dianggap "tidak".
+function konfirmasi({ judul, pesan, labelYa = "Ya", labelTidak = "Batal", nada = "" }) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="modal-judul">
+        <h3 id="modal-judul">${esc(judul)}</h3>
+        <p>${esc(pesan)}</p>
+        <div class="modal-aksi">
+          <button type="button" class="btn ghost" data-tidak>${esc(labelTidak)}</button>
+          <button type="button" class="btn ${esc(nada)}" data-ya>${esc(labelYa)}</button>
+        </div>
+      </div>`;
+    const selesai = (hasil) => {
+      document.removeEventListener("keydown", onKey);
+      overlay.remove();
+      resolve(hasil);
+    };
+    const onKey = (e) => { if (e.key === "Escape") selesai(false); };
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) selesai(false); });
+    overlay.querySelector("[data-tidak]").addEventListener("click", () => selesai(false));
+    overlay.querySelector("[data-ya]").addEventListener("click", () => selesai(true));
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(overlay);
+    overlay.querySelector("[data-ya]").focus();
+  });
+}
+
 /* ============================================================ boot */
 
 $("#login-form").addEventListener("submit", doLogin);
 $("#logout").addEventListener("click", async () => {
+  const ya = await konfirmasi({
+    judul: "Keluar dari sesi?",
+    pesan: "Halaman masuk akan terbuka dan kamu perlu login lagi. Job yang sedang berjalan tetap berlanjut di server.",
+    labelYa: "Keluar",
+    labelTidak: "Batal",
+    nada: "danger",
+  });
+  if (!ya) return;
+  state.sesi = false;
   await api("/api/logout").catch(() => {});
-  location.reload();
+  location.hash = "#dashboard";
+  showLogin();
 });
 window.addEventListener("hashchange", route);
 init();
