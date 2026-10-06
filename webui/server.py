@@ -47,6 +47,8 @@ _MODEL_CACHE: tuple[float, list[str]] | None = None
 _OPENCODE_VERSION_CACHE: tuple[bool, str | None] = (False, None)
 _MOODLE_STATUS_CACHE: tuple[float, dict] | None = None
 _MOODLE_STATUS_LOCK = threading.Lock()
+_NILAI_CACHE: tuple[float, dict] | None = None
+_NILAI_LOCK = threading.Lock()
 
 
 # ----------------------------------------------------------- multipart
@@ -229,6 +231,42 @@ def _moodle_login() -> dict:
             result = {"masuk": False, "pesan": str(exc)}
         _MOODLE_STATUS_CACHE = (now, result)
         return dict(result)
+
+
+def _nilai_semua() -> dict:
+    """Nilai Tugas & Diskusi semua matkul, di-cache 10 menit."""
+    global _NILAI_CACHE
+    with _NILAI_LOCK:
+        now = time.monotonic()
+        if _NILAI_CACHE and now - _NILAI_CACHE[0] < 600:
+            return _NILAI_CACHE[1]
+        try:
+            import moodle  # noqa: PLC0415
+            import courses  # noqa: PLC0415
+
+            klien = moodle.Moodle()
+            daftar = courses.daftar_mata_kuliah(klien)
+            courses_out: list[dict] = []
+            sesi_semua: set[int] = set()
+            for mk in daftar:
+                per_sesi = courses.nilai_mata_kuliah(klien, mk.id)
+                if not per_sesi:
+                    continue
+                sesi_semua.update(per_sesi.keys())
+                courses_out.append(
+                    {
+                        "id": mk.id,
+                        "nama": mk.nama,
+                        "titik": [
+                            {"sesi": s, **per_sesi[s]} for s in sorted(per_sesi)
+                        ],
+                    }
+                )
+            hasil = {"courses": courses_out, "sesi": sorted(sesi_semua)}
+        except Exception as exc:  # noqa: BLE001
+            hasil = {"courses": [], "sesi": [], "error": str(exc)}
+        _NILAI_CACHE = (now, hasil)
+        return hasil
 
 
 def _status() -> dict:
@@ -443,6 +481,8 @@ class Handler(BaseHTTPRequestHandler):
             return _kirim_json(self, _opencode_models())
         if path == "/api/moodle-status":
             return _kirim_json(self, _moodle_login())
+        if path == "/api/nilai":
+            return _kirim_json(self, _nilai_semua())
         if path == "/api/courses":
             try:
                 return _kirim_json(self, MANAGER.courses())

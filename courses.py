@@ -289,6 +289,65 @@ def daftar_mata_kuliah_lengkap(klien: moodle.Moodle) -> list[MataKuliah]:
     return urut
 
 
+def nilai_mata_kuliah(klien: moodle.Moodle, course_id: str) -> dict[int, dict[str, float | None]]:
+    """Nilai Tugas & Diskusi per sesi dari laporan nilai pengguna.
+
+    Sumber: `/grade/report/user/index.php?id=<course>`.
+
+    Pemetaan nomor ke sesi mengikuti pola perkuliahan:
+
+        sesi 1  = Diskusi 1    sesi 5  = Tugas 2
+        sesi 2  = Diskusi 2    sesi 6  = Diskusi 6
+        sesi 3  = Tugas 1      sesi 7  = Tugas 3
+        sesi 4  = Diskusi 4    sesi 8  = Diskusi 8
+
+    Jadi Diskusi n jatuh di sesi n, dan Tugas n jatuh di sesi 2n+1 —
+    tanpa ini "Tugas 1" ikut nangkring di sesi 1 bersama "Diskusi 1".
+
+    Format asli di Moodle: baris penilaian bernama `Forum Diskusi.1`,
+    `Assignment Tugas.1`, atau `Skor Tugas 1`. Baris agregat seperti
+    `Total Nilai Diskusi (30%)` harus diabaikan — kalau tidak, angka
+    bobotnya (30, 50) terbaca sebagai nomor sesi. Baris kategori pun tidak
+    punya sel `column-grade`, jadi ikut tersaring dengan sendirinya.
+    """
+    try:
+        halaman = klien.ambil(
+            f"{klien.base_url}/grade/report/user/index.php?id={course_id}"
+        )
+    except Exception:  # noqa: BLE001
+        return {}
+    soup = BeautifulSoup(halaman.html, "lxml")
+    hasil: dict[int, dict[str, float | None]] = {}
+    for tr in soup.find_all("tr"):
+        header = tr.find("th")
+        if header is None:
+            continue
+        # Hanya baris yang benar-benar punya sel nilai.
+        td = tr.find("td", class_=re.compile(r"column-grade", re.I))
+        if td is None:
+            continue
+        teks = header.get_text(" ", strip=True)
+        m = re.search(r"(diskusi|tugas)\s*[.\-:]?\s*(\d+)\b", teks, re.I)
+        if not m:
+            continue  # "Total Nilai Diskusi (30%)" bukan sesi
+        jenis = "Diskusi" if m.group(1).lower() == "diskusi" else "Tugas"
+        nomor = int(m.group(2))
+        sesi = nomor if jenis == "Diskusi" else 2 * nomor + 1
+        if not 1 <= sesi <= 40:
+            continue  # penjaga: bobot persen dsb. jangan jadi sesi
+        nilai: float | None = None
+        g = re.search(r"(\d+(?:[.,]\d+)?)", td.get_text(" ", strip=True))
+        if g:
+            try:
+                nilai = float(g.group(1).replace(",", "."))
+            except ValueError:
+                nilai = None
+        slot = hasil.setdefault(sesi, {})
+        if slot.get(jenis) is None:
+            slot[jenis] = nilai
+    return hasil
+
+
 def daftar_section(klien: moodle.Moodle, matkul: MataKuliah) -> list[int]:
     """Daftar nomor section milik satu course."""
     halaman = klien.ambil(f"{klien.base_url}/course/view.php?id={matkul.id}")

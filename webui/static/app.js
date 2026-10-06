@@ -85,15 +85,37 @@ async function showModelOptions(picker, showAll = false) {
   const result = await loadModelOptions();
   if (picker.dataset.requestSequence !== String(sequence) || !picker.classList.contains("open")) return;
   const query = showAll ? "" : input.value.trim().toLocaleLowerCase();
-  const filtered = result.models.filter((model) => model.toLocaleLowerCase().includes(query));
-  if (!filtered.length) {
-    const message = result.error || (query ? "Model tidak ditemukan." : "Tidak ada model tersedia.");
-    list.innerHTML = `<div class="model-empty">${esc(message)}</div>`;
-    return;
-  }
-  list.innerHTML = filtered.map((model, index) => `
+  list.innerHTML = '<div class="model-search"><input type="text" placeholder="Cari model..." autocomplete="off" spellcheck="false"></div><div class="model-results" role="listbox"></div>';
+  const searchEl = list.querySelector(".model-search input");
+  searchEl.value = query;
+  const resultsEl = list.querySelector(".model-results");
+  const render = (q) => {
+    const term = q.trim().toLocaleLowerCase();
+    const filtered = result.models.filter((model) => model.toLocaleLowerCase().includes(term));
+    if (!filtered.length) {
+      const message = result.error || (term ? "Model tidak ditemukan." : "Tidak ada model tersedia.");
+      resultsEl.innerHTML = `<div class="model-empty">${esc(message)}</div>`;
+      return;
+    }
+    resultsEl.innerHTML = filtered.map((model, index) => `
     <button class="model-option" type="button" role="option" aria-selected="${input.value === model}"
       id="${esc(list.id)}-${index}" data-model="${esc(model)}">${esc(model)}</button>`).join("");
+  };
+  render(searchEl.value);
+  searchEl.addEventListener("input", () => render(searchEl.value));
+  searchEl.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      event.stopPropagation();
+      resultsEl.querySelector(".model-option")?.focus();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      resultsEl.querySelector(".model-option")?.click();
+    } else if (event.key === "Escape") {
+      event.stopPropagation();
+      closeModelPicker(picker);
+    }
+  });
 }
 
 function bindModelPickers(root) {
@@ -104,7 +126,15 @@ function bindModelPickers(root) {
       input.select();
       showModelOptions(picker, true);
     });
-    input.addEventListener("input", () => showModelOptions(picker));
+    input.addEventListener("input", () => {
+      const searchEl = list.querySelector(".model-search input");
+      if (searchEl) {
+        searchEl.value = input.value;
+        searchEl.dispatchEvent(new Event("input"));
+      } else {
+        showModelOptions(picker);
+      }
+    });
     input.addEventListener("keydown", (event) => {
       if (event.key === "Escape") closeModelPicker(picker);
       if (event.key === "ArrowDown" && !list.classList.contains("hidden")) {
@@ -305,6 +335,38 @@ VIEWS.dashboard = async (routeId) => {
       <button class="btn ghost" onclick="location.hash='#log'">${icon("terminal")}<span>Buka Log Live</span></button>
       <button class="btn ghost" onclick="location.hash='#results'">${icon("file")}<span>Lihat Result</span></button>
     </div>`;
+
+  // Grafik nilai diambil setelah render supaya dashboard tidak menunggu
+  // scraping laporan nilai (bisa lambat saat pertama kali).
+  view.insertAdjacentHTML("beforeend", `
+    <div class="section-title">Nilai Diskusi &amp; Tugas per Sesi</div>
+    <div class="card nilai-card" id="nilai-card">
+      <p class="muted">Memuat nilai dari Moodle...</p>
+    </div>`);
+  api("/api/nilai").then((nilai) => {
+    if (routeId !== state.routeId) return;
+    const card = $("#nilai-card");
+    if (!card) return;
+    const adaNilai = nilai && Array.isArray(nilai.courses) && nilai.courses.length;
+    if (!adaNilai) {
+      card.innerHTML = '<p class="muted">Belum ada nilai Diskusi/Tugas yang bisa diambil.</p>';
+      return;
+    }
+    card.innerHTML = `
+      <div class="tabs" id="nilai-filter">
+        <button data-f="Semua" class="active">Semua</button>
+        <button data-f="Diskusi">Diskusi</button>
+        <button data-f="Tugas">Tugas</button>
+      </div>
+      <div class="nilai-body">
+        <div class="nilai-legend" id="nilai-legend"></div>
+        <div class="nilai-plot" id="nilai-plot"></div>
+      </div>`;
+    bindNilai(nilai);
+  }).catch(() => {
+    const card = $("#nilai-card");
+    if (card) card.innerHTML = '<p class="muted">Nilai tidak bisa dimuat.</p>';
+  });
 
   const masihDashboard = () => (location.hash || "#dashboard") === "#dashboard";
   api("/api/moodle-status").then((ml) => {
@@ -705,6 +767,133 @@ function appendLine(consoleEl, e) {
   const agent = e.agent ? `<${esc(e.agent)}> ` : "";
   ln.innerHTML = ts + stage + agent + esc(e.msg);
   consoleEl.appendChild(ln);
+}
+
+function bindNilai(data) {
+  const PALETTE = ["#1f6c9f", "#956400", "#346538", "#9f2f2d", "#5b3d9e", "#0f766e", "#b5541d", "#3a5fcd"];
+  const hidden = new Set();
+  let filter = "Semua";
+
+  const legendEl = $("#nilai-legend");
+  legendEl.innerHTML = data.courses.map((c, i) => `
+    <button class="nilai-leg" data-c="${esc(c.id)}" title="Klik untuk menampilkan/menyembunyikan">
+      <span class="nilai-dot" style="background:${PALETTE[i % PALETTE.length]}"></span>${esc(c.nama)}
+    </button>`).join("") + `
+    <div class="nilai-keys">
+      <span class="nilai-key"><span class="k full"></span>Diskusi</span>
+      <span class="nilai-key"><span class="k ring"></span>Tugas</span>
+    </div>`;
+
+  function render() {
+    const plot = $("#nilai-plot");
+    if (!plot) return;
+    const sesi = data.sesi;
+    const W = 720, H = 320, PL = 42, PB = 30, PT = 16, PR = 16;
+    const x = (i) => PL + (sesi.length > 1 ? i * (W - PL - PR) / (sesi.length - 1) : (W - PL - PR) / 2);
+    const y = (v) => PT + (100 - v) / 100 * (H - PT - PB);
+    const visible = data.courses.filter((c) => !hidden.has(c.id));
+    let g = "";
+    // grid y setiap 20
+    for (let v = 0; v <= 100; v += 20) {
+      g += `<line x1="${PL}" y1="${y(v)}" x2="${W - PR}" y2="${y(v)}" class="grid"/>`;
+      g += `<text x="${PL - 6}" y="${y(v) + 3}" class="axis" text-anchor="end">${v}</text>`;
+    }
+    // label x
+    sesi.forEach((s, i) => {
+      g += `<text x="${x(i)}" y="${H - PB + 16}" class="axis" text-anchor="middle">S${s}</text>`;
+    });
+    // Satu garis per matkul: Diskusi dan Tugas digabung jadi satu
+    // garis yang menyambung; jenisnya dibedakan lewat titik & hover.
+    for (const c of visible) {
+      const color = PALETTE[data.courses.indexOf(c) % PALETTE.length];
+      const pts = [];
+      for (const t of c.titik) {
+        let v = null;
+        let jenis = null;
+        if (filter !== "Tugas" && t.Diskusi !== null && t.Diskusi !== undefined) {
+          v = t.Diskusi;
+          jenis = "Diskusi";
+        } else if (filter !== "Diskusi" && t.Tugas !== null && t.Tugas !== undefined) {
+          v = t.Tugas;
+          jenis = "Tugas";
+        }
+        if (v === null) continue;
+        const i = sesi.indexOf(t.sesi);
+        if (i < 0) continue;
+        pts.push({ x: x(i), y: y(v), v, s: t.sesi, jenis, i });
+      }
+      if (pts.length >= 2) {
+        let d = `M ${pts[0].x} ${pts[0].y}`;
+        for (let k = 1; k < pts.length; k++) {
+          const a = pts[k - 1];
+          const b = pts[k];
+          const mx = (a.x + b.x) / 2;
+          d += ` C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`;
+        }
+        g += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" class="line"/>`;
+      }
+      for (const p of pts) {
+        // Diskusi: bulat penuh. Tugas: ring gelap — beda bentuk isi,
+        // tetap satu warna dan satu garis.
+        const isi = p.jenis === "Diskusi" ? color : "#0d1117";
+        g += `<circle cx="${p.x}" cy="${p.y}" r="3.6" fill="${isi}" stroke="${color}" stroke-width="2" data-nama="${esc(c.nama)}" data-s="${p.s}" data-jenis="${p.jenis}" data-v="${p.v}" data-color="${color}" class="nilai-pt" style="animation:ptin .35s ${p.i * 60}ms both"/>`;
+      }
+    }
+    plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="nilai-svg">${g}</svg><div class="nilai-tip hidden" id="nilai-tip"></div>`;
+    legendEl.querySelectorAll(".nilai-leg").forEach((b) =>
+      b.classList.toggle("off", hidden.has(b.dataset.c)));
+  }
+
+  $("#nilai-filter").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    filter = b.dataset.f;
+    document.querySelectorAll("#nilai-filter button").forEach((x) => x.classList.toggle("active", x === b));
+    render();
+  });
+  legendEl.addEventListener("click", (e) => {
+    const b = e.target.closest(".nilai-leg");
+    if (!b) return;
+    if (hidden.has(b.dataset.c)) hidden.delete(b.dataset.c);
+    else hidden.add(b.dataset.c);
+    render();
+  });
+  $("#nilai-plot").addEventListener("mouseover", (e) => {
+    const c = e.target.closest(".nilai-pt");
+    const tip = $("#nilai-tip");
+    const plot = $("#nilai-plot");
+    if (!c || !tip || !plot) return;
+    const s = Number(c.dataset.s);
+    const jenis = c.dataset.jenis;
+    const nomor = jenis === "Tugas" ? (s - 1) / 2 : s;
+    const item = Number.isInteger(nomor) ? `${jenis} ${nomor}` : jenis;
+    tip.innerHTML = `
+      <div class="tip-top">
+        <span class="tip-dot" style="background:${esc(c.dataset.color)}"></span>
+        <span>${esc(c.dataset.nama)}</span>
+      </div>
+      <div class="tip-mid">Sesi ${s} <span class="tip-sep">·</span> ${esc(item)}</div>
+      <div class="tip-val">${esc(c.dataset.v)}<small> / 100</small></div>`;
+    tip.classList.remove("hidden");
+    const rect = plot.getBoundingClientRect();
+    const cx = Number(c.getAttribute("cx")) * (rect.width / 720);
+    const cy = Number(c.getAttribute("cy")) * (rect.height / 320);
+    const tw = tip.offsetWidth;
+    const th = tip.offsetHeight;
+    let left = cx - tw / 2;
+    left = Math.max(4, Math.min(left, rect.width - tw - 4));
+    let top = cy - th - 10;
+    if (top < 0) top = cy + 12;
+    tip.style.left = left + "px";
+    tip.style.top = top + "px";
+  });
+  $("#nilai-plot").addEventListener("mouseout", (e) => {
+    if (e.target.closest(".nilai-pt")) {
+      const tip = $("#nilai-tip");
+      if (tip) tip.classList.add("hidden");
+    }
+  });
+  render();
 }
 
 VIEWS.courses = async (routeId) => {
