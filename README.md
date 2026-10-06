@@ -1,7 +1,7 @@
 <div align="center">
   <img src="webui/static/icons/icons.png" width="150" alt="Logo joki-tuton" />
 
-  <h1>joki-tuton</h1>
+  <h1>tuton-agent</h1>
 
   <p>
     <b>Pipeline otomatis mengerjakan soal tutorial online Universitas Terbuka</b><br/>
