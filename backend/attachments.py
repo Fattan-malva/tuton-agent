@@ -384,7 +384,7 @@ def kumpulkan_gambar_soal(
     except moodle.MoodleError:
         return []
 
-    import html2md as _html2md  # noqa: PLC0415
+    from . import html2md as _html2md  # noqa: PLC0415
     from bs4 import BeautifulSoup  # noqa: PLC0415
 
     soup = BeautifulSoup(halaman.html, "lxml")

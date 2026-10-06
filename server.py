@@ -165,7 +165,7 @@ def run_command_async(cmd: list[str], cwd: str | None, state_key: str | None, ma
             cwd=cwd or str(cfg.BASE_DIR),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            bufsize=0,
+            bufsize=8192,
             start_new_session=True,
         )
         _process_start_time = time.time()
