@@ -22,6 +22,7 @@ import importlib.util
 import json
 import queue
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -41,6 +42,10 @@ from courses import Aktivitas, MataKuliah, Sesi
 
 class PipelineGagal(Exception):
     """Kesalahan yang layak menghentikan seluruh proses."""
+
+
+class PipelineDibatalkan(PipelineGagal):
+    """Job dihentikan pengguna."""
 
 
 # ------------------------------------------------------------ pemanggilan agent
@@ -278,6 +283,32 @@ def _event_dari_json(data: dict, nama: str) -> dict:
     return {}
 
 
+def _hentikan_pohon_proses(proses: subprocess.Popen) -> None:
+    if proses.poll() is not None:
+        return
+    if sys.platform == "win32":
+        try:
+            proses.send_signal(signal.CTRL_BREAK_EVENT)
+            proses.wait(timeout=0.5)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if proses.poll() is None and sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proses.pid), "/T", "/F"],
+                capture_output=True, text=True, timeout=2, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+    elif proses.poll() is None:
+        proses.terminate()
+    try:
+        proses.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        proses.kill()
+        proses.wait()
+
+
 def panggil_agent(
     *,
     nama: str,
@@ -289,6 +320,8 @@ def panggil_agent(
     diam: bool = False,
     reporter: "callable[[dict], None] | None" = None,
     stage: str = "",
+    cancel_event: threading.Event | None = None,
+    session_callback: "callable[[str], None] | None" = None,
 ) -> HasilAgent:
     """Jalankan satu agent lewat `opencode run` dan kumpulkan keluarannya.
 
@@ -330,6 +363,8 @@ def panggil_agent(
 
     batas = waktu_maks or config.TIMEOUT_AGENT_DETIK
     mulai = time.monotonic()
+    if cancel_event and cancel_event.is_set():
+        raise PipelineDibatalkan("Job dihentikan pengguna.")
 
     # stdout dibaca sambil mengalir, bukan dikumpulkan diam-diam.
     #
@@ -351,6 +386,8 @@ def panggil_agent(
             text=True,
             encoding="utf-8",
             errors="replace",
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
+            start_new_session=sys.platform != "win32",
         )
     except FileNotFoundError as exc:
         raise PipelineGagal(
@@ -395,10 +432,14 @@ def panggil_agent(
 
     potongan: list[str] = []
     while True:
+        if cancel_event and cancel_event.is_set():
+            _hentikan_pohon_proses(proses)
+            benang.join(timeout=1)
+            benang_stdout.join(timeout=1)
+            raise PipelineDibatalkan("Job dihentikan pengguna.")
         sisa = batas - (time.monotonic() - mulai)
         if sisa <= 0:
-            proses.kill()
-            proses.wait()
+            _hentikan_pohon_proses(proses)
             return HasilAgent(
                 perintah=perintah,
                 selesai=False,
@@ -409,7 +450,7 @@ def panggil_agent(
                 kode=-1,
             )
         try:
-            b = baris_antre.get(timeout=min(sisa, 1.0))
+            b = baris_antre.get(timeout=min(sisa, 0.25 if cancel_event else 1.0))
         except queue.Empty:
             continue
         if b is None:
@@ -421,6 +462,16 @@ def panggil_agent(
         if b.startswith("{"):
             try:
                 data = json.loads(b)
+                if session_callback:
+                    part_data = data.get("part")
+                    session_id = (
+                        data.get("sessionID") or data.get("sessionId")
+                        or data.get("session_id")
+                    )
+                    if isinstance(part_data, dict):
+                        session_id = session_id or part_data.get("sessionID") or part_data.get("sessionId")
+                    if session_id:
+                        session_callback(str(session_id))
                 _alir(data)
                 # Saluran sampingan untuk UI: event yang sama persis yang
                 # dicetak ke terminal dikirim ke `reporter` (bila ada). CLI
@@ -532,6 +583,8 @@ def panggil_agent_bertahap(
     diam: bool = False,
     reporter: "callable[[dict], None] | None" = None,
     stage: str = "",
+    cancel_event: threading.Event | None = None,
+    session_callback: "callable[[str], None] | None" = None,
 ) -> HasilAgent:
     """Panggil agent, ulang bila gagal atau berkas hasilnya tidak muncul.
 
@@ -556,11 +609,18 @@ def panggil_agent_bertahap(
     terakhir: HasilAgent | None = None
 
     for ke in range(1, percobaan + 1):
+        if cancel_event and cancel_event.is_set():
+            raise PipelineDibatalkan("Job dihentikan pengguna.")
         if ke > 1:
-            time.sleep(3)
+            if cancel_event:
+                if cancel_event.wait(3):
+                    raise PipelineDibatalkan("Job dihentikan pengguna.")
+            else:
+                time.sleep(3)
         hasil = panggil_agent(
             nama=nama, prompt=prompt, model=model, berkas=berkas, cwd=cwd,
             diam=diam, reporter=reporter, stage=stage,
+            cancel_event=cancel_event, session_callback=session_callback,
         )
         terakhir = hasil
 
@@ -628,6 +688,8 @@ class Pipeline:
         tanpa_docx: bool = False,
         reporter: "callable[[dict], None] | None" = None,
         manual: "dict | None" = None,
+        cancel_event: threading.Event | None = None,
+        session_callback: "callable[[str], None] | None" = None,
     ) -> None:
         self.matkul = matkul
         self.nomor = nomor_sesi
@@ -639,6 +701,8 @@ class Pipeline:
         # berarti tidak ada yang mendengarkan -- perilaku CLI tetap persis
         # seperti sebelum hook ini ada.
         self.reporter = reporter
+        self.cancel_event = cancel_event
+        self.session_callback = session_callback
         # `manual` mengalihkan pipeline ke mode input soal dari pengguna
         # (tempel teks + unggah berkas) tanpa menyentuh Moodle. `None`
         # berarti jalur scrape biasa.
@@ -654,7 +718,12 @@ class Pipeline:
 
     # -------------------------------------------------------------- utilitas
 
+    def _cek_dibatalkan(self) -> None:
+        if self.cancel_event and self.cancel_event.is_set():
+            raise PipelineDibatalkan("Job dihentikan pengguna.")
+
     def _siapkan(self) -> None:
+        self._cek_dibatalkan()
         config.ensure_dirs()
         for path in self.dirs.values():
             path.mkdir(parents=True, exist_ok=True)
@@ -667,6 +736,7 @@ class Pipeline:
             )
 
     def _log(self, pesan: str) -> None:
+        self._cek_dibatalkan()
         print(pesan, flush=True)
         if self.reporter is not None:
             self.reporter({"level": "info", "stage": self._tahap, "msg": pesan})
@@ -683,6 +753,7 @@ class Pipeline:
     # ------------------------------------------------------------------ run
 
     def jalankan(self) -> HasilSesi:
+        self._cek_dibatalkan()
         self._siapkan()
 
         # Mode input manual: soal dari teks + berkas unggahan, tanpa Moodle.
@@ -1069,6 +1140,8 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
             label="peta soal",
             reporter=self.reporter,
             stage=self._tahap,
+            cancel_event=self.cancel_event,
+            session_callback=self.session_callback,
         )
         self._simpan_log("scrapper.log", hasil.stdout + "\n\n--- STDERR ---\n" + hasil.stderr)
 
@@ -1254,6 +1327,8 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
             label="transkrip",
             reporter=self.reporter,
             stage=self._tahap,
+            cancel_event=self.cancel_event,
+            session_callback=self.session_callback,
         )
         self._simpan_log(
             f"vision-{stem}.log", hasil.stdout + "\n\n--- STDERR ---\n" + hasil.stderr
@@ -1380,6 +1455,8 @@ akun yang tidak boleh ikut terbawa ke berkas yang diserahkan ke tutor.
             label="daftar pustaka",
             reporter=self.reporter,
             stage=self._tahap,
+            cancel_event=self.cancel_event,
+            session_callback=self.session_callback,
         )
         self._simpan_log(
             "research.log", hasil.stdout + "\n\n--- STDERR ---\n" + hasil.stderr
@@ -1701,6 +1778,8 @@ Struktur jawaban yang diminta dokumen akhir:
             label="jawaban",
             reporter=self.reporter,
             stage=self._tahap,
+            cancel_event=self.cancel_event,
+            session_callback=self.session_callback,
         )
         self._simpan_log(
             "worker.log", hasil.stdout + "\n\n--- STDERR ---\n" + hasil.stderr

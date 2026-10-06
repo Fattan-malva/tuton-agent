@@ -157,6 +157,8 @@ body {
 .btn:active { transform: scale(.98); }
 .btn.ghost { background: var(--surface); color: var(--ink); border: 1px solid var(--border); }
 .btn.ghost:hover { background: var(--surface-2); }
+.btn.danger { color: var(--red); background: var(--pale-red); border: 1px solid var(--pale-red); }
+.btn.danger:hover { border-color: var(--red); background: var(--pale-red); }
 .btn:disabled { opacity: .5; cursor: default; }
 .icon { width: 18px; height: 18px; display: block; flex: 0 0 18px; }
 input, select, textarea {
@@ -255,6 +257,7 @@ tr:hover td { background: var(--surface-2); }
 .log-controls > .log-select { flex: 1 1 auto; min-width: 0; }
 .log-controls > .log-action { flex: 0 0 124px; min-width: 0; }
 .log-controls > .log-action .btn { width: 100%; }
+.log-stop-row { margin-top: 12px; }
 .hint { font-size: 12px; color: var(--ink-faint); margin-top: 6px; }
 .kbd { font-family: var(--mono); font-size: 12px; border: 1px solid var(--border);
   border-radius: 4px; background: var(--surface-2); padding: 1px 6px; }
@@ -326,6 +329,7 @@ tr:hover td { background: var(--surface-2); }
   .log-controls { align-items: flex-end; }
   .log-controls > .log-select { min-width: 0; }
   .log-controls > .log-action { flex: 0 0 112px; min-width: 112px; }
+  .log-stop-row > .btn { width: 100%; }
   .console { height: 55vh; padding: 12px; }
   table { display: block; overflow-x: auto; white-space: nowrap; }
   .login-card { width: min(100% - 32px, 380px); padding: 28px 24px; }

@@ -8,6 +8,7 @@ SSE) dan ke berkas `<job>/events.jsonl` (untuk replay saat halaman disegarkan).
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -33,11 +34,20 @@ class Job:
         self.finished = False
         self.error = ""
         self.hasil: dict = {}
+        self.cancel_event = threading.Event()
+        self.session_ids: set[str] = set()
+        self.session_lock = threading.Lock()
         self.dibuat = time.time()
         log_dir = config.work_dirs(slug, sesi)["log"]
         log_dir.mkdir(parents=True, exist_ok=True)
         self.event_file = log_dir / f"job-{id}.jsonl"
         self.reporter = self._buat_reporter()
+
+    def record_session(self, session_id: str) -> None:
+        if not session_id:
+            return
+        with self.session_lock:
+            self.session_ids.add(session_id)
 
     def _buat_reporter(self) -> "callable[[dict], None]":
         job = self
@@ -103,16 +113,75 @@ class JobManager:
             job = self.jobs.get(jid)
             if job is None:
                 continue
+            if job.cancel_event.is_set():
+                self._finish_stopped(job)
+                continue
             job.push_status("running")
             try:
                 self._run(job)
+            except pipeline.PipelineDibatalkan:
+                pass
             except Exception as exc:  # noqa: BLE001 - laporkan ke UI
                 job.reporter({"level": "error", "stage": "", "msg": f"Gagal: {exc}"})
                 job.push_status("error", str(exc))
             finally:
+                if job.cancel_event.is_set():
+                    self._finish_stopped(job)
                 with job.cond:
                     job.finished = True
                     job.cond.notify_all()
+
+    def stop(self, jid: str) -> bool:
+        with self.lock:
+            job = self.jobs.get(jid)
+        if job is None or job.status in {"done", "error", "stopped"}:
+            return False
+        job.cancel_event.set()
+        with self._cv:
+            queued = jid in self._queue
+            if queued:
+                self._queue.remove(jid)
+        job.reporter({"level": "warn", "stage": "stop", "msg": "Menghentikan job dan proses OpenCode..."})
+        if queued:
+            self._finish_stopped(job)
+        else:
+            job.push_status("stopping")
+        return True
+
+    def _finish_stopped(self, job: Job) -> None:
+        with job.session_lock:
+            session_ids = sorted(job.session_ids)
+        deleted = 0
+        failed = 0
+        executable = config.cari_opencode() if session_ids else None
+        for session_id in session_ids:
+            if executable is None:
+                failed += 1
+                continue
+            command = [str(executable), "session", "delete", "--standalone", session_id]
+            if executable.suffix.lower() in {".cmd", ".bat"}:
+                command = ["cmd", "/c", *command]
+            try:
+                result = subprocess.run(
+                    command, capture_output=True, text=True, timeout=15, check=False
+                )
+                if result.returncode == 0:
+                    deleted += 1
+                else:
+                    failed += 1
+            except (OSError, subprocess.SubprocessError):
+                failed += 1
+        if session_ids:
+            pesan = f"Proses berhenti; {deleted} sesi OpenCode dihapus."
+            if failed:
+                pesan += f" {failed} sesi gagal dihapus."
+        else:
+            pesan = "Proses job berhenti; tidak ada ID sesi OpenCode yang tercatat."
+        job.reporter({"level": "warn", "stage": "stop", "msg": pesan})
+        job.push_status("stopped")
+        with job.cond:
+            job.finished = True
+            job.cond.notify_all()
 
     # ----------------------------------------------------------------- run
 
@@ -157,6 +226,8 @@ class JobManager:
                 tanpa_docx=bool(job.params.get("tanpa_docx", False)),
                 reporter=job.reporter,
                 manual=manual,
+                cancel_event=job.cancel_event,
+                session_callback=job.record_session,
             )
             hasil = pipe.jalankan()
         else:
@@ -174,6 +245,8 @@ class JobManager:
                 dengan_gambar=not job.params.get("tanpa_gambar", False),
                 tanpa_docx=bool(job.params.get("tanpa_docx", False)),
                 reporter=job.reporter,
+                cancel_event=job.cancel_event,
+                session_callback=job.record_session,
             )
             hasil = pipe.jalankan()
         job.hasil = self._hasil_dict(hasil)

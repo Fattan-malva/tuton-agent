@@ -15,6 +15,7 @@ Lalu buka http://127.0.0.1:8000 (atau WEB_PORT di .env).
 from __future__ import annotations
 
 import io
+import errno
 import json
 import mimetypes
 import os
@@ -42,6 +43,9 @@ COOKIE_NAME = "tuton_session"
 SECRET = auth.buat_secret()
 MANAGER = JobManager()
 _MODEL_CACHE: tuple[float, list[str]] | None = None
+_OPENCODE_VERSION_CACHE: tuple[bool, str | None] = (False, None)
+_MOODLE_STATUS_CACHE: tuple[float, dict] | None = None
+_MOODLE_STATUS_LOCK = threading.Lock()
 
 
 # ----------------------------------------------------------- multipart
@@ -128,17 +132,23 @@ def _butuh_auth(handler) -> bool:
 
 
 def _opencode_version() -> str | None:
+    global _OPENCODE_VERSION_CACHE
+    if _OPENCODE_VERSION_CACHE[0]:
+        return _OPENCODE_VERSION_CACHE[1]
     exe = config.cari_opencode()
     if exe is None:
-        return None
-    try:
-        out = subprocess.run(
-            [str(exe), "--version"], capture_output=True, text=True, timeout=15
-        )
-        baris = (out.stdout or out.stderr).strip().splitlines()
-        return baris[0].strip() if baris else "terpasang"
-    except (OSError, subprocess.SubprocessError):
-        return "terpasang (versi gagal dibaca)"
+        version = None
+    else:
+        try:
+            out = subprocess.run(
+                [str(exe), "--version"], capture_output=True, text=True, timeout=15
+            )
+            baris = (out.stdout or out.stderr).strip().splitlines()
+            version = baris[0].strip() if baris else "terpasang"
+        except (OSError, subprocess.SubprocessError):
+            version = "terpasang (versi gagal dibaca)"
+    _OPENCODE_VERSION_CACHE = (True, version)
+    return version
 
 
 def _opencode_models() -> dict:
@@ -169,14 +179,21 @@ def _opencode_models() -> dict:
 
 
 def _moodle_login() -> dict:
-    try:
-        import moodle  # noqa: PLC0415
+    global _MOODLE_STATUS_CACHE
+    with _MOODLE_STATUS_LOCK:
+        now = time.monotonic()
+        if _MOODLE_STATUS_CACHE and now - _MOODLE_STATUS_CACHE[0] < 60:
+            return dict(_MOODLE_STATUS_CACHE[1])
+        try:
+            import moodle  # noqa: PLC0415
 
-        klien = moodle.Moodle()
-        masuk, pesan = klien.cek_login()
-        return {"masuk": masuk, "pesan": pesan}
-    except Exception as exc:  # noqa: BLE001
-        return {"masuk": False, "pesan": str(exc)}
+            klien = moodle.Moodle()
+            masuk, pesan = klien.cek_login()
+            result = {"masuk": masuk, "pesan": pesan}
+        except Exception as exc:  # noqa: BLE001
+            result = {"masuk": False, "pesan": str(exc)}
+        _MOODLE_STATUS_CACHE = (now, result)
+        return dict(result)
 
 
 def _status() -> dict:
@@ -420,6 +437,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         if _butuh_auth(self):
             return
+        stop_match = re.fullmatch(r"/api/jobs/([A-Za-z0-9\-]+)/stop", path)
+        if stop_match:
+            if not MANAGER.stop(stop_match.group(1)):
+                return _kirim_json(self, {"ok": False, "error": "Job tidak aktif atau tidak ditemukan."}, 404)
+            return _kirim_json(self, {"ok": True})
         if path == "/api/jobs/scrape":
             try:
                 payload = json.loads(self._baca_body().decode("utf-8"))
@@ -592,6 +614,8 @@ class QuietHTTPServer(ThreadingHTTPServer):
     permintaan.
     """
 
+    allow_reuse_address = False
+
     def handle_error(self, request, client_address) -> None:
         import sys as _sys
 
@@ -610,7 +634,17 @@ def main() -> None:
         port = int(config.env("WEB_PORT") or "8000")
     except ValueError:
         port = 8000
-    httpd = QuietHTTPServer((host, port), Handler)
+    try:
+        httpd = QuietHTTPServer((host, port), Handler)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE or getattr(exc, "winerror", None) == 10048:
+            print(
+                f"Port {port} pada {host} sudah dipakai. Hentikan server lama "
+                "atau ubah WEB_PORT di .env.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from exc
+        raise
     print(f"UI Tuton jalan di http://{host}:{port}")
     if not config.env("APP_PASSWORD"):
         print("  (APP_PASSWORD kosong: gerbang login dimatikan)")

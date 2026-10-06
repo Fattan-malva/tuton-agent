@@ -4,7 +4,7 @@
 
 const $ = (sel) => document.querySelector(sel);
 const view = $("#view");
-const state = { es: null, timer: null };
+const state = { es: null, timer: null, routeId: 0, routeController: null };
 const ICONS = {
   login: '<path d="M10 17l5-5-5-5M15 12H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/>',
   logout: '<path d="M14 17l5-5-5-5M19 12H9"/><path d="M12 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/>',
@@ -17,6 +17,7 @@ const ICONS = {
   settings: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   play: '<path d="m8 5 12 7-12 7z"/>',
+  stop: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
   chevron: '<path d="m6 9 6 6 6-6"/>',
@@ -145,14 +146,34 @@ document.addEventListener("pointerdown", (event) => {
   });
 });
 
-async function api(path, opts) {
-  const res = await fetch(path, opts);
+async function api(path, opts = {}) {
+  const options = { ...opts };
+  const method = (options.method || "GET").toUpperCase();
+  const cacheMs = method === "GET" ? apiCacheLifetime(path) : 0;
+  const cached = cacheMs ? apiCache.get(path) : null;
+  if (cached && cached.expires > Date.now()) return cached.data;
+  if ((options.method || "GET").toUpperCase() === "GET" && !options.signal) {
+    options.signal = state.routeController?.signal;
+  }
+  const res = await fetch(path, options);
   if (res.status === 401) {
     showLogin("Sesi berakhir. Silakan masuk kembali.");
     throw new Error("auth");
   }
   const ct = res.headers.get("content-type") || "";
-  return ct.includes("application/json") ? res.json() : res.text();
+  const data = ct.includes("application/json") ? await res.json() : await res.text();
+  if (cacheMs && res.ok) apiCache.set(path, { data, expires: Date.now() + cacheMs });
+  if (method !== "GET" && res.ok) apiCache.clear();
+  return data;
+}
+
+const apiCache = new Map();
+
+function apiCacheLifetime(path) {
+  if (path === "/api/courses" || path.startsWith("/api/courses/") || path === "/api/models") return 5 * 60 * 1000;
+  if (path === "/api/moodle-status") return 60 * 1000;
+  if (path === "/api/status" || path === "/api/agents") return 30 * 1000;
+  return 0;
 }
 
 function fmtTime(ts) {
@@ -162,6 +183,8 @@ function fmtTime(ts) {
 
 function badge(status) {
   if (status === "done") return '<span class="badge green">selesai</span>';
+  if (status === "stopped") return '<span class="badge red">dihentikan</span>';
+  if (status === "stopping") return '<span class="badge yellow">menghentikan</span>';
   if (status === "error") return '<span class="badge red">gagal</span>';
   if (status === "running") return '<span class="badge blue">berjalan</span>';
   return '<span class="badge">antre</span>';
@@ -172,6 +195,9 @@ function setPills(html) { $("#pills").innerHTML = html || ""; }
 /* ============================================================ auth */
 
 function showLogin(message = "") {
+  state.routeId += 1;
+  state.routeController?.abort();
+  state.routeController = null;
   if (state.es) { state.es.close(); state.es = null; }
   if (state.timer) { clearInterval(state.timer); state.timer = null; }
   $("#login").classList.remove("hidden");
@@ -230,24 +256,31 @@ const TITLES = {
 };
 
 async function route() {
+  const routeId = ++state.routeId;
+  state.routeController?.abort();
+  state.routeController = new AbortController();
   if (state.es) { state.es.close(); state.es = null; }
   if (state.timer) { clearInterval(state.timer); state.timer = null; }
-  const name = (location.hash || "#dashboard").slice(1);
+  const name = (location.hash || "#dashboard").slice(1).split(":", 1)[0];
   document.querySelectorAll("#nav a").forEach((a) =>
     a.classList.toggle("active", a.dataset.view === name));
   $("#page-title").textContent = TITLES[name] || "Dashboard";
   view.innerHTML = '<div class="muted">Memuat...</div>';
   const fn = VIEWS[name] || VIEWS.dashboard;
-  try { await fn(); }
-  catch (e) { view.innerHTML = `<div class="err">${esc(e.message || e)}</div>`; }
+  try { await fn(routeId); }
+  catch (e) {
+    if (routeId !== state.routeId || e.name === "AbortError") return;
+    view.innerHTML = `<div class="err">${esc(e.message || e)}</div>`;
+  }
 }
 
 /* ============================================================ views */
 
 const VIEWS = {};
 
-VIEWS.dashboard = async () => {
+VIEWS.dashboard = async (routeId) => {
   const [status, jobs] = await Promise.all([api("/api/status"), api("/api/jobs")]);
+  if (routeId !== state.routeId) return;
   const last = jobs[0];
   setPills('<span class="badge blue">Moodle: memeriksa</span>');
   const cards = [
@@ -275,7 +308,7 @@ VIEWS.dashboard = async () => {
 
   const masihDashboard = () => (location.hash || "#dashboard") === "#dashboard";
   api("/api/moodle-status").then((ml) => {
-    if (!masihDashboard()) return;
+    if (routeId !== state.routeId || !masihDashboard()) return;
     const card = view.querySelector('[data-dashboard-card="Moodle"]');
     if (!card) return;
     card.querySelector(".big").textContent = ml.masuk ? "Masuk" : "Belum";
@@ -285,7 +318,7 @@ VIEWS.dashboard = async () => {
       : '<span class="badge red">Moodle: tidak masuk</span>');
   }).catch(() => {});
   api("/api/courses").then((courses) => {
-    if (!masihDashboard()) return;
+    if (routeId !== state.routeId || !masihDashboard()) return;
     const card = view.querySelector('[data-dashboard-card="Courses"]');
     if (!card) return;
     card.querySelector(".big").textContent = String(courses.length);
@@ -293,8 +326,9 @@ VIEWS.dashboard = async () => {
   }).catch(() => {});
 };
 
-VIEWS.agents = async () => {
+VIEWS.agents = async (routeId) => {
   const [agents, jobs] = await Promise.all([api("/api/agents"), api("/api/jobs")]);
+  if (routeId !== state.routeId) return;
   const running = jobs.find((j) => j.status === "running" || j.status === "queued");
   const stat = running
     ? `<span class="badge blue">Aktif: ${esc(running.id)}</span>`
@@ -313,8 +347,9 @@ VIEWS.agents = async () => {
     </div>`;
 };
 
-VIEWS.results = async () => {
+VIEWS.results = async (routeId) => {
   const jobs = await api("/api/jobs");
+  if (routeId !== state.routeId) return;
   const groups = new Map();
   for (const job of jobs) {
     if (job.status !== "done" || !job.hasil || !job.hasil.docx) continue;
@@ -356,7 +391,7 @@ function downloadJob(id) {
   window.location.href = `/api/download/${id}`;
 }
 
-VIEWS.buat = async () => {
+VIEWS.buat = async (routeId) => {
   setPills("");
   view.innerHTML = `
     <div class="tabs">
@@ -430,14 +465,18 @@ VIEWS.buat = async () => {
 
   // populate courses
   const courses = await api("/api/courses").catch(() => []);
+  if (routeId !== state.routeId) return;
   const sel = $("#sc-matkul");
+  if (!sel) return;
   sel.innerHTML = '<option value="">— pilih —</option>' +
     courses.map((c) => `<option value="${esc(c.id)}">${esc(c.nama)}${c.kode ? " (" + esc(c.kode) + ")" : ""}</option>`).join("");
 
   sel.addEventListener("change", async () => {
+    const changeRouteId = state.routeId;
     const ses = $("#sc-sesi");
     if (!sel.value) { ses.innerHTML = ""; return; }
     const list = await api(`/api/courses/${sel.value}/sessions`).catch(() => []);
+    if (changeRouteId !== state.routeId || !ses.isConnected) return;
     ses.innerHTML = list.map((s) => `<option value="${s.sesi}">Sesi ${s.sesi} (${s.jumlah} soal)</option>`).join("");
   });
 
@@ -452,6 +491,7 @@ VIEWS.buat = async () => {
   });
 
   $("#sc-submit").addEventListener("click", async () => {
+    const submitRouteId = state.routeId;
     const semua = $("#sc-semua").checked;
     const body = {
       matkul_id: semua ? "semua" : $("#sc-matkul").value,
@@ -466,6 +506,7 @@ VIEWS.buat = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).catch((e) => ({ error: e.message }));
+    if (submitRouteId !== state.routeId) return;
     if (r.error) { $("#sc-msg").textContent = r.error; return; }
     const id = r.jobs[0];
     location.hash = "#log:" + id;
@@ -474,6 +515,7 @@ VIEWS.buat = async () => {
   });
 
   $("#mn-submit").addEventListener("click", async () => {
+    const submitRouteId = state.routeId;
     const fd = new FormData();
     fd.append("matkul_nama", $("#mn-matkul").value);
     fd.append("matkul_kode", $("#mn-kode").value);
@@ -489,17 +531,19 @@ VIEWS.buat = async () => {
     for (const f of $("#mn-files").files) fd.append("file", f, f.name);
     const r = await api("/api/jobs/manual", { method: "POST", body: fd })
       .catch((e) => ({ error: e.message }));
+    if (submitRouteId !== state.routeId) return;
     if (r.error) { $("#mn-msg").textContent = r.error; return; }
     location.hash = "#log:" + r.jobs[0];
   });
 };
 
-VIEWS.log = async () => {
+VIEWS.log = async (routeId) => {
   let id = (location.hash.split(":")[1] || "").trim();
-  if (!id) {
-    const jobs = await api("/api/jobs").catch(() => []);
-    id = jobs[0] ? jobs[0].id : "";
-  }
+  const jobs = await api("/api/jobs").catch(() => []);
+  if (routeId !== state.routeId) return;
+  if (!id) id = jobs[0] ? jobs[0].id : "";
+  const selectedJob = jobs.find((job) => job.id === id);
+  const stoppable = selectedJob && ["queued", "running", "stopping"].includes(selectedJob.status);
   setPills(id ? `<span class="badge blue">job ${esc(id)}</span>` : "");
   view.innerHTML = `
     <div class="row log-controls">
@@ -507,9 +551,9 @@ VIEWS.log = async () => {
         <select id="log-sel"><option value="">— pilih job —</option></select></div>
       <div class="col log-action"><button class="btn" id="log-go">${icon("play")}<span>Tampilkan</span></button></div>
     </div>
+    ${stoppable ? `<div class="log-stop-row"><button class="btn danger" id="log-stop">${icon("stop")}<span>Hentikan job</span></button></div>` : ""}
     <div class="console" id="console" style="margin-top:16px"><span class="muted">Pilih job lalu tekan Tampilkan.</span></div>`;
 
-  const jobs = await api("/api/jobs").catch(() => []);
   $("#log-sel").innerHTML = '<option value="">— pilih job —</option>' +
     jobs.map((j) => `<option value="${esc(j.id)}">${esc(j.id)} · ${esc(j.matkul)} · ${esc(j.status)}</option>`).join("");
   if (id) $("#log-sel").value = id;
@@ -520,34 +564,66 @@ VIEWS.log = async () => {
     else attach(id);
   });
 
-  if (id) attach(id);
+  const stopButton = $("#log-stop");
+  if (stopButton) stopButton.addEventListener("click", async () => {
+    stopButton.disabled = true;
+    stopButton.querySelector("span").textContent = "Menghentikan...";
+    const result = await api(`/api/jobs/${encodeURIComponent(id)}/stop`, { method: "POST" })
+      .catch((error) => ({ error: error.message }));
+    if (routeId !== state.routeId || !stopButton.isConnected) return;
+    if (result.error) {
+      stopButton.disabled = false;
+      stopButton.querySelector("span").textContent = "Hentikan job";
+      return;
+    }
+    stopButton.querySelector("span").textContent = "Membersihkan sesi...";
+  });
+
+  if (id) attach(id, routeId);
 };
 
-async function attach(id) {
+async function attach(id, routeId = state.routeId) {
+  if (routeId !== state.routeId) return;
   const consoleEl = $("#console");
+  if (!consoleEl) return;
   consoleEl.innerHTML = "";
-  // replay event tersimpan
   const evs = await api(`/api/jobs/${id}/events`).catch(() => []);
+  if (routeId !== state.routeId || $("#console") !== consoleEl) return;
   evs.forEach((e) => appendLine(consoleEl, e));
   consoleEl.scrollTop = consoleEl.scrollHeight;
 
   if (state.es) state.es.close();
+  if (routeId !== state.routeId) return;
   const es = new EventSource(`/api/jobs/${id}/stream`);
   state.es = es;
   es.onmessage = (ev) => {
+    if (routeId !== state.routeId || $("#console") !== consoleEl) {
+      es.close();
+      if (state.es === es) state.es = null;
+      return;
+    }
     try { appendLine(consoleEl, JSON.parse(ev.data)); }
     catch (e) { /* abaikan */ }
     consoleEl.scrollTop = consoleEl.scrollHeight;
   };
-  es.addEventListener("done", () => {
+  es.addEventListener("done", (event) => {
+    if (routeId !== state.routeId || $("#console") !== consoleEl) {
+      es.close();
+      if (state.es === es) state.es = null;
+      return;
+    }
     const d = document.createElement("span");
     d.className = "ln info";
-    d.textContent = "\n=== job selesai ===";
+    let status = "done";
+    try { status = JSON.parse(event.data).status || status; }
+    catch (e) { /* abaikan */ }
+    d.textContent = status === "stopped" ? "\n=== job dihentikan ===" : "\n=== job selesai ===";
     consoleEl.appendChild(d);
     consoleEl.scrollTop = consoleEl.scrollHeight;
-    es.close(); state.es = null;
+    es.close();
+    if (state.es === es) state.es = null;
   });
-  es.onerror = () => { /* ditutup saat selesai */ };
+  es.onerror = () => { if (routeId !== state.routeId) es.close(); };
 }
 
 function appendLine(consoleEl, e) {
@@ -560,8 +636,15 @@ function appendLine(consoleEl, e) {
   consoleEl.appendChild(ln);
 }
 
-VIEWS.courses = async () => {
-  const courses = await api("/api/courses").catch((e) => { view.innerHTML = `<div class="err">${esc(e.message)}</div>`; return []; });
+VIEWS.courses = async (routeId) => {
+  let courses;
+  try { courses = await api("/api/courses"); }
+  catch (e) {
+    if (routeId !== state.routeId) return;
+    view.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+    return;
+  }
+  if (routeId !== state.routeId) return;
   if (!courses) return;
   setPills(`<span class="badge">${courses.length} courses</span>`);
   if (!courses.length) { view.innerHTML = '<p class="muted">Tidak ada mata kuliah (cek cookie Moodle).</p>'; return; }
@@ -582,16 +665,21 @@ VIEWS.courses = async () => {
 };
 
 window.loadSessions = async function (cid, btn) {
+  const routeId = state.routeId;
+  const detail = $("#course-detail");
+  if (!detail) return;
   const list = await api(`/api/courses/${cid}/sessions`).catch(() => []);
-  $("#course-detail").innerHTML = `
+  if (routeId !== state.routeId || $("#course-detail") !== detail) return;
+  detail.innerHTML = `
     <div class="section-title">Sesi dengan soal</div>
     <div class="row">
       ${list.map((s) => `<span class="badge blue">Sesi ${s.sesi} — ${s.jumlah} soal</span>`).join("") || '<span class="muted">tidak ada</span>'}
     </div>`;
 };
 
-VIEWS.settings = async () => {
+VIEWS.settings = async (routeId) => {
   const items = await api("/api/settings");
+  if (routeId !== state.routeId) return;
   setPills("");
   const rahasia = new Set(["COOKIE_MOODLE", "APP_PASSWORD"]);
   view.innerHTML = `
@@ -613,6 +701,7 @@ VIEWS.settings = async () => {
     <div id="set-msg" class="err"></div>`;
   bindModelPickers(view);
   $("#set-save").addEventListener("click", async () => {
+    const saveRouteId = state.routeId;
     const payload = {};
     document.querySelectorAll("#set-list input").forEach((inp) => {
       payload[inp.dataset.key] = inp.value;
@@ -621,8 +710,13 @@ VIEWS.settings = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }).catch((e) => ({ error: e.message }));
-    $("#set-msg").textContent = r && r.ok ? "Tersimpan." : (r && r.error) || "Gagal.";
-    if (r && r.ok) setTimeout(() => location.reload(), 600);
+    if (saveRouteId !== state.routeId) return;
+    const message = $("#set-msg");
+    if (!message) return;
+    message.textContent = r && r.ok ? "Tersimpan." : (r && r.error) || "Gagal.";
+    if (r && r.ok) setTimeout(() => {
+      if (saveRouteId === state.routeId) location.reload();
+    }, 600);
   });
 };
 
