@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tuton — Dashboard Pipeline</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <!-- Gerbang login -->
+  <div id="login" class="login hidden">
+    <div class="login-card">
+      <div class="brand">Tuton<span>.ui</span></div>
+      <p class="muted">Masuk untuk membuka dashboard pipeline tutor.</p>
+      <form id="login-form">
+        <label>Nama pengguna</label>
+        <input id="login-user" type="text" autocomplete="username" />
+        <label>Kata sandi</label>
+        <input id="login-pass" type="password" autocomplete="current-password" />
+        <button type="submit" class="btn"><span data-icon="login"></span><span>Masuk</span></button>
+        <div id="login-err" class="err"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Aplikasi -->
+  <div id="app" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand">Tuton<span>.ui</span></div>
+      <nav id="nav">
+        <a href="#dashboard" data-view="dashboard" data-mobile-label="Home" aria-label="Dashboard" title="Dashboard"><span class="nav-icon" data-icon="dashboard"></span><span>Dashboard</span></a>
+        <a href="#buat" data-view="buat" data-mobile-label="Tugas" aria-label="Kerjakan Tugas" title="Kerjakan Tugas"><span class="nav-icon" data-icon="task"></span><span>Kerjakan Tugas</span></a>
+        <a href="#agents" data-view="agents" data-mobile-label="Agent" aria-label="Agent Worker" title="Agent Worker"><span class="nav-icon" data-icon="bot"></span><span>Agent Worker</span></a>
+        <a href="#results" data-view="results" data-mobile-label="Result" aria-label="Result" title="Result"><span class="nav-icon" data-icon="file"></span><span>Result</span></a>
+        <a href="#log" data-view="log" data-mobile-label="Log" aria-label="Log Live" title="Log Live"><span class="nav-icon" data-icon="terminal"></span><span>Log Live</span></a>
+        <a href="#courses" data-view="courses" data-mobile-label="Kelas" aria-label="Courses" title="Courses"><span class="nav-icon" data-icon="book"></span><span>Courses</span></a>
+        <a href="#settings" data-view="settings" data-mobile-label="Set" aria-label="Pengaturan" title="Pengaturan"><span class="nav-icon" data-icon="settings"></span><span>Pengaturan</span></a>
+      </nav>
+      <div class="side-foot">
+        <span id="side-user" class="muted"></span>
+        <button id="logout" class="link icon-link" aria-label="Keluar" title="Keluar"><span data-icon="logout"></span><span>Keluar</span></button>
+      </div>
+    </aside>
+
+    <main class="content">
+      <header class="topbar">
+        <h1 id="page-title">Dashboard</h1>
+        <div id="pills" class="pills"></div>
+      </header>
+      <section id="view" class="view"></section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
