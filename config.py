@@ -61,8 +61,10 @@ def work_dirs(slug: str, nomor: int | None = None) -> dict[str, Path]:
 def output_dir(slug: str, nomor: int) -> Path:
     """Folder keluaran untuk satu sesi: `output/<matkul>/sesi-<N>/`.
 
-    Berkas di dalamnya tetap bernama `<matkul>-sesi-<N>.docx` karena nama berkas
-    itulah yang dibaca tutor saat mengumpulkan jawaban.
+    Nama folder tetap per nomor sesi supaya penelusuran lama tidak berubah.
+    Berkas di dalamnya memakai `<slug>_<Jenis>.<nomor>.docx` -- jenis dan
+    nomor kegiatan (Diskusi/Tugas), bukan nomor sesi, sehingga nama ikut
+    cocok dengan baris di laporan nilai. Lihat `Pipeline._nama_dokumen`.
     """
     return OUTPUT_DIR / slug / f"sesi-{nomor}"
 

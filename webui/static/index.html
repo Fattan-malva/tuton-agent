@@ -11,6 +11,23 @@
   <link rel="icon" type="image/png" sizes="1254x1254" href="/static/icons/icons.png" />
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
   <meta name="theme-color" content="#f7f6f3" />
+  <!-- Terapkan tema SEBELUM CSS digambar. Skrip di <head> yang berblokir
+       parsing, jadi tidak ada frame putih ketika peramban dibuka dalam mode
+       gelap. Nilainya disimpan di localStorage oleh Pengaturan; kalau belum
+       pernah diset, ikuti preferensi sistem. -->
+  <script>
+    (function () {
+      var tema = null;
+      try { tema = localStorage.getItem("tuton-tema"); } catch (e) {}
+      if (tema !== "gelap" && tema !== "terang") {
+        tema = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "gelap" : "terang";
+      }
+      document.documentElement.setAttribute("data-tema", tema);
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute("content", tema === "gelap" ? "#191919" : "#f7f6f3");
+    })();
+  </script>
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Tuton" />

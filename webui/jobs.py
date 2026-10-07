@@ -8,6 +8,8 @@ SSE) dan ke berkas `<job>/events.jsonl` (untuk replay saat halaman disegarkan).
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import subprocess
 import threading
 import time
@@ -17,6 +19,38 @@ import config
 import courses
 import moodle
 import pipeline
+
+
+def _hapus_folder_sesi(slug: str, sesi: int) -> str:
+    """Hapus `_kerja/<slug>/sesi-<N>/` milik satu job.
+
+    Mengembalikan pesan galat ketika gagal, atau string kosong ketika
+    berhasil dan ketika foldernya memang sudah tidak ada (pipeline
+    membersihkannya sendiri begitu DOCX jadi).
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", str(slug)) or ".." in str(slug):
+        return f"Nama folder tidak sah, tidak dihapus: {slug!r}"
+    try:
+        akar = config.work_dirs(str(slug), int(sesi))["root"]
+    except (KeyError, TypeError, ValueError):
+        # Konfigurasi uji kadang mengganti work_dirs dengan stub yang tidak
+        # memuat kunci "root"; tidak ada yang bisa dihapus, bukan kegagalan.
+        return ""
+    try:
+        shutil.rmtree(akar)
+    except FileNotFoundError:
+        return ""
+    except OSError as exc:
+        return f"Folder kerja tidak bisa dihapus: {exc}"
+    # Induk yang kini kosong (hanya menyimpan satu sesi) ikut dibuang supaya
+    # `_kerja/` tidak menumpuk folder mata kuliah yang sudah dihapus.
+    try:
+        induk = akar.parent
+        if induk.is_dir() and not any(induk.iterdir()):
+            induk.rmdir()
+    except OSError:
+        pass
+    return ""
 
 
 class Job:
@@ -175,6 +209,35 @@ class JobManager:
             job.push_status("stopping")
         return True
 
+    def hapus(self, jid: str) -> tuple[bool, str]:
+        """Hapus satu job dari daftar beserta folder kerjanya.
+
+        Job yang masih hidup ditolak: thread-nya masih memegang objek `Job`
+        dan masih menulis ke folder kerja, jadi folder yang dihapus akan
+        langsung dibuat ulang lagi oleh pipeline yang sedang berjalan.
+        """
+        with self.lock:
+            job = self.jobs.get(jid)
+            if job is None:
+                return False, "Job tidak ditemukan."
+            if job.status in {"queued", "running", "stopping"}:
+                return False, "Job masih berjalan. Hentikan dulu sebelum dihapus."
+            dipakai_lain = any(
+                lain is not job and lain.slug == job.slug and lain.sesi == job.sesi
+                for lain in self.jobs.values()
+            )
+            del self.jobs[jid]
+        with self._cv:
+            if jid in self._queue:
+                self._queue.remove(jid)
+        # Folder kerja sesi hanya dihapus kalau tidak ada job lain yang
+        # menunjuk ke sana; job lain pada (slug, sesi) yang sama masih
+        # membaca artefaknya untuk ditampilkan.
+        pesan = ""
+        if not dipakai_lain:
+            pesan = _hapus_folder_sesi(job.slug, job.sesi)
+        return True, pesan
+
     def _finish_stopped(self, job: Job) -> None:
         with job.session_lock:
             session_ids = sorted(job.session_ids)
@@ -274,6 +337,9 @@ class JobManager:
                 reporter=job.reporter,
                 cancel_event=job.cancel_event,
                 session_callback=job.record_session,
+                # Jenis yang dipilih di form run Moodle: "" (otomatis)
+                # berarti kerjakan seluruh soal sesi apa adanya.
+                jenis=job.params.get("jenis", ""),
             )
             hasil = pipe.jalankan()
         job.hasil = self._hasil_dict(hasil)

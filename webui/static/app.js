@@ -22,6 +22,12 @@ const ICONS = {
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
   chevron: '<path d="m6 9 6 6 6-6"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/>',
+  trash: '<path d="M3 6h18M8 6V4.5A1.5 1.5 0 0 1 9.5 3h5A1.5 1.5 0 0 1 16 4.5V6M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/>',
+  eye: '<path d="M2 12s3.6-6.8 10-6.8S22 12 22 12s-3.6 6.8-10 6.8S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  moon: '<path d="M20.8 13.4A8.6 8.6 0 1 1 10.6 3.2a6.7 6.7 0 0 0 10.2 10.2z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.5 1.5M17.6 17.6l1.5 1.5M2 12h2M20 12h2M4.9 19.1l1.5-1.5M17.6 6.4l1.5-1.5"/>',
+  refresh: '<path d="M20.5 12a8.5 8.5 0 1 1-2.5-6"/><path d="M20.5 4v5h-5"/>',
 };
 
 function icon(name) {
@@ -36,6 +42,30 @@ function esc(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/* ------------------------------------------------------------ tema */
+// Seluruh warna datang dari variabel di app.css yang diganti di bawah
+// `<html data-tema>`. Skrip di index.html sudah memasang atributnya sebelum
+// CSS digambar; fungsi ini yang memutuskan perubahannya (sakelar di
+// Pengaturan) dan menyimpannya per peramban.
+const TEMA_KEY = "tuton-tema";
+
+function temaSaatIni() {
+  return document.documentElement.getAttribute("data-tema") === "gelap"
+    ? "gelap" : "terang";
+}
+
+function terapkanTema(tema) {
+  const nilai = tema === "gelap" ? "gelap" : "terang";
+  document.documentElement.setAttribute("data-tema", nilai);
+  try {
+    localStorage.setItem(TEMA_KEY, nilai);
+  } catch (e) {
+    /* mode privat: tema tetap berlaku selama tab terbuka */
+  }
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", nilai === "gelap" ? "#191919" : "#f7f6f3");
 }
 
 let modelOptionsPromise;
@@ -478,12 +508,15 @@ VIEWS.results = async (routeId) => {
     return;
   }
   view.innerHTML = `
+    <div id="res-msg" class="err"></div>
     <div class="result-grid">
       ${[...groups.entries()].map(([matkul, files]) => `
         <article class="result-card">
           <header class="result-card-head">
             <h2>${esc(matkul)}</h2>
             <span class="badge">${files.length} DOCX</span>
+            <button type="button" class="icon-btn danger" data-hapus-matkul="${esc(files[0].slug)}"
+              title="Hapus semua hasil ${esc(matkul)}">${icon("trash")}</button>
           </header>
           <ul class="result-files">
             ${files.map((f) => {
@@ -494,14 +527,112 @@ VIEWS.results = async (routeId) => {
               const detail = [String(f.sesi || "").replace("sesi-", "Sesi "), `${mb} MB`, tanggal].filter(Boolean).join(" · ");
               const rel = `${f.slug}/${f.sesi}/${f.nama}`;
               const href = `/api/download-output/${rel.split("/").map(encodeURIComponent).join("/")}`;
-              return `<li><a class="result-file" href="${href}" title="Unduh ${esc(f.nama)}">
-                ${icon("file")}<span class="result-file-main"><strong>${esc(f.nama)}</strong><small>${esc(detail)}</small></span>${icon("download")}
-              </a></li>`;
+              return `<li class="result-row">
+                <button type="button" class="result-file" data-preview="${esc(rel)}"
+                  title="Pratinjau ${esc(f.nama)}">
+                  ${icon("file")}<span class="result-file-main"><strong>${esc(f.nama)}</strong><small>${esc(detail)}</small></span>${icon("eye")}
+                </button>
+                <span class="result-acts">
+                  <a class="icon-btn" href="${href}" title="Unduh ${esc(f.nama)}">${icon("download")}</a>
+                  <button type="button" class="icon-btn danger" data-hapus-file="${esc(rel)}"
+                    title="Hapus ${esc(f.nama)}">${icon("trash")}</button>
+                </span>
+              </li>`;
             }).join("")}
           </ul>
         </article>`).join("")}
     </div>`;
+
+  const pesan = (teks) => {
+    const el = $("#res-msg");
+    if (el) el.textContent = teks;
+  };
+
+  const hapusHasil = async (body, judul, pesanDialog) => {
+    const ya = await konfirmasi({ judul, pesan: pesanDialog, labelYa: "Hapus", labelTidak: "Batal", nada: "danger" });
+    if (!ya) return;
+    const r = await api("/api/results/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch((e) => ({ error: e.message }));
+    if (routeId !== state.routeId) return;
+    if (r && r.error) { pesan(r.error); return; }
+    route();  // ambil ulang daftar; daftar berubah setiap penghapusan
+  };
+
+  view.querySelectorAll("[data-preview]").forEach((b) => {
+    b.addEventListener("click", () => pratinjau(b.dataset.preview));
+  });
+  view.querySelectorAll("[data-hapus-file]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const rel = b.dataset.hapusFile;
+      const nama = rel.split("/").pop();
+      const [slug, sesi] = rel.split("/");
+      hapusHasil(
+        { slug, sesi, nama },
+        "Hapus berkas ini?",
+        `${nama} akan dihapus permanen dari disk. Berkas lain di sesi ini tidak ikut terhapus.`,
+      );
+    });
+  });
+  view.querySelectorAll("[data-hapus-matkul]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const slug = b.dataset.hapusMatkul;
+      hapusHasil(
+        { slug },
+        "Hapus semua hasil mata kuliah ini?",
+        `Seluruh folder output/${slug.replace(/-/g, " ")} beserta semua DOCX di dalamnya dihapus permanen. Tidak bisa dibatalkan.`,
+      );
+    });
+  });
 };
+
+// Modal pratinjau DOCX. Isinya datang dari server sebagai HTML blok;
+// peramban tidak bisa membaca .docx, jadi konversinya di server
+// (webui/docxprev.py) dan hanya HTML polos yang dikirim ke sini.
+function pratinjau(rel) {
+  const enc = rel.split("/").map(encodeURIComponent).join("/");
+  const nama = rel.split("/").pop();
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="prev-judul">
+      <header class="modal-head">
+        <h3 id="prev-judul">${esc(nama)}</h3>
+        <button type="button" class="icon-btn" data-tutup title="Tutup pratinjau">${icon("x")}</button>
+      </header>
+      <div class="modal-body prev-body" id="prev-isi">
+        <div class="prev-muat"><span class="spinner"></span> Membaca dokumen...</div>
+      </div>
+      <div class="modal-aksi">
+        <a class="btn ghost" href="/api/download-output/${enc}">${icon("download")}<span>Unduh</span></a>
+        <button type="button" class="btn" data-tutup>Tutup</button>
+      </div>
+    </div>`;
+  const tutup = () => {
+    document.removeEventListener("keydown", onKey);
+    overlay.remove();
+  };
+  const onKey = (e) => { if (e.key === "Escape") tutup(); };
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) tutup(); });
+  overlay.querySelectorAll("[data-tutup]").forEach((b) => b.addEventListener("click", tutup));
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(overlay);
+  overlay.querySelector("[data-tutup]").focus();
+
+  const isi = overlay.querySelector("#prev-isi");
+  api(`/api/results/preview/${enc}`).then((d) => {
+    if (isi.isConnected === false || overlay.isConnected === false) return;
+    if (!d || typeof d !== "object" || typeof d.html !== "string") {
+      throw new Error("Berkas tidak bisa dipratinjau.");
+    }
+    isi.innerHTML = d.html.trim()
+      || '<p class="muted">Dokumen tidak memiliki teks yang bisa ditampilkan.</p>';
+  }).catch((e) => {
+    if (isi.isConnected === false) return;
+    isi.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  });
+}
 
 function downloadJob(id) {
   window.location.href = `/api/download/${id}`;
@@ -522,7 +653,17 @@ VIEWS.buat = async (routeId) => {
           <select id="sc-matkul"><option value="">— memuat —</option></select></div>
         <div class="col"><label class="field">Sesi</label>
           <select id="sc-sesi"></select></div>
+        <div class="col"><label class="field" for="sc-jenis">Jenis soal</label>
+          <select id="sc-jenis">
+            <option value="">Otomatis (ikut sesi)</option>
+            <option value="Tugas">Tugas saja</option>
+            <option value="Diskusi">Diskusi saja</option>
+          </select></div>
       </div>
+      <div class="files-note">"Otomatis" mengerjakan semua soal yang ada di
+      sesi itu. Memilih Tugas atau Diskusi menyaring soalnya -- sesi campuran
+      hanya menghasilkan jenis yang dipilih, dan namanya ikut menyebut jenis
+      (mis. <span class="kbd">Basis_Data_64_Tugas.1.docx</span>).</div>
       <label class="field"><input type="checkbox" id="sc-semua" style="width:auto;vertical-align:middle"> Proses semua mata kuliah (satu sesi)</label>
       <label class="field"><input type="checkbox" id="sc-tanpa-docx" style="width:auto;vertical-align:middle"> Tanpa buat DOCX (hanya .md)</label>
       <label class="field"><input type="checkbox" id="sc-tanpa-gambar" style="width:auto;vertical-align:middle"> Lewati transkripsi gambar</label>
@@ -645,6 +786,7 @@ VIEWS.buat = async (routeId) => {
     const body = {
       matkul_id: semua ? "semua" : $("#sc-matkul").value,
       sesi: parseInt($("#sc-sesi").value || "0", 10),
+      jenis: $("#sc-jenis") ? $("#sc-jenis").value : "",
       tanpa_docx: $("#sc-tanpa-docx").checked,
       tanpa_gambar: $("#sc-tanpa-gambar").checked,
       model: $("#sc-model").value,
@@ -702,7 +844,11 @@ VIEWS.log = async (routeId) => {
         <select id="log-sel"><option value="">— pilih job —</option></select></div>
       <div class="col log-action"><button class="btn" id="log-go">${icon("play")}<span>Tampilkan</span></button></div>
     </div>
-    ${stoppable ? `<div class="log-stop-row"><button class="btn danger" id="log-stop">${icon("stop")}<span>Hentikan job</span></button></div>` : ""}
+    ${(stoppable || selectedJob) ? `<div class="log-stop-row">
+      ${stoppable ? `<button class="btn danger" id="log-stop">${icon("stop")}<span>Hentikan job</span></button>` : ""}
+      ${selectedJob ? `<button class="btn ghost" id="log-hapus" type="button">${icon("trash")}<span>Hapus job</span></button>` : ""}
+    </div>` : ""}
+    <div id="log-msg" class="err"></div>
     <div class="console-bar">
       <span id="console-spinner" class="spinner hidden"></span>
       <span id="console-status" class="console-status">siap</span>
@@ -766,6 +912,30 @@ VIEWS.log = async (routeId) => {
       return;
     }
     stopButton.querySelector("span").textContent = "Membersihkan sesi...";
+  });
+
+  const hapusButton = $("#log-hapus");
+  if (hapusButton) hapusButton.addEventListener("click", async () => {
+    const ya = await konfirmasi({
+      judul: `Hapus job ${id}?`,
+      pesan: "Job beserta folder kerja dan lognya dihapus permanen. Hasil DOCX di tab Result tidak ikut terhapus.",
+      labelYa: "Hapus",
+      labelTidak: "Batal",
+      nada: "danger",
+    });
+    if (!ya || routeId !== state.routeId || !hapusButton.isConnected) return;
+    const r = await api(`/api/jobs/${encodeURIComponent(id)}/delete`, { method: "POST" })
+      .catch((e) => ({ error: e.message }));
+    if (routeId !== state.routeId) return;
+    if (r && r.error) {
+      const msg = $("#log-msg");
+      if (msg) msg.textContent = r.error;
+      return;
+    }
+    // Balik ke daftar tanpa id: job yang tadi dibuka sudah tidak ada, dan
+    // menampilkan id mati di hash hanya membuat view mencari job hantu.
+    if (location.hash.split(":")[1]) location.hash = "#log";
+    else route();
   });
 
   if (id) attach(id, routeId);
@@ -851,7 +1021,13 @@ function appendLine(consoleEl, e) {
 }
 
 function bindNilai(data) {
-  const PALETTE = ["#1f6c9f", "#956400", "#346538", "#9f2f2d", "#5b3d9e", "#0f766e", "#b5541d", "#3a5fcd"];
+  // Warna garis & titik. Palet gelap lebih terang dari palet terang supaya
+  // tidak ada seri yang tenggelam di latar #191919; pemilihan dibaca saat
+  // grafik digambar, jadi menyalakan mode gelap lalu buka Dashboard
+  // menghasilkan palet yang sesuai.
+  const PALETTE = temaSaatIni() === "gelap"
+    ? ["#6fb2df", "#dcb45c", "#8bc894", "#e07c78", "#a894e8", "#5fc9bd", "#e79a63", "#93aef5"]
+    : ["#1f6c9f", "#956400", "#346538", "#9f2f2d", "#5b3d9e", "#0f766e", "#b5541d", "#3a5fcd"];
   const hidden = new Set();
   let filter = "Semua";
 
@@ -865,11 +1041,32 @@ function bindNilai(data) {
       <span class="nilai-key"><span class="k ring"></span>Tugas</span>
     </div>`;
 
+  let VW = 720, VH = 320;   // ukuran viewBox aktif (dipakai posisi tooltip)
+  let lebarTerakhir = 0;     // lebar plot saat terakhir digambar
+
   function render() {
     const plot = $("#nilai-plot");
     if (!plot) return;
     const sesi = data.sesi;
-    const W = 720, H = 320, PL = 42, PB = 30, PT = 16, PR = 16;
+    // Layar sempit (ponsel): viewBox dibuat lebih kecil DAN lebih tinggi.
+    // SVG-nya `width:100%; height:auto`, jadi tinggi render = lebar x (H/W).
+    // Dengan rasio 720x320, plot selebar 340px cuma setinggi ~150px dan teks
+    // sumbunya ikut menyusut jadi ~5px. Rasio mendekati 1:1 menjaga tinggi
+    // di kisaran 340px; skala pembesarnya juga lebih besar, jadi huruf, grid,
+    // dan titik ikut terbaca.
+    // kalau plot belum punya lebar (belum dilayout / isinya masih kosong),
+    // pakai lebar induknya sebagai cadangan, bukan langsung 720.
+    const lebar = plot.clientWidth || (plot.parentElement && plot.parentElement.clientWidth) || 720;
+    const sempit = lebar < 620;
+    const W = sempit ? 400 : 720;
+    const H = sempit ? 400 : 320;
+    const PL = sempit ? 32 : 42, PB = sempit ? 26 : 30;
+    const PT = sempit ? 14 : 16, PR = sempit ? 12 : 16;
+    const KS = sempit ? 3 : 2.2;    // ketebalan garis
+    const KC = sempit ? 2.6 : 2;    // ketebalan tepi titik
+    const RT = sempit ? 5 : 3.6;    // radius titik
+    VW = W; VH = H;
+    lebarTerakhir = lebar;
     const x = (i) => PL + (sesi.length > 1 ? i * (W - PL - PR) / (sesi.length - 1) : (W - PL - PR) / 2);
     const y = (v) => PT + (100 - v) / 100 * (H - PT - PB);
     const visible = data.courses.filter((c) => !hidden.has(c.id));
@@ -879,8 +1076,11 @@ function bindNilai(data) {
       g += `<line x1="${PL}" y1="${y(v)}" x2="${W - PR}" y2="${y(v)}" class="grid"/>`;
       g += `<text x="${PL - 6}" y="${y(v) + 3}" class="axis" text-anchor="end">${v}</text>`;
     }
-    // label x
+    // label x -- di layar sempit dilewati tiap label kedua supaya "S10"
+    // tidak bertabrakan dengan tetangganya saat daftar sesinya panjang
+    const langkah = sempit && sesi.length > 8 ? 2 : 1;
     sesi.forEach((s, i) => {
+      if (i % langkah !== 0) return;
       g += `<text x="${x(i)}" y="${H - PB + 16}" class="axis" text-anchor="middle">S${s}</text>`;
     });
     // Satu garis per matkul: Diskusi dan Tugas digabung jadi satu
@@ -911,16 +1111,18 @@ function bindNilai(data) {
           const mx = (a.x + b.x) / 2;
           d += ` C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`;
         }
-        g += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" class="line"/>`;
+        g += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${KS}" class="line"/>`;
       }
       for (const p of pts) {
-        // Diskusi: bulat penuh. Tugas: ring gelap — beda bentuk isi,
-        // tetap satu warna dan satu garis.
-        const isi = p.jenis === "Diskusi" ? color : "#0d1117";
-        g += `<circle cx="${p.x}" cy="${p.y}" r="3.6" fill="${isi}" stroke="${color}" stroke-width="2" data-nama="${esc(c.nama)}" data-s="${p.s}" data-jenis="${p.jenis}" data-v="${p.v}" data-color="${color}" class="nilai-pt" style="animation:ptin .35s ${p.i * 60}ms both"/>`;
+        // Diskusi: bulat penuh warna mata kuliah. Tugas: ring -- pusatnya
+        // warna permukaan (sama seperti kunci legenda .k.ring) dan pinggirnya
+        // warna mata kuliah. `fill` ditaruh di style karena atribut
+        // presentasi SVG tidak memahani var().
+        const isi = p.jenis === "Diskusi" ? color : "var(--surface-2)";
+        g += `<circle cx="${p.x}" cy="${p.y}" r="${RT}" stroke="${color}" stroke-width="${KC}" data-nama="${esc(c.nama)}" data-s="${p.s}" data-jenis="${p.jenis}" data-v="${p.v}" data-color="${color}" class="nilai-pt" style="fill:${isi};animation:ptin .35s ${p.i * 60}ms both"/>`;
       }
     }
-    plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="nilai-svg">${g}</svg><div class="nilai-tip hidden" id="nilai-tip"></div>`;
+    plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="nilai-svg${sempit ? " sempit" : ""}">${g}</svg><div class="nilai-tip hidden" id="nilai-tip"></div>`;
     legendEl.querySelectorAll(".nilai-leg").forEach((b) =>
       b.classList.toggle("off", hidden.has(b.dataset.c)));
   }
@@ -957,8 +1159,8 @@ function bindNilai(data) {
       <div class="tip-val">${esc(c.dataset.v)}<small> / 100</small></div>`;
     tip.classList.remove("hidden");
     const rect = plot.getBoundingClientRect();
-    const cx = Number(c.getAttribute("cx")) * (rect.width / 720);
-    const cy = Number(c.getAttribute("cy")) * (rect.height / 320);
+    const cx = Number(c.getAttribute("cx")) * (rect.width / VW);
+    const cy = Number(c.getAttribute("cy")) * (rect.height / VH);
     const tw = tip.offsetWidth;
     const th = tip.offsetHeight;
     let left = cx - tw / 2;
@@ -974,6 +1176,29 @@ function bindNilai(data) {
       if (tip) tip.classList.add("hidden");
     }
   });
+
+  // Gambar ulang kalau lebar plot benar-benar berubah (rotate, jendela
+  // dipindah, bilah alamat URL bar mobile yang mengubah tata letak).
+  // Cuma ketika lebar bergeser > 6px supaya animasi titik tidak berulang
+  // tiap kali layar berdenyut. Listener lama ikut dilepas supaya bolak-balik
+  // Dashboard tidak menumpuk.
+  let timerRender = 0;
+  const renderUlang = () => {
+    clearTimeout(timerRender);
+    timerRender = setTimeout(() => {
+      const p = document.querySelector("#nilai-plot");
+      if (!p) {
+        window.removeEventListener("resize", renderUlang);
+        return;
+      }
+      if (Math.abs((p.clientWidth || 0) - lebarTerakhir) < 6) return;
+      render();
+    }, 160);
+  };
+  if (state.nilaiResize) window.removeEventListener("resize", state.nilaiResize);
+  state.nilaiResize = renderUlang;
+  window.addEventListener("resize", renderUlang);
+
   render();
 }
 
@@ -1182,6 +1407,18 @@ VIEWS.settings = async (routeId) => {
     <p class="muted">Pengaturan disimpan ke <span class="kbd">.env</span>.
     COOKIE_MOODLE hanya untuk koneksi Moodle, bukan untuk login dashboard.
     Masukkan cookie Moodle di sini. Kolom rahasia yang kosong tidak mengubah nilai tersimpan.</p>
+    <div class="set-tema">
+      <div class="set-tema-teks">
+        <strong>Mode gelap</strong>
+        <p>Dipakai di seluruh aplikasi -- kartu, tabel, grafik, dan modal.
+        Tersimpan di peramban ini, bukan di <span class="kbd">.env</span>, jadi tidak ikut terkirim ke mana pun.</p>
+      </div>
+      <button type="button" class="switch" id="set-tema" role="switch" aria-checked="false">
+        ${icon("moon")}
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+        <span class="switch-label">Terang</span>
+      </button>
+    </div>
     <div id="set-list">
       ${items.map((it) => `
         <div class="settings-field">
@@ -1196,6 +1433,21 @@ VIEWS.settings = async (routeId) => {
     <button class="btn" id="set-save" style="margin-top:18px">Simpan</button>
     <div id="set-msg" class="err"></div>`;
   bindModelPickers(view);
+  // Sakelar tema hidup di luar #set-list: ia bukan nilai .env, jadi tidak
+  // boleh ikut terbaca oleh loop simpan di bawah.
+  const sakelarTema = $("#set-tema");
+  const sinkronSakelar = () => {
+    const gelap = temaSaatIni() === "gelap";
+    sakelarTema.classList.toggle("on", gelap);
+    sakelarTema.setAttribute("aria-checked", String(gelap));
+    sakelarTema.querySelector(".switch-label").textContent = gelap ? "Gelap" : "Terang";
+    sakelarTema.querySelector(".icon").outerHTML = icon(gelap ? "moon" : "sun");
+  };
+  sakelarTema.addEventListener("click", () => {
+    terapkanTema(temaSaatIni() === "gelap" ? "terang" : "gelap");
+    sinkronSakelar();
+  });
+  sinkronSakelar();
   // Pra-muat daftar model sekarang, bukan saat picker diklik. Di Linux
   // `opencode models` butuh ±1,5 detik; kalau dimulai dari klik, picker
   // terlihat kosong/memuat lama. Hasilnya di-cache 5 menit di kedua sisi.

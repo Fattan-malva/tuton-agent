@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT))
 
 import config  # noqa: E402
 import auth  # noqa: E402
+import docxprev  # noqa: E402
 from jobs import JobManager  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -123,6 +124,74 @@ def _results_list() -> list[dict]:
                 }
             )
     return sorted(out, key=lambda x: x["waktu"], reverse=True)
+
+
+def _hasil_target(rel: str) -> Path | None:
+    """Tentukur satu jalur relatif di dalam `output/`, atau `None` kalau lolos.
+
+    Semua rute yang menyentuh `output/` (unduh, pratinjau, hapus) melewat
+    jalurnya lewat sini. Tiga lapis pagar: path absolut di-*resolve* dulu
+    (menetralkan `..` dan tautan simbolis), lalu harus benar-benar berada di
+    dalam `output/` -- bukan sekadar berawalan sama, karena `output2/` juga
+    berawalan `output`. Resolusi dilakukan per bagian, bukan sebagai satu
+    potongan dari klien, supaya `../../etc/passwd` langsung ditolak.
+    """
+    base = config.OUTPUT_DIR.resolve()
+    bagian = [b for b in rel.replace("\\", "/").split("/") if b not in ("", ".")]
+    if not bagian or any(b == ".." for b in bagian):
+        return None
+    try:
+        target = base
+        for b in bagian:
+            target = target / b
+        target = target.resolve()
+    except OSError:
+        return None
+    if not str(target).startswith(str(base) + os.sep):
+        return None
+    return target
+
+
+def _hasil_hapus(payload: dict) -> dict:
+    """Hapus satu berkas, satu folder sesi, atau seluruh folder mata kuliah.
+
+    Tingkatnya ditentukan isi body: `nama` berarti berkas, tanpa `nama` tapi
+    ada `sesi` berarti folder sesi, tanpa keduanya berarti seluruh folder
+    mata kuliah beserta semua DOCX-nya. Selalu lewat `_hasil_target`.
+    """
+    slug = str(payload.get("slug") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_.\-]+", slug) or ".." in slug:
+        raise ValueError("Nama mata kuliah tidak sah.")
+    base = config.OUTPUT_DIR.resolve()
+    akar = _hasil_target(slug)
+    if akar is None:
+        raise ValueError("Folder mata kuliah tidak ada di output/.")
+
+    sesi = str(payload.get("sesi") or "")
+    nama = str(payload.get("nama") or "")
+
+    if nama:
+        if not re.fullmatch(r"sesi-\d+", sesi):
+            raise ValueError("Nomor sesi tidak sah.")
+        target = _hasil_target(f"{slug}/{sesi}/{nama}")
+        if target is None or not target.is_file():
+            raise ValueError("Berkas tidak ditemukan.")
+        target.unlink()
+        return {"ok": True, "tingkat": "berkas", "path": str(target.relative_to(base))}
+
+    if sesi:
+        if not re.fullmatch(r"sesi-\d+", sesi):
+            raise ValueError("Nomor sesi tidak sah.")
+        target = _hasil_target(f"{slug}/{sesi}")
+        if target is None or not target.is_dir():
+            raise ValueError("Folder sesi tidak ditemukan.")
+        shutil.rmtree(target)
+        return {"ok": True, "tingkat": "sesi", "path": str(target.relative_to(base))}
+
+    if not akar.is_dir():
+        raise ValueError("Folder mata kuliah tidak ditemukan.")
+    shutil.rmtree(akar)
+    return {"ok": True, "tingkat": "matkul", "path": slug}
 
 
 def _kirim_json(handler, obj, status: int = 200) -> None:
@@ -457,6 +526,13 @@ def _submit_scrape(params: dict) -> list[str]:
     galat = _moodle_masuk()
     if galat:
         raise ValueError(galat)
+    # Jenis yang dipilih di form run Moodle: "" (otomatis) / "Tugas" /
+    # "Diskusi". Dinormalkan di sini supaya nilai tak dikenal tidak
+    # berakhir di `sesi.soal` dan menyaringnya jadi kosong tanpa pesan.
+    jenis = str(params.get("jenis") or "").strip()
+    if jenis not in {"", "Tugas", "Diskusi", "Kuis"}:
+        raise ValueError("Jenis soal tidak dikenal.")
+    params = {**params, "jenis": jenis}
     sesi = int(params.get("sesi") or 0)
     if params.get("matkul_id") == "semua":
         ids: list[str] = []
@@ -618,6 +694,10 @@ class Handler(BaseHTTPRequestHandler):
             return _kirim_json(self, _jadwal(path.split("/")[3]))
         if path == "/api/results":
             return _kirim_json(self, _results_list())
+        if path.startswith("/api/results/preview/"):
+            return self._hasil_pratinjau(
+                urllib.parse.unquote(path[len("/api/results/preview/"):])
+            )
         if path == "/api/jobs":
             return _kirim_json(self, self._jobs_list())
         if path.startswith("/api/jobs/") and path.endswith("/events"):
@@ -677,6 +757,31 @@ class Handler(BaseHTTPRequestHandler):
             if not MANAGER.clear_events(clear_match.group(1)):
                 return _kirim_json(self, {"ok": False, "error": "Job tidak ditemukan."}, 404)
             return _kirim_json(self, {"ok": True})
+        # Hapus job beserta folder kerjanya. Id yang tidak dikenal 404,
+        # job yang masih hidup 409 -- bedanya supaya UI bisa membedakan
+        # "salah id" dari "harus hentikan dulu".
+        hapus_job = re.fullmatch(r"/api/jobs/([A-Za-z0-9\-]+)/delete", path)
+        if hapus_job:
+            jid = hapus_job.group(1)
+            with MANAGER.lock:
+                ada = jid in MANAGER.jobs
+            if not ada:
+                return _kirim_json(self, {"ok": False, "error": "Job tidak ditemukan."}, 404)
+            ok, pesan = MANAGER.hapus(jid)
+            if not ok:
+                return _kirim_json(self, {"ok": False, "error": pesan}, 409)
+            return _kirim_json(self, {"ok": True, "pesan": pesan})
+        # Hapus berkas hasil: satu berkas, satu folder sesi, atau seluruh
+        # folder mata kuliah. Tiga tingkat lewat satu body -- lihat
+        # `_hasil_hapus` untuk pembacaannya.
+        if path == "/api/results/delete":
+            try:
+                payload = json.loads(self._baca_body().decode("utf-8"))
+                return _kirim_json(self, _hasil_hapus(payload))
+            except ValueError as exc:
+                return _kirim_json(self, {"error": str(exc)}, 400)
+            except Exception as exc:  # noqa: BLE001
+                return _kirim_json(self, {"error": str(exc)}, 500)
         if path == "/api/jobs/scrape":
             try:
                 payload = json.loads(self._baca_body().decode("utf-8"))
@@ -833,12 +938,8 @@ class Handler(BaseHTTPRequestHandler):
     # ---- download
     def _download_output(self, rel: str) -> None:
         """Unduh DOCX dari folder `output/` tanpa harus lewat job di memori."""
-        base = config.OUTPUT_DIR.resolve()
-        try:
-            path = (base / rel).resolve()
-        except OSError:
-            return self._not_found()
-        if not str(path).startswith(str(base)) or not path.is_file():
+        path = _hasil_target(rel)
+        if path is None or not path.is_file():
             return self._not_found()
         try:
             fh = open(path, "rb")
@@ -855,6 +956,26 @@ class Handler(BaseHTTPRequestHandler):
             shutil.copyfileobj(fh, self.wfile)
         finally:
             fh.close()
+
+    # ---- pratinjau
+    def _hasil_pratinjau(self, rel: str) -> None:
+        """Kirim isi DOCX sebagai HTML blok untuk modal pratinjau.
+
+        Diubah di server, bukan di peramban: peramban tidak bisa membaca
+        `.docx`, dan mengirim seluruh berkas agar diurai di sana hanya
+        membuang unduhan. HTML-nya HTML polos tanpa gaya apa pun; seluruh
+        tampilan datang dari kelas `.prev-*` di `app.css`.
+        """
+        path = _hasil_target(rel)
+        if path is None or not path.is_file():
+            return self._not_found()
+        if path.suffix.lower() != ".docx":
+            return _kirim_json(self, {"error": "Pratinjau hanya untuk berkas .docx."}, 400)
+        try:
+            isi = docxprev.pratinjau(path)
+        except Exception as exc:  # noqa: BLE001 - berkas korup atau bukan DOCX
+            return _kirim_json(self, {"error": f"Berkas tidak bisa dipratinjau: {exc}"}, 400)
+        _kirim_json(self, {"html": isi, "nama": path.name})
 
     def _download(self, jid: str) -> None:
         job = MANAGER.jobs.get(jid)

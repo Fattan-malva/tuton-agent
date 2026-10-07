@@ -690,6 +690,7 @@ class Pipeline:
         manual: "dict | None" = None,
         cancel_event: threading.Event | None = None,
         session_callback: "callable[[str], None] | None" = None,
+        jenis: str = "",
     ) -> None:
         self.matkul = matkul
         self.nomor = nomor_sesi
@@ -707,6 +708,10 @@ class Pipeline:
         # (tempel teks + unggah berkas) tanpa menyentuh Moodle. `None`
         # berarti jalur scrape biasa.
         self.manual = manual
+        # Filter jenis soal pada jalur scrape: "Tugas" / "Diskusi" / ""
+        # (otomatis, ikuti seluruh soal sesi). Dipakai untuk merapikan
+        # `sesi.soal` dan untuk menamai berkas DOCX hasil.
+        self.jenis = (jenis or "").strip()
         self._tahap = ""
 
         # Klien Moodle dibuat malas: mode manual tidak membutuhkannya sama
@@ -765,19 +770,6 @@ class Pipeline:
         self.klien = moodle.Moodle()
         self._log(f"\n=== {self.matkul.label} - Sesi {self.nomor} ===")
 
-        # 0. Sesi yang sudah terselesaikan dengan benar tidak dikerjakan ulang.
-        #    Sebelumnya setiap tahap hanya mengelola artefaknya sendiri (peta
-        #    direuse, referensi direuse), tapi `_tahap_jawaban` dan
-        #    `_tahap_docx` selalu menjalankan agent lagi -- artinya biaya
-        #    penuh untuk dokumen yang sudah ada. Untuk memaksa pekerjaan
-        #    ulang, hapus jawaban.md atau berkas .docx-nya.
-        if self._sudah_selesai():
-            self._log(
-                f"  [skip] sesi sudah selesai "
-                f"({self.hasil.docx or self.hasil.jawaban}) -- dilewati"
-            )
-            return self.hasil
-
         # 1. Cek login lebih dulu. Kegagalan di sini paling sering cookie
         #    kedaluwarsa, dan pesan error Moodle untuk kasus itu menyesatkan.
         masuk, pesan = self.klien.cek_login()
@@ -792,6 +784,45 @@ class Pipeline:
         self._log(f"  [2/8] {sesi.ringkas()}")
         for c in sesi.catatan:
             self._log(f"        {c}")
+
+        # 2b. Saring soal sesuai jenis yang diminta pengguna (mis. "hanya
+        #     Tugas"). Sesuatu yang salah kalau sesi ini memang tidak punya
+        #     soal jenis itu: lebih jelas memberi tahu di sini daripada
+        #     membiarkan tahap berikutnya gagal dengan pesan yang tidak
+        #     menyebut jenis.
+        if self.jenis:
+            awal = len(sesi.soal)
+            tersedia = sorted({a.jenis_soal for a in sesi.soal})
+            sesi.soal = [a for a in sesi.soal if a.jenis_soal == self.jenis]
+            if not sesi.soal:
+                raise PipelineGagal(
+                    f"Sesi {self.nomor} tidak punya soal {self.jenis}. "
+                    + (
+                        f"Soal yang ada di sesi ini: {', '.join(tersedia)}."
+                        if tersedia
+                        else "Sesi ini tidak berisi soal apa pun."
+                    )
+                )
+            self._log(
+                f"        Filter {self.jenis}: {awal} soal -> "
+                f"{len(sesi.soal)} soal"
+            )
+
+        # 2c. Sesi yang sudah terselesaikan dengan benar tidak dikerjakan
+        #     ulang. Sebelumnya setiap tahap hanya mengelola artefaknya sendiri
+        #     (peta direuse, referensi direuse), tapi `_tahap_jawaban` dan
+        #     `_tahap_docx` selalu menjalankan agent lagi -- artinya biaya
+        #     penuh untuk dokumen yang sudah ada. Untuk memaksa pekerjaan
+        #     ulang, hapus berkas .docx-nya.
+        #     Pemeriksaan duduk di sini, bukan sebelum cek login, karena nama
+        #     berkas kini memuat jenis dan nomor kegiatan -- keduanya baru
+        #     diketahui setelah sesi dipetakan.
+        if self._sudah_selesai():
+            self._log(
+                f"  [skip] sesi sudah selesai "
+                f"({self.hasil.docx or self.hasil.jawaban}) -- dilewati"
+            )
+            return self.hasil
 
         # 3. Nyalakan Reader. Semua akses agent ke Moodle lewat sini.
         self.reader = reader_mod.Reader(self.klien)
@@ -966,29 +997,104 @@ class Pipeline:
         tujuan.write_text(isi, encoding="utf-8")
         return tujuan
 
-    def _sudah_selesai(self) -> bool:
-        """True kalau jawaban dan dokumen sesi ini sudah ada dan punya cukup isi.
+    def _kata_jenis(self) -> str:
+        """Label jenis untuk nama berkas DOCX.
 
-        Dokumen dianggap "selesai dengan benar" ketika keduanya ada --
-        jawaban.md berisi, dan .docx untuk sesi itu sudah ditulis. Kalau
-        salah satu hilang atau kosong, sesi dikerjakan ulang dari tahap yang
-        sesuai.
+        Satu jenis soal di sesi ini -> label itu sendiri (`Tugas`,
+        `Diskusi`). Lebih dari satu jenis (sesi campuran) -> digabung dengan
+        garis bawah (`Diskusi_Tugas`) supaya namanya tetap jelas tanpa harus
+        memilih salah satu.
+        """
+        if self.jenis:
+            return self.jenis
+        kinds = sorted({a.jenis_soal for a in self.hasil.sesi.soal})
+        return "_".join(kinds) if kinds else "Tugas"
+
+    def _nomor_kegiatan(self, kata: str) -> int:
+        """Nomor kegiatan yang dipakai di nama berkas.
+
+        Pemetaan nilai ada di `courses.py`: Diskusi n -> sesi n, Tugas n ->
+        sesi 2n+1. Nomor yang benar-benar tertulis pada nama activity
+        ("Tugas 3" -> 3) diambil lebih dulu karena itu angka yang dipakai
+        laporan nilai; kalau tidak ada, hasilnya dibalik dari nomor sesi.
+        Sesuatu yang tidak cocok dengan pemetaan (mis. sesi genap untuk
+        Tugas) jatuh balik ke nomor sesi supaya berkas tetap bisa dibuat.
+        """
+        kinds = kata.split("_")
+        if len(kinds) == 1:
+            angka = {
+                a.nomor
+                for a in self.hasil.sesi.soal
+                if a.jenis_soal == kinds[0] and a.nomor
+            }
+            if len(angka) == 1:
+                return angka.pop()
+            if not angka and kinds[0] == "Tugas" and self.nomor % 2 == 1:
+                balik = (self.nomor - 1) // 2
+                if balik >= 1:
+                    return balik
+        # Sesi campuran, atau satu jenis dengan nomor activity yang tidak
+        # seragam: pakai nomor sesi sebagai jangkar.
+        return self.nomor
+
+    def _nama_dokumen(self) -> str:
+        """Nama dasar berkas DOCX sesi ini, tanpa ekstensi.
+
+        Format barunya `<slug>_<Jenis>.<nomor>`, mis.
+        `Basis_Data_64_Tugas.1`. Tanda hubung pada slug diganti garis bawah
+        supaya nama baru gampang dibedakan dari format lama
+        `<slug>-sesi-<N>.docx` yang tidak menyimpan jenis.
+        """
+        kata = self._kata_jenis()
+        dasar = self.matkul.slug.replace("-", "_")
+        return f"{dasar}_{kata}.{self._nomor_kegiatan(kata)}"
+
+    def _cari_dokumen(self) -> Path | None:
+        """Cari dokumen sesi ini di `output/`.
+
+        Urutannya nama baru lebih dulu, lalu nama lama `<slug>-sesi-<N>.docx`.
+        Nama lama tidak menyimpan jenis, jadi dianggap mewakili seluruh sesi
+        -- output yang sudah ada sebelum penamaan berubah tetap menandai sesi
+        selesai, bukan memaksa pekerjaan ulang yang membayar agent lagi. Varian
+        `<nama>-1.docx` yang ditulis `_simpan_aman` saat berkas terkunci
+        Word/OneDrive ikut dicocokkan.
+        """
+        keluaran = config.output_dir(self.matkul.slug, self.nomor)
+        if not keluaran.is_dir():
+            return None
+        dasar = self._nama_dokumen()
+        kandidat = [
+            keluaran / f"{dasar}.docx",
+            *sorted(keluaran.glob(f"{dasar}-*.docx")),
+            keluaran / f"{self.matkul.slug}-sesi-{self.nomor}.docx",
+        ]
+        for berkas in kandidat:
+            try:
+                if berkas.is_file() and berkas.stat().st_size > 4096:
+                    return berkas
+            except OSError:
+                continue
+        return None
+
+    def _sudah_selesai(self) -> bool:
+        """True kalau dokumen sesi ini sudah ada dan punya cukup isi.
+
+        Dokumen dianggap "selesai dengan benar" ketika berkasnya ada di
+        `output/` dan tidak kosong. Kalau hilang atau terlalu kecil, sesi
+        dikerjakan ulang dari tahap yang sesuai.
         """
         jawaban = self.dirs["jawaban"] / "jawaban.md"
-        docx = (
-            config.output_dir(self.matkul.slug, self.nomor)
-            / f"{self.matkul.slug}-sesi-{self.nomor}.docx"
-        )
         # Folder `_kerja` dihapus begitu DOCX jadi, jadi berkas jawaban tidak
         # boleh jadi syarat skip: kalau ya, sesi yang sudah selesai akan
         # dikerjakan ulang dari nol hanya karena artefak kerjanya sudah
         # dibersihkan. DOCX di `output/` saja sudah cukup jadi penanda.
-        selesai = docx.is_file() and docx.stat().st_size > 4096
-        if selesai:
-            self.hasil.docx = docx
-            if jawaban.is_file():
-                self.hasil.jawaban = jawaban
-        return selesai
+        docx = self._cari_dokumen()
+        if docx is None:
+            return False
+        self.hasil.docx = docx
+        if jawaban.is_file():
+            self.hasil.jawaban = jawaban
+        return True
 
     # ------------------------------------------------------ 4. kumpulkan soal
 
@@ -1900,7 +2006,10 @@ Struktur jawaban yang diminta dokumen akhir:
             nomor_label = f"{self.nomor} ({len(self.hasil.sesi.soal)} soal)"
 
         meta = {
-            "file_base": f"{self.matkul.slug}-sesi-{self.nomor}",
+            # Nama berkas memakai jenis dan nomor kegiatan, bukan nomor sesi:
+            # sesi 3 yang isinya Tugas 1 menjadi `Basis_Data_64_Tugas.1.docx`
+            # sehingga penamaan ikut cocok dengan baris di laporan nilai.
+            "file_base": self._nama_dokumen(),
             "kind_label": kind_label,
             "display_index": nomor_label,
             "matkul": self.matkul.nama,

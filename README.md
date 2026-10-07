@@ -49,7 +49,24 @@ hanging indent).
   yang jelas, bukan daftar basi, dan hasil gagal cuma disimpan 30 detik.
 - **Bersihkan log permanen** — tombol *Bersihkan* di Log Live ikut menghapus
   sumber replay (`events.jsonl` + buffer memori), sehingga log lama tidak
-  muncul lagi saat halaman dimuat ulang.
+  muncul lagi saat halaman dimuat ulang. Di sebelahnya ada tombol *Hapus
+  job* untuk membuang satu job beserta folder kerjanya.
+- **Nama dokumen mengikuti jenis kegiatan** — berkas keluar dengan pola
+  `Nama_Matakuliah_Jenis.nomor.docx` (mis. `Basis_Data_64_Tugas.3.docx`,
+  `Basis_Data_64_Diskusi.3.docx`), memakai **nomor Diskusi/Tugas**, bukan
+  nomor sesi, dan semua tanda hubung pada slug diganti garis bawah.
+- **Filter jenis saat menjalankan agent dari Moodle** — select *Jenis* di
+  form Kerjakan Tugas: *Otomatis (ikut sesi)*, *Tugas*, atau *Diskusi*.
+  Pilihan menyaring soal sesi itu saja; kalau tidak ada soal yang cocok,
+  job berhenti dengan pesan jelas, bukan menghasilkan dokumen salah jenis.
+- **Pratinjau DOCX di Result** — klik nama berkas untuk membuka modal
+  berisi isi dokumen (judul, daftar, tabel, gambar) tanpa mengunduhnya.
+- **Hapus dari Result** — tombol sampah per berkas dan per mata kuliah
+  (menghapus seluruh folder `output/<slug>/`), selalu lewat modal
+  konfirmasi.
+- **Mode gelap** — sakelar di Pengaturan, konsisten di seluruh aplikasi
+  (kartu, tabel, grafik, modal, konsol), tersimpan per peramban dan sudah
+  dipasang sebelum halaman digambar supaya tidak ada kilatan putih.
 - **Result, log, dan input dipoles** — tab Result membaca dokumen langsung
   dari disk `output/`, Log Live konsol gelap real-time via SSE, mode Input
   Manual dengan pilih mata kuliah & unggah berkas, pemilih model tiap agent
@@ -177,11 +194,11 @@ Urutan menu sesuai tampilan aplikasi:
 |------------------|---------------------------------------------------------------------|
 | **Dashboard**    | Status Moodle, versi OpenCode/Python/platform, ringkasan, **grafik nilai** |
 | **Courses**      | Daftar mata kuliah — klik barisnya untuk chip sesi + kalender jadwal |
-| **Kerjakan Tugas** | Dari Moodle (pilih course & sesi hasil scrape) atau **Input Manual** (teks soal + unggah berkas; output rapi per `output/<slug>/sesi-<N>/`) |
+| **Kerjakan Tugas** | Dari Moodle (pilih course, sesi, dan **jenis: Otomatis/Tugas/Diskusi**) atau **Input Manual** (teks soal + unggah berkas; output rapi per `output/<slug>/sesi-<N>/`) |
 | **Agent Worker** | Keempat agent (scrapper, research, vision, worker) beserta model yang dipakai |
-| **Result**       | Daftar dokumen hasil dari disk `output/` + unduh `.docx` terproteksi |
-| **Log Live**     | Konsol log real-time per job (Server-Sent Events; bisa disegarkan karena event tersimpan di `<job>/events.jsonl`) |
-| **Pengaturan**   | Edit `.env`, termasuk cookie Moodle (cookie & password disensor)    |
+| **Result**       | Daftar dokumen hasil dari disk `output/` — **klik untuk pratinjau**, unduh, hapus berkas, atau hapus seluruh mata kuliah |
+| **Log Live**     | Konsol log real-time per job (Server-Sent Events; bisa disegarkan karena event tersimpan di `<job>/events.jsonl`), bersihkan log atau **hapus job** |
+| **Pengaturan**   | Edit `.env`, termasuk cookie Moodle (cookie & password disensor) + **mode gelap** |
 
 ### Grafik nilai
 
@@ -270,7 +287,19 @@ Catatan:
 
 ## Hasil
 
-- Jawaban: `output/<slug>/sesi-<N>/<slug>-sesi-<N>.docx`
+- Jawaban: `output/<slug>/sesi-<N>/<slug dengan garis bawah>_<Jenis>.<nomor>.docx`
+
+  | Kegiatan           | Nama berkas                       |
+  |--------------------|-----------------------------------|
+  | Tugas 3            | `Basis_Data_64_Tugas.3.docx`      |
+  | Diskusi 3          | `Basis_Data_64_Diskusi.3.docx`    |
+  | Diskusi & Tugas    | `Basis_Data_64_Diskusi_Tugas.3.docx` (nomor sesi) |
+
+  Angka setelah titik adalah **nomor Diskusi/Tugas**, bukan nomor sesi
+  (Diskusi *n* → sesi *n*, Tugas *n* → sesi *2n + 1*). Kalau nomor tidak
+  bisa dibaca dari nama kegiatan, dipakai nomor sesinya. Berkas dengan nama
+  lama (`<slug>-sesi-<N>.docx`) tetap dikenali, jadi sesi yang sudah
+  selesai tidak dikerjakan ulang.
 - Kerja: `_kerja/<slug>/sesi-<N>/` (peta soal, transkrip, lampiran, log)
 
 Log tiap tahap ada di `_kerja/.../_log/`. Kalau satu course gagal di mode
