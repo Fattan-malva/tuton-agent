@@ -42,6 +42,14 @@ hanging indent).
   modal konfirmasi sebelum keluar, logout benar-benar menghapus cookie dan
   kembali ke halaman masuk, plus guard rute: belum login tidak bisa membuka
   halaman aplikasi, sudah login tidak bisa melihat halaman login.
+- **Cookie & cache selalu sinkron** — menyimpan cookie Moodle baru di menu
+  Pengaturan langsung membersihkan seluruh cache turunannya (status login,
+  nilai, jadwal, daftar course, halaman `cache/`) tanpa restart server;
+  kalau cookie mati, select matkul dan dashboard menampilkan pesan error
+  yang jelas, bukan daftar basi, dan hasil gagal cuma disimpan 30 detik.
+- **Bersihkan log permanen** — tombol *Bersihkan* di Log Live ikut menghapus
+  sumber replay (`events.jsonl` + buffer memori), sehingga log lama tidak
+  muncul lagi saat halaman dimuat ulang.
 - **Result, log, dan input dipoles** — tab Result membaca dokumen langsung
   dari disk `output/`, Log Live konsol gelap real-time via SSE, mode Input
   Manual dengan pilih mata kuliah & unggah berkas, pemilih model tiap agent
@@ -101,7 +109,9 @@ UT_PRODI=...
 Isi `COOKIE_MOODLE` melalui menu **Pengaturan** setelah UI dijalankan. Salin
 nilai cookie `MoodleSession` dari browser (DevTools → Application → Cookies
 untuk `elearning.ut.ac.id`). Cookie ini hanya untuk mengambil data Moodle;
-login dashboard memakai `APP_USERNAME` dan `APP_PASSWORD`.
+login dashboard memakai `APP_USERNAME` dan `APP_PASSWORD`. Menyimpan cookie
+baru dari menu Pengaturan langsung mengaktifkannya di semua halaman —
+cache lama dibersihkan otomatis, tidak perlu restart.
 
 ## Menjalankan (CLI)
 
@@ -181,7 +191,9 @@ Urutan menu sesuai tampilan aplikasi:
   untuk Diskusi, cincin untuk Tugas, warna mengikuti tema.
 - Ada tab filter per course, legend yang bisa dimatikan, dan tooltip gelap
   yang menampilkan jenis, sesi, dan nilainya.
-- Data di-cache 10 menit (`/api/nilai`) supaya dashboard tetap ringan.
+- Data sukses di-cache 10 menit (`/api/nilai`) supaya dashboard tetap
+  ringan; hasil error cuma 30 detik supaya perbaikan cookie langsung
+  terbaca.
 
 ### Kalender jadwal
 
@@ -194,7 +206,8 @@ Urutan menu sesuai tampilan aplikasi:
   tooltip saat hover.
 - Klik bar untuk langsung membuka aktivitas Moodle-nya. Tanggal mulai forum
   yang tidak terbaca dari Moodle diturunkan dari tenggat sebelumnya (ditandai
-  `mulai_turunan` di tooltip). Data di-cache 10 menit (`/api/jadwal/<course_id>`).
+  `mulai_turunan` di tooltip). Data sukses di-cache 10 menit
+  (`/api/jadwal/<course_id>`); hasil error cuma 30 detik.
 
 ### Ikon & Add to Home Screen
 
@@ -231,6 +244,11 @@ Urutan menu sesuai tampilan aplikasi:
   cache) saat aplikasi dibuka.
 - Semua endpoint `/api/*` (kecuali `/api/session`) membalas `401` tanpa
   cookie valid, dan UI otomatis kembali ke halaman masuk saat menerimanya.
+- **Pagar cookie Moodle**: endpoint yang menyajikan data Moodle (`/api/courses`,
+  sesi, jadwal, nilai, dan submit scrape) memeriksa sesi Moodle lebih dulu —
+  cookie mati langsung ditolak dengan pesan jelas, bukan data basi dari
+  cache. Menyimpan cookie baru di **Pengaturan** membersihkan semua cache
+  terkait otomatis tanpa restart.
 
 ## Menjalankan dengan Container
 

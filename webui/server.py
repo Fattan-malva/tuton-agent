@@ -45,12 +45,17 @@ SECRET = auth.buat_secret()
 MANAGER = JobManager()
 _MODEL_CACHE: tuple[float, list[str]] | None = None
 _OPENCODE_VERSION_CACHE: tuple[bool, str | None] = (False, None)
-_MOODLE_STATUS_CACHE: tuple[float, dict] | None = None
+# Cache Moodle: tuple (waktu, ttl_detik, data). TTL sukses panjang, TTL gagal
+# pendek supaya cookie baru yang disimpan lewat Pengaturan langsung terbaca
+# -- hasil error tidak boleh berdiam 10 menit di cache.
+_MOODLE_STATUS_CACHE: tuple[float, float, dict] | None = None
 _MOODLE_STATUS_LOCK = threading.Lock()
-_NILAI_CACHE: tuple[float, dict] | None = None
+_NILAI_CACHE: tuple[float, float, dict] | None = None
 _NILAI_LOCK = threading.Lock()
-_JADWAL_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_JADWAL_CACHE: dict[str, tuple[float, float, dict]] = {}
 _JADWAL_LOCK = threading.Lock()
+_TTL_OK = 600.0
+_TTL_GAGAL = 30.0
 
 
 # ----------------------------------------------------------- multipart
@@ -221,8 +226,10 @@ def _moodle_login() -> dict:
     global _MOODLE_STATUS_CACHE
     with _MOODLE_STATUS_LOCK:
         now = time.monotonic()
-        if _MOODLE_STATUS_CACHE and now - _MOODLE_STATUS_CACHE[0] < 60:
-            return dict(_MOODLE_STATUS_CACHE[1])
+        if _MOODLE_STATUS_CACHE:
+            waktu, ttl, data = _MOODLE_STATUS_CACHE
+            if now - waktu < ttl:
+                return dict(data)
         try:
             import moodle  # noqa: PLC0415
 
@@ -231,43 +238,69 @@ def _moodle_login() -> dict:
             result = {"masuk": masuk, "pesan": pesan}
         except Exception as exc:  # noqa: BLE001
             result = {"masuk": False, "pesan": str(exc)}
-        _MOODLE_STATUS_CACHE = (now, result)
+        # Cookie mati di-cache sebentar saja (20 detik) supaya perbaikan
+        # cookie lewat Pengaturan langsung terasa di halaman berikutnya.
+        _MOODLE_STATUS_CACHE = (now, 60.0 if result["masuk"] else 20.0, result)
         return dict(result)
 
 
+def _moodle_masuk() -> str | None:
+    """Pagar cookie: kembalikan pesan error kalau cookie Moodle tidak valid.
+
+    Dipakai endpoint yang menyajikan data Moodle (courses, sesi, jadwal,
+    nilai). Tanpa pagar ini, cache memori/disk bisa menyajikan daftar lama
+    selama cookie sudah mati sehingga select matkul terlihat "hidup" padahal
+    sesi sudah ditolak server.
+    """
+    status = _moodle_login()
+    if status.get("masuk"):
+        return None
+    return status.get("pesan") or "Cookie Moodle tidak valid."
+
+
 def _nilai_semua() -> dict:
-    """Nilai Tugas & Diskusi semua matkul, di-cache 10 menit."""
+    """Nilai Tugas & Diskusi semua matkul.
+
+    Sukses di-cache 10 menit; hasil error cuma 30 detik supaya setelah cookie
+    diganti nilai langsung bisa ditarik lagi tanpa menunggu cache lama.
+    """
     global _NILAI_CACHE
     with _NILAI_LOCK:
         now = time.monotonic()
-        if _NILAI_CACHE and now - _NILAI_CACHE[0] < 600:
-            return _NILAI_CACHE[1]
-        try:
-            import moodle  # noqa: PLC0415
-            import courses  # noqa: PLC0415
+        if _NILAI_CACHE:
+            waktu, ttl, data = _NILAI_CACHE
+            if now - waktu < ttl:
+                return data
+        galat = _moodle_masuk()
+        if galat:
+            hasil = {"courses": [], "sesi": [], "error": galat}
+        else:
+            try:
+                import moodle  # noqa: PLC0415
+                import courses  # noqa: PLC0415
 
-            klien = moodle.Moodle()
-            daftar = courses.daftar_mata_kuliah(klien)
-            courses_out: list[dict] = []
-            sesi_semua: set[int] = set()
-            for mk in daftar:
-                per_sesi = courses.nilai_mata_kuliah(klien, mk.id)
-                if not per_sesi:
-                    continue
-                sesi_semua.update(per_sesi.keys())
-                courses_out.append(
-                    {
-                        "id": mk.id,
-                        "nama": mk.nama,
-                        "titik": [
-                            {"sesi": s, **per_sesi[s]} for s in sorted(per_sesi)
-                        ],
-                    }
-                )
-            hasil = {"courses": courses_out, "sesi": sorted(sesi_semua)}
-        except Exception as exc:  # noqa: BLE001
-            hasil = {"courses": [], "sesi": [], "error": str(exc)}
-        _NILAI_CACHE = (now, hasil)
+                klien = moodle.Moodle()
+                daftar = courses.daftar_mata_kuliah(klien)
+                courses_out: list[dict] = []
+                sesi_semua: set[int] = set()
+                for mk in daftar:
+                    per_sesi = courses.nilai_mata_kuliah(klien, mk.id)
+                    if not per_sesi:
+                        continue
+                    sesi_semua.update(per_sesi.keys())
+                    courses_out.append(
+                        {
+                            "id": mk.id,
+                            "nama": mk.nama,
+                            "titik": [
+                                {"sesi": s, **per_sesi[s]} for s in sorted(per_sesi)
+                            ],
+                        }
+                    )
+                hasil = {"courses": courses_out, "sesi": sorted(sesi_semua)}
+            except Exception as exc:  # noqa: BLE001
+                hasil = {"courses": [], "sesi": [], "error": str(exc)}
+        _NILAI_CACHE = (now, _TTL_OK if not hasil.get("error") else _TTL_GAGAL, hasil)
         return hasil
 
 
@@ -281,24 +314,29 @@ def _jadwal(cid: str) -> dict:
     with _JADWAL_LOCK:
         now = time.monotonic()
         entri = _JADWAL_CACHE.get(cid)
-        if entri and now - entri[0] < 600:
-            return entri[1]
-        try:
-            import moodle  # noqa: PLC0415
-            import courses  # noqa: PLC0415
+        if entri and now - entri[0] < entri[1]:
+            return entri[2]
+        galat = _moodle_masuk()
+        if galat:
+            hasil = {"items": [], "error": galat}
+        else:
+            try:
+                import moodle  # noqa: PLC0415
+                import courses  # noqa: PLC0415
 
-            klien = moodle.Moodle()
-            matkul = next(
-                (m for m in courses.daftar_mata_kuliah(klien) if m.id == cid),
-                None,
-            )
-            if matkul is None:
-                hasil = {"items": [], "error": "Mata kuliah tidak ditemukan."}
-            else:
-                hasil = {"items": courses.jadwal_mata_kuliah(klien, matkul)}
-        except Exception as exc:  # noqa: BLE001
-            hasil = {"items": [], "error": str(exc)}
-        _JADWAL_CACHE[cid] = (now, hasil)
+                klien = moodle.Moodle()
+                matkul = next(
+                    (m for m in courses.daftar_mata_kuliah(klien) if m.id == cid),
+                    None,
+                )
+                if matkul is None:
+                    hasil = {"items": [], "error": "Mata kuliah tidak ditemukan."}
+                else:
+                    hasil = {"items": courses.jadwal_mata_kuliah(klien, matkul)}
+            except Exception as exc:  # noqa: BLE001
+                hasil = {"items": [], "error": str(exc)}
+        ttl = _TTL_OK if not hasil.get("error") else _TTL_GAGAL
+        _JADWAL_CACHE[cid] = (now, ttl, hasil)
         return hasil
 
 
@@ -333,6 +371,39 @@ _KUNCI_EDIT = [
     "APP_USERNAME", "WEB_HOST", "WEB_PORT",
 ]
 _KUNCI_RAHASIA = {"COOKIE_MOODLE", "APP_PASSWORD"}
+# Kunci yang memengaruhi koneksi Moodle; kalau salah satunya berubah, semua
+# cache yang isinya hasil scrape lama harus dibersihkan sekaligus.
+_KUNCI_MOODLE = {"COOKIE_MOODLE", "URL_MOODLE"}
+
+
+def _reset_cache_moodle() -> int:
+    """Bersihkan semua cache turunan cookie Moodle.
+
+    Cakupannya: status login (60 detik), nilai (10 menit), jadwal per course
+    (10 menit), daftar course di memori JobManager (5 menit), dan halaman
+    HTML hasil scrape di folder `cache/` (TTL 1 jam). Tanpa ini, cookie baru
+    dari menu Pengaturan tidak pernah sampai ke halaman lain sampai semua
+    cache kedaluwarsa sendiri.
+    """
+    global _MOODLE_STATUS_CACHE, _NILAI_CACHE
+    with _MOODLE_STATUS_LOCK:
+        _MOODLE_STATUS_CACHE = None
+    with _NILAI_LOCK:
+        _NILAI_CACHE = None
+    with _JADWAL_LOCK:
+        _JADWAL_CACHE.clear()
+    MANAGER.reset_courses_cache()
+    jumlah = 0
+    try:
+        for berkas in Path(config.CACHE_DIR).glob("*.html"):
+            try:
+                berkas.unlink()
+                jumlah += 1
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return jumlah
 
 
 def _settings_get() -> list[dict]:
@@ -353,12 +424,23 @@ def _settings_get() -> list[dict]:
 
 
 def _settings_post(payload: dict) -> dict:
+    lama = {k: config.env(k) for k in _KUNCI_MOODLE}
+    berubah = False
     for k, v in payload.items():
         if k not in _KUNCI_EDIT and k not in _KUNCI_RAHASIA:
             continue
         if k in _KUNCI_RAHASIA and not str(v).strip():
             continue  # kosong -> jangan timpa rahasia yang ada
-        config.set_env_value(k, str(v))
+        nilai = str(v).strip()
+        if k in _KUNCI_MOODLE and nilai != lama[k]:
+            berubah = True
+        config.set_env_value(k, nilai)
+    if berubah:
+        # Cookie/URL Moodle baru: buang semua hasil scrape lama supaya
+        # dashboard, select matkul, nilai, dan jadwal langsung memakai
+        # sesi yang baru tanpa perlu restart server.
+        dibersihkan = _reset_cache_moodle()
+        return {"ok": True, "moodle_disegarkan": True, "cache_dibersihkan": dibersihkan}
     return {"ok": True}
 
 
@@ -371,6 +453,10 @@ def _slug_dari(params: dict) -> str:
 
 
 def _submit_scrape(params: dict) -> list[str]:
+    # Pagar cookie: gagal cepat dengan pesan jelas sebelum job masuk antrean.
+    galat = _moodle_masuk()
+    if galat:
+        raise ValueError(galat)
     sesi = int(params.get("sesi") or 0)
     if params.get("matkul_id") == "semua":
         ids: list[str] = []
@@ -521,6 +607,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/nilai":
             return _kirim_json(self, _nilai_semua())
         if path == "/api/courses":
+            galat = _moodle_masuk()
+            if galat:
+                return _kirim_json(self, {"error": galat}, 400)
             try:
                 return _kirim_json(self, MANAGER.courses())
             except Exception as exc:  # noqa: BLE001
@@ -538,6 +627,9 @@ class Handler(BaseHTTPRequestHandler):
         if re.fullmatch(r"/api/jobs/[A-Za-z0-9\-]+", path):
             return self._job_detail(path.split("/")[3])
         if path.startswith("/api/courses/") and path.endswith("/sessions"):
+            galat = _moodle_masuk()
+            if galat:
+                return _kirim_json(self, {"error": galat}, 400)
             cid = path.split("/")[3]
             try:
                 return _kirim_json(self, MANAGER.sessions(cid))
@@ -576,6 +668,14 @@ class Handler(BaseHTTPRequestHandler):
         if stop_match:
             if not MANAGER.stop(stop_match.group(1)):
                 return _kirim_json(self, {"ok": False, "error": "Job tidak aktif atau tidak ditemukan."}, 404)
+            return _kirim_json(self, {"ok": True})
+        # Bersihkan log permanen (memori + events.jsonl). Tanpa endpoint ini,
+        # tombol Bersihkan di UI cuma mengosongkan DOM; log lama balik lagi
+        # lewat replay saat halaman dimuat ulang.
+        clear_match = re.fullmatch(r"/api/jobs/([A-Za-z0-9\-]+)/clear-log", path)
+        if clear_match:
+            if not MANAGER.clear_events(clear_match.group(1)):
+                return _kirim_json(self, {"ok": False, "error": "Job tidak ditemukan."}, 404)
             return _kirim_json(self, {"ok": True})
         if path == "/api/jobs/scrape":
             try:
@@ -704,6 +804,11 @@ class Handler(BaseHTTPRequestHandler):
         idx = 0
         try:
             while True:
+                # Tombol "Bersihkan" memangkas job.events dari luar, jadi idx
+                # bisa sudah melewati panjang list. Kalau dibiarkan, event baru
+                # (yang kini berada di indeks 0..) tidak akan pernah terkirim.
+                if idx > len(job.events):
+                    idx = 0
                 while idx < len(job.events):
                     ev = job.events[idx]
                     idx += 1

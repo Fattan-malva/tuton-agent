@@ -155,6 +155,9 @@ def set_env_value(key: str, value: str) -> None:
     sebelum menampilkannya kembali ke klien.
     """
     path = BASE_DIR / ".env"
+    # .env satu baris per kunci: buang newline yang tidak sengaja ikut
+    # ter-tempel saat nilai (mis. cookie) disalin dari halaman lain.
+    value = str(value).replace("\r", "").replace("\n", "").strip()
     baris = (
         path.read_text(encoding="utf-8", errors="replace").splitlines()
         if path.is_file() else []
@@ -173,7 +176,9 @@ def set_env_value(key: str, value: str) -> None:
     path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
     os.environ[key] = value
     if key in globals():
-        globals()[key] = value
+        # WEB_PORT disimpan sebagai int supaya tipe global config tidak
+        # berganti dari int ke str hanya karena lewat menu Pengaturan.
+        globals()[key] = int(value) if key == "WEB_PORT" and value.isdigit() else value
 
 
 # ---------------------------------------------------------------- identitas

@@ -74,6 +74,19 @@ class Job:
                 self.error = error
             self.cond.notify_all()
 
+    def clear_events(self) -> None:
+        """Kosongkan log permanen: memori (buffer SSE) dan events.jsonl.
+
+        Kalau cuma DOM yang dibersihkan, replay saat reload akan membaca
+        events.jsonl dan log lama muncul lagi.
+        """
+        with self.cond:
+            self.events.clear()
+        try:
+            self.event_file.write_text("", encoding="utf-8")
+        except OSError:
+            pass
+
 
 class JobManager:
     """Menyimpan job, mengantre, dan menjalankan lewat thread dispatcher."""
@@ -88,6 +101,20 @@ class JobManager:
         self._courses_cache_t = 0.0
         t = threading.Thread(target=self._dispatch, name="jkt-dispatch", daemon=True)
         t.start()
+
+    def reset_courses_cache(self) -> None:
+        """Buang daftar course di memori (dipanggil saat cookie Moodle berubah)."""
+        with self.lock:
+            self._courses_cache = None
+            self._courses_cache_t = 0.0
+
+    def clear_events(self, jid: str) -> bool:
+        with self.lock:
+            job = self.jobs.get(jid)
+        if job is None:
+            return False
+        job.clear_events()
+        return True
 
     # ----------------------------------------------------------- pendaftaran
 

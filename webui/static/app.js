@@ -195,6 +195,14 @@ async function api(path, opts = {}) {
   const data = ct.includes("application/json") ? await res.json() : await res.text();
   if (cacheMs && res.ok) apiCache.set(path, { data, expires: Date.now() + cacheMs });
   if (method !== "GET" && res.ok) apiCache.clear();
+  // JSON error ({"error": ...}) dibuat gagal (throw) supaya semua pemanggil
+  // yang pakai .catch/try-catch benar-benar tahu ada masalah -- mis. cookie
+  // Moodle mati. Kalau tidak, pemanggil menerima objek {error} lalu salah
+  // render (courses.map bukan fungsi, select matkul tidak terisi, kartu
+  // dashboard menampilkan "undefined").
+  if (!res.ok && data && typeof data === "object" && data.error) {
+    throw new Error(data.error);
+  }
   return data;
 }
 
@@ -380,6 +388,10 @@ VIEWS.dashboard = async (routeId) => {
     if (routeId !== state.routeId) return;
     const card = $("#nilai-card");
     if (!card) return;
+    if (nilai && nilai.error) {
+      card.innerHTML = `<p class="err">${esc(nilai.error)}</p>`;
+      return;
+    }
     const adaNilai = nilai && Array.isArray(nilai.courses) && nilai.courses.length;
     if (!adaNilai) {
       card.innerHTML = '<p class="muted">Belum ada nilai Diskusi/Tugas yang bisa diambil.</p>';
@@ -396,9 +408,9 @@ VIEWS.dashboard = async (routeId) => {
         <div class="nilai-plot" id="nilai-plot"></div>
       </div>`;
     bindNilai(nilai);
-  }).catch(() => {
+  }).catch((e) => {
     const card = $("#nilai-card");
-    if (card) card.innerHTML = '<p class="muted">Nilai tidak bisa dimuat.</p>';
+    if (card) card.innerHTML = `<p class="err">${esc(e.message || "Nilai tidak bisa dimuat.")}</p>`;
   });
 
   const masihDashboard = () => (location.hash || "#dashboard") === "#dashboard";
@@ -416,9 +428,16 @@ VIEWS.dashboard = async (routeId) => {
     if (routeId !== state.routeId || !masihDashboard()) return;
     const card = view.querySelector('[data-dashboard-card="Courses"]');
     if (!card) return;
-    card.querySelector(".big").textContent = String(courses.length);
+    const daftar = Array.isArray(courses) ? courses : [];
+    card.querySelector(".big").textContent = String(daftar.length);
     card.querySelector("p").textContent = "terdaftar";
-  }).catch(() => {});
+  }).catch((e) => {
+    if (routeId !== state.routeId || !masihDashboard()) return;
+    const card = view.querySelector('[data-dashboard-card="Courses"]');
+    if (!card) return;
+    card.querySelector(".big").textContent = "—";
+    card.querySelector("p").textContent = e.message || "gagal memuat";
+  });
 };
 
 VIEWS.agents = async (routeId) => {
@@ -559,17 +578,31 @@ VIEWS.buat = async (routeId) => {
     }));
 
   // populate courses
-  const courses = await api("/api/courses").catch(() => []);
+  const hasilKursus = await api("/api/courses")
+    .then((c) => (Array.isArray(c) ? c : []))
+    .catch((e) => e);
   if (routeId !== state.routeId) return;
   const sel = $("#sc-matkul");
   if (!sel) return;
-  sel.innerHTML = '<option value="">— pilih —</option>' +
+  // Cookie Moodle mati / server gagal: pilih `hasilKursus` berupa Error.
+  // Tampilkan pesan di kedua pane tapi form tetap hidup (pane Input Manual
+  // tidak butuh cookie dan tetap bisa dipakai).
+  const galatMatkul = hasilKursus instanceof Error ? hasilKursus.message : "";
+  const courses = galatMatkul ? [] : hasilKursus;
+  const optKosong = galatMatkul
+    ? `<option value="">${esc(galatMatkul)}</option>`
+    : '<option value="">— pilih —</option>';
+  sel.innerHTML = optKosong +
     courses.map((c) => `<option value="${esc(c.id)}">${esc(c.nama)}${c.kode ? " (" + esc(c.kode) + ")" : ""}</option>`).join("");
+  const galatEl = $("#sc-msg");
+  if (galatEl) galatEl.textContent = galatMatkul;
 
   const mnSel = $("#mn-matkul");
   if (mnSel) {
-    mnSel.innerHTML = '<option value="">— pilih —</option>' +
+    mnSel.innerHTML = optKosong +
       courses.map((c) => `<option value="${esc(c.id)}" data-nama="${esc(c.nama)}" data-kode="${esc(c.kode)}" data-kelas="${esc(c.kelas)}">${esc(c.nama)}${c.kode ? " (" + esc(c.kode) + ")" : ""}</option>`).join("");
+    const mnGalat = $("#mn-msg");
+    if (mnGalat) mnGalat.textContent = galatMatkul;
     mnSel.addEventListener("change", () => {
       const opt = mnSel.selectedOptions[0];
       const info = $("#mn-matkul-info");
@@ -582,10 +615,18 @@ VIEWS.buat = async (routeId) => {
   sel.addEventListener("change", async () => {
     const changeRouteId = state.routeId;
     const ses = $("#sc-sesi");
+    const galat = $("#sc-msg");
+    if (galat) galat.textContent = "";
     if (!sel.value) { ses.innerHTML = ""; return; }
-    const list = await api(`/api/courses/${sel.value}/sessions`).catch(() => []);
+    const list = await api(`/api/courses/${sel.value}/sessions`).catch((e) => e);
     if (changeRouteId !== state.routeId || !ses.isConnected) return;
-    ses.innerHTML = list.map((s) => `<option value="${s.sesi}">Sesi ${s.sesi} (${s.jumlah} soal)</option>`).join("");
+    if (list instanceof Error) {
+      ses.innerHTML = "";
+      if (galat) galat.textContent = list.message;
+      return;
+    }
+    ses.innerHTML = (Array.isArray(list) ? list : [])
+      .map((s) => `<option value="${s.sesi}">Sesi ${s.sesi} (${s.jumlah} soal)</option>`).join("");
   });
 
   $("#sc-semua").addEventListener("change", (e) => {
@@ -687,6 +728,13 @@ VIEWS.log = async (routeId) => {
     const c = $("#console");
     if (!c) return;
     c.innerHTML = '<span class="ln info">Log dibersihkan. Menunggu baris baru<span class="dots"></span></span>';
+    // Bersihkan juga sumber replay-nya (buffer memori + events.jsonl).
+    // Kalau DOM saja yang dikosongkan, log lama muncul lagi lewat replay
+    // saat halaman dimuat ulang.
+    if (id) {
+      api(`/api/jobs/${encodeURIComponent(id)}/clear-log`, { method: "POST" })
+        .catch(() => {});
+    }
   });
   $("#log-copy").addEventListener("click", async () => {
     const c = $("#console");
@@ -966,20 +1014,25 @@ window.loadSessions = async function (cid, tr) {
   const baris = tr || document.querySelector(`#course-table tr[data-cid="${cid}"]`);
   if (baris) baris.classList.add("aktif");
   detail.innerHTML = '<p class="muted">Memuat sesi dan jadwal dari Moodle...</p>';
-  const [list, jadwal] = await Promise.all([
-    api(`/api/courses/${cid}/sessions`).catch(() => []),
-    api(`/api/jadwal/${cid}`).catch(() => ({ items: [] })),
+  const [hasilList, hasilJadwal] = await Promise.all([
+    api(`/api/courses/${cid}/sessions`).catch((e) => e),
+    api(`/api/jadwal/${cid}`).catch((e) => ({ items: [], error: e.message })),
   ]);
   if (routeId !== state.routeId || $("#course-detail") !== detail) return;
-  const items = (jadwal && jadwal.items) || [];
+  // Cookie mati: tampilkan pesan dari server, jangan diam-diam kosong.
+  const galatSesi = hasilList instanceof Error ? hasilList.message : "";
+  const list = galatSesi || !Array.isArray(hasilList) ? [] : hasilList;
+  const jadwal = hasilJadwal || { items: [] };
+  const items = jadwal.items || [];
   detail.innerHTML = `
+    ${galatSesi ? `<p class="err">${esc(galatSesi)}</p>` : `
     <div class="section-title">Sesi dengan soal</div>
     <div class="row">
       ${list.map((s) => `<span class="badge blue">Sesi ${s.sesi} — ${s.jumlah} soal</span>`).join("") || '<span class="muted">tidak ada</span>'}
-    </div>
+    </div>`}
     <div class="section-title">Jadwal Diskusi &amp; Tugas</div>
     <div class="card jadwal-card" id="jadwal-card"></div>`;
-  pasangJadwal(items, jadwal && jadwal.error);
+  pasangJadwal(items, jadwal.error);
 };
 
 // Kalender besar: tiap bar adalah rentang Diskusi/Tugas dari tanggal
@@ -1160,10 +1213,14 @@ VIEWS.settings = async (routeId) => {
     if (saveRouteId !== state.routeId) return;
     const message = $("#set-msg");
     if (!message) return;
-    message.textContent = r && r.ok ? "Tersimpan." : (r && r.error) || "Gagal.";
+    message.textContent = r && r.ok
+      ? (r.moodle_disegarkan
+        ? `Tersimpan. Cache Moodle dibersihkan (${r.cache_dibersihkan || 0} halaman) -- memuat ulang...`
+        : "Tersimpan.")
+      : (r && r.error) || "Gagal.";
     if (r && r.ok) setTimeout(() => {
       if (saveRouteId === state.routeId) location.reload();
-    }, 600);
+    }, r.moodle_disegarkan ? 900 : 600);
   });
 };
 
