@@ -1280,6 +1280,60 @@ def _render_markdown(doc: Document, md: str):
             i = j
             continue
 
+        # Heading dicek SEBELUM blok $$...$$: baris heading yang memuat
+        # persamaan ("### 1.1 Bentuk $F1$") tidak boleh tertelan sebagai
+        # blok persamaan, karena heading-nya lalu hilang dari strukturnya.
+        m = re.match(r"^(#{1,4})\s+(.*)$", line)
+        if m:
+            level = len(m.group(1))
+            heading_text = m.group(2).strip()
+            if heading_text.lower().startswith("daftar pustaka"):
+                in_references = True
+                p = doc.add_paragraph()
+                run = p.add_run(heading_text)
+                run.bold = True
+                # "Daftar Pustaka" di template BUKAN heading: `Normal` bold
+                # TNR 14, sama seperti penanda bagian lain. Memakainya sebagai
+                # Heading 2 membuatnya tampil bergaya heading -- beda dari
+                # contoh, dan ini bagian yang paling dilihat tutor.
+                try:
+                    p.style = doc.styles["Normal"]
+                except KeyError:
+                    pass
+                # Bold hitam Times New Roman, ukuran dari template. Yang lama
+                # hanya `bold` + ukuran, jadi font dan warna ikut bawaan style
+                # dan tampilan "Daftar Pustaka" tidak sama dengan judul lain.
+                _rapikan_heading(run, doc, "Normal", pt=_REFERENSI_JUDUK_PT)
+                daftar_num_id = None
+                i += 1
+                continue
+            style_name = _heading_style(doc, level)
+            p = doc.add_paragraph()
+            # Isi heading bisa memuat persamaan inline ($...$); pakai
+            # _tambah_inline supaya persamaan dirender sebagai Word equation
+            # dan tanda $ tidak ikut tampil.
+            _tambah_inline(p, heading_text)
+            if style_name != "Normal":
+                p.style = doc.styles[style_name]
+                # Ukuran diambil dari style template (bukan ditetapkan manual),
+                # jadi mengubah ukuran di template tetap ikut terbawa.
+                for run in p.runs:
+                    _rapikan_heading(run, doc, style_name)
+            else:
+                # Tanpa style Heading (dokumen tanpa template), tetap beri
+                # pembedaan visual sesuai tingkatnya.
+                bawaan = 14 if level == 2 else 12
+                for run in p.runs:
+                    _rapikan_heading(run, doc, "Normal", pt=bawaan)
+            # Heading berlabel ("### 1. Soal Satu"): judulnya boleh di margin,
+            # tapi isi di bawahnya harus rata dengan teks setelah label, bukan
+            # dengan angkanya. Catat lebarnya untuk paragraf berikutnya.
+            lm = _LABEL_RE.match(heading_text)
+            pending_label_pt = _label_indent_pt(lm.group(0), body_font_pt) if lm else None
+            daftar_num_id = None
+            i += 1
+            continue
+
         # Equation Word (OMML): blok $$...$$, boleh satu baris atau banyak baris.
         #
         # Bentuk banyak baris WAJIB didukung karena itu yang ditulis model:
@@ -1343,55 +1397,6 @@ def _render_markdown(doc: Document, md: str):
             if len(line.strip()) < 60:
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             _append_equation(p, line.strip())
-            i += 1
-            continue
-
-        # Heading -> style Heading 2/3 milik template, bukan ukuran font manual.
-        # Menyetel size manual di sini membuat definisi template (ukuran, warna,
-        # jarak) tidak berlaku dan hasil keluaran terlihat berbeda dari contoh.
-        m = re.match(r"^(#{1,4})\s+(.*)$", line)
-        if m:
-            level = len(m.group(1))
-            heading_text = m.group(2).strip()
-            if heading_text.lower().startswith("daftar pustaka"):
-                in_references = True
-                p = doc.add_paragraph()
-                run = p.add_run(heading_text)
-                run.bold = True
-                # "Daftar Pustaka" di template BUKAN heading: `Normal` bold
-                # TNR 14, sama seperti penanda bagian lain. Memakainya sebagai
-                # Heading 2 membuatnya tampil bergaya heading -- beda dari
-                # contoh, dan ini bagian yang paling dilihat tutor.
-                try:
-                    p.style = doc.styles["Normal"]
-                except KeyError:
-                    pass
-                # Bold hitam Times New Roman, ukuran dari template. Yang lama
-                # hanya `bold` + ukuran, jadi font dan warna ikut bawaan style
-                # dan tampilan "Daftar Pustaka" tidak sama dengan judul lain.
-                _rapikan_heading(run, doc, "Normal", pt=_REFERENSI_JUDUK_PT)
-                daftar_num_id = None
-                i += 1
-                continue
-            style_name = _heading_style(doc, level)
-            p = doc.add_paragraph()
-            run = p.add_run(heading_text)
-            if style_name != "Normal":
-                p.style = doc.styles[style_name]
-                # Ukuran diambil dari style template (bukan ditetapkan manual),
-                # jadi mengubah ukuran di template tetap ikut terbawa.
-                _rapikan_heading(run, doc, style_name)
-            else:
-                # Tanpa style Heading (dokumen tanpa template), tetap beri
-                # pembedaan visual sesuai tingkatnya.
-                bawaan = 14 if level == 2 else 12
-                _rapikan_heading(run, doc, "Normal", pt=bawaan)
-            # Heading berlabel ("### 1. Soal Satu"): judulnya boleh di margin,
-            # tapi isi di bawahnya harus rata dengan teks setelah label, bukan
-            # dengan angkanya. Catat lebarnya untuk paragraf berikutnya.
-            lm = _LABEL_RE.match(heading_text)
-            pending_label_pt = _label_indent_pt(lm.group(0), body_font_pt) if lm else None
-            daftar_num_id = None
             i += 1
             continue
 

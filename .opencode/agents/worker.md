@@ -106,11 +106,30 @@ diikuti langsung.
 - Jika setelah membaca peta, transkrip, dan URL cadangan, soal benar-benar tidak
   tersedia, JANGAN mengarang soal maupun jawaban. Tulis bagian jawaban lalu
   penjelasan sumber mana yang tidak bisa diakses.
-- Tulis sebagai MAHASISWA yang mengerjakan tugas, bukan sebagai laporan. Pakai
-  kata "saya" untuk penilaian, pilihan, dan langkah yang diambil: "saya memakai
-  tabel kebenaran karena ...", "menurut saya, ...". Hindari kalimat orang ketiga
-  tanpa pemilik seperti "penulis membahas ...". Kata "kamu" dan "anda" dilarang
-  sebagai pengganti "saya".
+- Tulis dengan sudut pandang orang pertama sebagai mahasiswa. Jangan memakai
+  kata "saya" atau frasa "menurut saya" di dalam jawaban; langsung tulis
+  poinnya ("Pada jawaban ini dipakai tabel kebenaran karena ...",
+  "Untuk kasus ini dipakai aturan Bayes"). Hindari kalimat orang ketiga
+  tanpa pemilik seperti "penulis membahas ...".
+- **Secukupnya, tidak bertele-tele.** Jawab hanya yang ditanya soal. Jangan
+  memberi pengantar multi-paragraf, contoh ilustratif tambahan, perbandingan
+  di luar soal, atau bagian penutup yang mengulang jabaran. Satu butir
+  soal cukup satu langkah inti dan hasilnya. Panjang jawaban mengikuti
+  kompleksitas soal.
+- **Ikuti prosedur yang diminta soal persis.** Kalau soal menyebutkan urutan,
+  bentuk khusus, atau metode tertentu (misalnya pohon semantik dengan cabang
+  benar/salah per simbol sesuai urutan yang diminta), pakai itu. Jangan
+  mengganti dengan cara lain yang ekuivalen.
+- **Gaya bahasa seperti mahasiswa, bukan model.** Hindari deretan "Pertama...
+  Kedua... Ketiga..." yang memakan satu paragraf, hindari bold miring di
+  setiap label, hindari em dash, dan hindari kalimat penutup pendek yang
+  mengulang poin. Susun paragraf langsung ke inti, panjang kalimat bervariasi.
+- Hindari pembuka formal yang sama terus ("Secara garis besar", "Dalam
+  konteks ini", "Dengan demikian", "Perlu dicatat bahwa", "Pada dasarnya").
+  Satu paragraf cukup satu, sisanya kalimat langsung.
+- Tulis kalimat aktif dengan subjek jelas, dan semua paragraf langsung
+  menuju inti. Jangan mulai paragraf baru dengan mengulang akhir paragraf
+  sebelumnya.
 - Kata **"bayangkan" dilarang sama sekali**. Kata itu dipakai model sebagai jeda
   di hampir setiap paragraf, jadi keberadaannya sendiri sudah membongkar bahwa
   teks ini bukan tulisan mahasiswa. Ganti dengan "misalnya" diikuti peristiwanya,
@@ -136,6 +155,11 @@ diikuti langsung.
   beserta daftar pola yang tersisa, dan label seperti "Draft:", "**Before:**",
   atau "Remaining patterns" akan ikut masuk ke berkas jawaban kalau isinya
   tidak dibuang utuh.
+- Humanize dengan serius: baca seluruh teks sekali untuk menandai pola AI,
+  lalu tulis ulang bagian yang terkena sampai kalimat-kalimatnya terdengar
+  seperti tulisan mahasiswa UT -- langsung, tidak generik, tidak seperti
+  ringkasan model. Jangan berhenti di satu ganti kata; tulis kembali paragraf
+  bila perlu.
 - Persamaan ditulis dengan LaTeX memakai pemisah dolar: sebaris `$...$`, blok
   `$$` di baris sendiri dengan isi di antaranya. **Jangan pakai `\\(...\\)` atau
   `\\[...\\]`**: renderer dokumen hanya mengenali bentuk dolar, jadi bentuk

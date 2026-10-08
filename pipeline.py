@@ -713,6 +713,7 @@ class Pipeline:
         # `sesi.soal` dan untuk menamai berkas DOCX hasil.
         self.jenis = (jenis or "").strip()
         self._tahap = ""
+        self._agent = ""
 
         # Klien Moodle dibuat malas: mode manual tidak membutuhkannya sama
         # sekali, jadi tidak boleh gagal hanya karena URL_MOODLE kosong.
@@ -744,7 +745,7 @@ class Pipeline:
         self._cek_dibatalkan()
         print(pesan, flush=True)
         if self.reporter is not None:
-            self.reporter({"level": "info", "stage": self._tahap, "msg": pesan})
+            self.reporter({"level": "info", "stage": self._tahap, "agent": self._agent, "msg": pesan})
 
     def _simpan_log(self, nama: str, isi: str) -> Path:
         tujuan = self.dirs["log"] / nama
@@ -1173,6 +1174,8 @@ class Pipeline:
         if not gambar:
             self._log("  Tidak ada gambar soal untuk ditranskripsikan")
             return []
+        if self.manual is None:
+            self._tahap = "4/8"
 
         transkrip: list[Path] = []
         for nomor, berkas in enumerate(gambar, 1):
@@ -1264,7 +1267,13 @@ halaman sesi, lalu tiap soal beserta format jawaban, rubrik, dan lampirannya.
 Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
 """
 
-        self._tahap = "4/8 scrapper"
+        if self.manual is None:
+            self._tahap = "4/8"
+        self._agent = config.AGENT_SCRAPPER
+        self._log(
+            f"  [4/8] Peta soal: agent {config.AGENT_SCRAPPER}, "
+            f"model {self.model_utama}"
+        )
         hasil = panggil_agent_bertahap(
             nama=config.AGENT_SCRAPPER,
             prompt=prompt,
@@ -1305,6 +1314,8 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
             for a in self.hasil.sesi.materi
             if a.modtype == "resource" and a.url
         ]
+        if self.manual is None:
+            self._tahap = "5/8"
         # Lampiran dari posting forum dan balasan mahasiswa TIDAK diambil.
         # Itu jawaban mahasiswa lain: mengunduhnya membuang unduhan, dan
         # mengirimkannya ke model vision membuang waktu transcribing diskusi
@@ -1447,6 +1458,11 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
                 "`--- Halaman berikutnya ---`."
             )
 
+        self._agent = config.AGENT_VISION
+        self._log(
+            f"        Transkripsi {gambar.name}: agent "
+            f"{config.AGENT_VISION}, model {self.model_mata}"
+        )
         hasil = panggil_agent_bertahap(
             nama=config.AGENT_VISION,
             prompt=prompt,
@@ -1544,9 +1560,10 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
         # Entri bahan ajar dibentuk pipeline, bukan diterima dari agent. URL
         # `h.url` adalah alamat pluginfile Moodle yang asli -- tanpa token --
         # jadi aman dicetak ke dokumen yang diserahkan ke tutor.
-        entri_bahan = self._entri_bahan_ajar()
-        if entri_bahan:
-            self._log(f"        bahan ajar jadi entri #1: {entri_bahan[:70]}...")
+        entri_list = self._entri_bahan_ajar()
+        if entri_list:
+            self._log(f"        bahan ajar jadi entri #1: {entri_list[0][:70]}...")
+        entri_bahan = entri_list[0] if entri_list else ""
 
         prompt = f"""Cari daftar pustaka untuk satu soal mata kuliah.
 
@@ -1556,7 +1573,9 @@ Sesi        : {self.nomor}
 Batas yang berlaku untukmu:
 - MAKSIMAL {config.MAX_REFERENSI} referensi, TIDAK termasuk bahan ajar.
   Pipeline sudah menyiapkan entri bahan ajar sendiri dan akan menambahkannya
-  di awal daftar.
+  di awal daftar. Entri itu menunjuk bahan ajar dari Moodle (BMP dan/atau
+  materi inisiasi), dan itu yang membuat daftar pustaka sesuai mata
+  kuliah; kalikan temuanmu dengan materi itu supaya tetap relevan.
 - Hanya terbitan {config.TAHUN_MIN} atau setelahnya.
 - Setiap entri harus punya URL atau DOI yang benar-benar bisa dibuka. Ambil
   halaman katalog atau repository untuk memastikan, jangan menuliskan URL
@@ -1576,6 +1595,14 @@ Jangan menuliskan URL `http://127.0.0.1:...` atau `localhost` di daftar ini.
 Alamat tersebut hanya hidup selama pipeline berjalan dan memuat kunci akses
 akun yang tidak boleh ikut terbawa ke berkas yang diserahkan ke tutor.
 """
+        if self.manual is None:
+            self._tahap = "6/8"
+        self._agent = config.AGENT_RESEARCH
+        no = "3/5" if self.manual is not None else "6/8"
+        self._log(
+            f"  [{no}] Daftar pustaka: agent {config.AGENT_RESEARCH}, "
+            f"model {self.model_utama}"
+        )
         hasil = panggil_agent_bertahap(
             nama=config.AGENT_RESEARCH,
             prompt=prompt,
@@ -1645,7 +1672,7 @@ akun yang tidak boleh ikut terbawa ke berkas yang diserahkan ke tutor.
         # Yang paling baru ditulis kemungkinan besar milik sesi ini.
         return max(yang_ada, key=lambda p: p.stat().st_mtime)
 
-    def _entri_bahan_ajar(self) -> str:
+    def _entri_bahan_ajar(self) -> list[str]:
         """Bentuk entri APA untuk bahan ajar wajib sesi ini.
 
         Pipeline yang menyusunnya, bukan agent, karena dua alasan:
@@ -1662,35 +1689,43 @@ akun yang tidak boleh ikut terbawa ke berkas yang diserahkan ke tutor.
         memisahkan penulis dari sisa entri, jadi tahun memang wajib ada;
         kalau tidak ditemukan di nama berkas maupun teks, dipakai `n.d.`
         (tanpa tanggal), bukan angka tebakan.
+
+        Mengembalikan sampai dua entri: biasanya satu BMP (buku materi
+        pokok) dan satu materi inisiasi, kalau keduanya ada di lampiran.
+        Berkas soal/tugas/diskusi tidak pernah dipilih.
         """
         kandidat = [
             h for h in self.hasil.lampiran
             if not h.gagal and (h.nama or "").strip()
         ]
         if not kandidat:
-            return ""
-        # Lampiran soal (PDF "Diskusi ... - ...") ditemukan bersama
-        # lampiran materi, tapi daftar pustaka butuh bahan ajar, bukan soal.
-        # Pilih pertama yang namanya seperti materi; kalau tidak ada, pakai
-        # yang pertama.
-        pilihan = next(
-            (h for h in kandidat if "materi" in h.nama.lower()),
-            kandidat[0],
-        )
-        h = pilihan
-        judul = re.sub(r"^\s*#+\s*", "", h.nama).strip().rstrip(".")
-        judul = re.sub(r"\.(pdf|docx?|pptx?)$", "", judul, flags=re.I).strip()
-        # Tahun di depan nama berkas ("2025-Materi Inisiasi ...") sudah
-        # ditulis di kolom tahun; mengulangnya di judul bikin entri
-        # terbaca dua kali.
-        judul = re.sub(r"^(?:19|20)\d{2}\s*[-_–]\s*", "", judul).strip()
-        if not judul:
-            return ""
-        tahun = _tahun_terbit(h.nama, h.teks)
-        return (
-            f"Universitas Terbuka. ({tahun}). *{judul}*. "
-            f"Universitas Terbuka. {h.url}"
-        )
+            return []
+
+        BUKAN_MATERI = re.compile(r"soal|tugas|diskusi|kunci|pembahasan", re.I)
+        MATERI = re.compile(r"materi|bmp|modul|inisiasi|bab|diktat", re.I)
+
+        pakai = [h for h in kandidat
+                 if MATERI.search(h.nama) and not BUKAN_MATERI.search(h.nama)]
+        if not pakai:
+            sisa = [h for h in kandidat if not BUKAN_MATERI.search(h.nama)]
+            pakai = sisa[:1] if sisa else kandidat[:1]
+
+        hasil: list[str] = []
+        for h in pakai[:2]:
+            judul = re.sub(r"^\s*#+\s*", "", h.nama).strip().rstrip(".")
+            judul = re.sub(r"\.(pdf|docx?|pptx?)$", "", judul, flags=re.I).strip()
+            # Tahun di depan nama berkas ("2025-Materi Inisiasi ...") sudah
+            # ditulis di kolom tahun; mengulangnya di judul bikin entri
+            # terbaca dua kali.
+            judul = re.sub(r"^(?:19|20)\d{2}\s*[-_–]\s*", "", judul).strip()
+            if not judul:
+                continue
+            tahun = _tahun_terbit(h.nama, h.teks)
+            hasil.append(
+                f"Universitas Terbuka. ({tahun}). *{judul}*. "
+                f"Universitas Terbuka. {h.url}"
+            )
+        return hasil
 
     def _bersihkan_referensi(self, berkas: Path) -> None:
         """Bersihkan daftar pustaka hasil agent dan lengkapi bahan ajar.
@@ -1734,12 +1769,13 @@ akun yang tidak boleh ikut terbawa ke berkas yang diserahkan ke tutor.
 
         entri_bahan = self._entri_bahan_ajar()
         if entri_bahan:
-            kunci_bahan = _kunci_referensi(entri_bahan)
+            kunci_bahan = {_kunci_referensi(e) for e in entri_bahan}
             # Entri agent yang menunjuk bahan ajar yang sama dilepas lebih
             # dulu, supaya menggantinya tidak menghasilkan dua baris yang
             # isinya hampir sama.
-            baris = [b for b in baris if not _sama_referensi(b, kunci_bahan)]
-            baris.insert(0, entri_bahan)
+            baris = [b for b in baris
+                     if not any(_sama_referensi(b, k) for k in kunci_bahan)]
+            baris.extend(entri_bahan)
 
         # Do-dobl dikurangi: entri yang identik pernah muncul dua kali ketika
         # agent menulis daftar lalu pipeline menambahkannya lagi.
@@ -1895,10 +1931,27 @@ Struktur jawaban yang diminta dokumen akhir:
   sebaris dan `$$` di baris sendiri untuk blok. Bentuk `\\(...\\)` dan
   `\\[...\\]` jangan dipakai karena renderer dokumen hanya mengenali
   bentuk dolar. Matriks memakai notasi `[[a, b], [c, d]]`.
-- Tulis sebagai mahasiswa yang mengerjakan tugas, pakai kata "saya".
+- Tulis sebagai mahasiswa yang mengerjakan tugas; sudut pandang orang pertama
+  tapi tanpa kata "saya"/"menurut saya" -- langsung ke poin.
+- Jawab secukupnya: ikuti butir soal satu per satu tanpa pengantar panjang,
+  tanpa contoh tambahan, tanpa bagian penutup yang mengulang jabaran.
+- Ikuti metode/prosedur yang diminta soal. Kalau diminta pohon semantik
+  dengan urutan simbol tertentu, buat persis itu; jangan ganti bentuk lain.
+- Bahasa seperti mahasiswa, bukan ringkasan model: hindari "Pertama/Kedua/
+  Ketiga" berantai, bold di tiap label, em dash, kalimat penutup yang
+  mengulang poin, dan pembuka formal yang berulang ("Secara garis besar",
+  "Dengan demikian", "Perlu dicatat bahwa").
 - Pakai skill `humanizer` dalam mode File pada berkas jawaban ini.
 """
 
+        if self.manual is None:
+            self._tahap = "7/8"
+        self._agent = config.AGENT_WORKER
+        no = "4/5" if self.manual is not None else "7/8"
+        self._log(
+            f"  [{no}] Menulis jawaban: agent {config.AGENT_WORKER}, "
+            f"model {self.model_utama}"
+        )
         hasil = panggil_agent_bertahap(
             nama=config.AGENT_WORKER,
             prompt=prompt,
@@ -1981,6 +2034,12 @@ Struktur jawaban yang diminta dokumen akhir:
     # -------------------------------------------------------------- 9. docx
 
     def _tahap_docx(self, soal_teks: str) -> None:
+        """Render DOCX tidak memakai agent; cara lain di sini tidak ada."""
+        if self.manual is None:
+            self._tahap = "8/8"
+        else:
+            self._tahap = "5/5"
+        self._agent = "render"
         if self.hasil.jawaban is None:
             raise PipelineGagal("Jawaban belum ada, dokumen tidak bisa dibuat.")
 

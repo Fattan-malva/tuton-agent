@@ -51,6 +51,36 @@ Without a sample, take the voice from the kind of text. Blog posts, essays, opin
 
 **Embedded mode.** When another task uses this skill for a pull request, commit message, or document, return only the final text.
 
+## Intensifier untuk konteks Indonesia (tugas UT)
+
+Teks formal Indonesia masih sering ketahuan tulis mesin kalau paragraf dibuka
+dengan lima pembuka yang sama, triplet, atau penutup moral. Aturan tambahan
+khusus konteks ini:
+
+- Hindari menumpuk kata sambung formal di awal kalimat: "Secara garis besar",
+  "Dalam konteks ini", "Dengan demikian", "Selain itu", "Perlu dicatat bahwa",
+  "Tak dapat dipungkiri", "Pada dasarnya". Satu paragraf cukup satu pembuka,
+  sisanya kalimat langsung.
+- Hindari kerangka "Pertama... Kedua... Ketiga..." mendominasi satu paragraf;
+  tulis dalam bentuk prose kalau isinya berurutan, atau hanya pakai bila
+  memang menjawab penomoran soal.
+- Hindari moral/kesimpulan pendek hilang arah: "Jadi, aturan ini penting."
+  Ganti dengan fakta terakhir yang konkret (satu angka, satu implikasi).
+- Vary sentence length: campur kalimat pendek (\<10 kata) dengan kalimat
+  panjang secukupnya. Kebanyakan satu panjang = ketahuan.
+- Bold label di depan setiap baris biarkan untuk heading/nama kolom tabel,
+  bukan untuk menekankan istilah.
+- Hindari terlalu sering memakai "misalnya" di tiap paragraf; satu contoh
+  konkret per paragraf sudah cukup.
+- Susun kalimat aktif: subjek jelas ("saya", "pohon semantik", "aturan"),
+  hindari pasif bertumpuk.
+- Jangan mulai paragraf baru dengan ide yang sama dengan akhir paragraf
+  sebelumnya (mengulang poin sebagai jangkar); langsung ke poin baru.
+- Buang tanda sudut pandang orang pertama: "saya", "saya memakai",
+  "menurut saya", "kami". Ganti subjeknya menjadi poin kerja itu sendiri
+  ("Dipakai pohon semantik karena ...", "Pada soal ini dipakai ...") supaya
+  tetap terbaca sebagai pengerjaan mahasiswa.
+
 ## A. Staging instead of stating
 
 These are the strongest and most frequent tells in current model prose. Act on one sighting.

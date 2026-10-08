@@ -5,7 +5,7 @@ description: >-
   sepuluh tahun lalu, sedangkan jawaban yang dikumpulkan harus punya sumber
   link-checkable yang terbit dalam sepuluh tahun terakhir, jadi daftar perlu
   memuat keduanya. Pipeline sudah membentuk entri bahan ajar sendiri dari
-  lampiran resmi, jadi tugasmu sempit: maksimal 5 sumber pelengkap dari 10 tahun
+  lampiran resmi, jadi tugasmu sempit: maksimal 3 sumber pelengkap dari 10 tahun
   terakhir, siap ditempel. Tidak menjawab soal, tidak menulis penjelasan.
 mode: primary
 permissions:
