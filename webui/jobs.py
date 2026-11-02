@@ -71,6 +71,7 @@ class Job:
         self.cancel_event = threading.Event()
         self.session_ids: set[str] = set()
         self.session_lock = threading.Lock()
+        self.event_seq = 0
         self.dibuat = time.time()
         log_dir = config.work_dirs(slug, sesi)["log"]
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -91,6 +92,8 @@ class Job:
             ev["ts"] = time.time()
             ev["job"] = job.id
             with job.cond:
+                job.event_seq += 1
+                ev["seq"] = job.event_seq
                 job.events.append(ev)
                 job.cond.notify_all()
             try:
@@ -131,16 +134,16 @@ class JobManager:
         self._seq = 0
         self._queue: list[str] = []
         self._cv = threading.Condition()
-        self._courses_cache: list[dict] | None = None
-        self._courses_cache_t = 0.0
         t = threading.Thread(target=self._dispatch, name="jkt-dispatch", daemon=True)
         t.start()
 
     def reset_courses_cache(self) -> None:
-        """Buang daftar course di memori (dipanggil saat cookie Moodle berubah)."""
-        with self.lock:
-            self._courses_cache = None
-            self._courses_cache_t = 0.0
+        """Dihapus: `courses()` sekarang selalu membaca Moodle.
+
+        Method ini masih dipanggil `server.py` saat cookie berganti, jadi
+        dibiarkan ada sebagai no-op supaya pemanggilnya tidak perlu diubah.
+        Cache HTML di `moodle.Moodle` yang dibersihkan di sana.
+        """
 
     def clear_events(self, jid: str) -> bool:
         with self.lock:
@@ -361,27 +364,56 @@ class JobManager:
     # ------------------------------------------------------------- courses
 
     def courses(self) -> list[dict]:
-        now = time.time()
-        if self._courses_cache and now - self._courses_cache_t < 300:
-            return self._courses_cache
+        """Daftar mata kuliah, selalu dari Moodle (tanpa cache di memori).
+
+        Sengaja tanpa cache. Daftar course memang jarang berubah, tetapi
+        memakai cache berarti course yang baru ditambahkan admin, atau kelas
+        baru yang baru dibuka, tidak muncul sampai server di-restart. Cache
+        yang benar bukan di memori proses ini, melainkan cache HTML di
+        `moodle.Moodle` (`TTL_CACHE_DETIK`), dan itu bisa dibersihkan dari
+        menu Pengaturan.
+        """
         klien = moodle.Moodle()
         daftar = courses.daftar_mata_kuliah_lengkap(klien)
-        out = [
+        return [
             {
                 "id": m.id, "nama": m.nama, "kode": m.kode,
                 "kelas": m.kelas, "slug": m.slug,
             }
             for m in daftar
         ]
-        self._courses_cache = out
-        self._courses_cache_t = now
-        return out
 
     def sessions(self, cid: str) -> list[dict]:
+        """Sesi yang punya soal di satu course.
+
+        `cid` adalah id course yang sudah dipilih pengguna, jadi tidak perlu
+        mencari ulang seluruh daftar course. Versi lama memanggil
+        `daftar_mata_kuliah_lengkap` lebih dulu -- satu request `/my/` plus
+        satu request halaman course untuk setiap mata kuliah -- hanya untuk
+        menemukan satu course berdasarkan id. Dengan enam mata kuliah itu
+        berarti tujuh request tambahan sebelum satu pun section dibaca, dan
+        itulah yang membuat pilihan sesi terasa lama sekali.
+        """
+        klien = moodle.Moodle()
+        matkul = courses.mata_kuliah_dari_id(klien, cid)
+        res = courses.sesi_berisi_soal(klien, matkul)
+        return [{"sesi": s, "jumlah": n} for s, n in res]
+
+    def semua_sesi(self) -> list[dict]:
+        """Sesi yang punya soal, dijumlahkan lintas semua mata kuliah.
+
+        Dipakai pilihan "Semua mata kuliah". Daftar course-nya sudah ada di
+        hasil `courses()`, jadi di sini cukup membaca section-nya saja.
+        """
         klien = moodle.Moodle()
         daftar = courses.daftar_mata_kuliah_lengkap(klien)
-        mk = next((x for x in daftar if x.id == cid), None)
-        if mk is None:
-            raise pipeline.PipelineGagal("Mata kuliah tidak ditemukan.")
-        res = courses.sesi_berisi_soal(klien, mk)
-        return [{"sesi": s, "jumlah": n} for s, n in res]
+        hitung: dict[int, int] = {}
+        for mk in daftar:
+            try:
+                for s, n in courses.sesi_berisi_soal(klien, mk):
+                    hitung[s] = hitung.get(s, 0) + int(n or 0)
+            except Exception:  # noqa: BLE001 - satu course rusak tidak boleh menggagalkan daftar
+                continue
+        return [
+            {"sesi": s, "jumlah": hitung[s]} for s in sorted(hitung) if hitung[s] > 0
+        ]

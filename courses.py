@@ -290,6 +290,46 @@ def daftar_mata_kuliah_lengkap(klien: moodle.Moodle) -> list[MataKuliah]:
     return urut
 
 
+def mata_kuliah_dari_id(klien: moodle.Moodle, cid: str) -> MataKuliah:
+    """Satu mata kuliah dari id course-nya, tanpa membaca daftar course.
+
+    Mencari lewat `daftar_mata_kuliah_lengkap` berarti satu request `/my/`
+    ditambah satu request halaman untuk setiap course (untuk melengkapi kode)
+    -- mahal kalau yang dibutuhkan hanya satu course yang id-nya sudah
+    diketahui. Di sini cukup satu request halaman course: judulnya sudah
+    memuat kode dan kelas (`STMA4113.95: ...`), dan nama lengkapnya ada di
+    `<h1>`.
+
+    `daftar_mata_kuliah_lengkap` tetap dipakai sebagai cadangan kalau judul
+    halaman tidak mengikuti pola biasa, supaya nama yang dipakai untuk nama
+    folder kerja tidak berubah bentuknya.
+    """
+    url = f"{klien.base_url}/course/view.php?id={cid}"
+    try:
+        halaman = klien.ambil(url)
+    except moodle.MoodleError:
+        raise
+
+    soup = BeautifulSoup(halaman.html, "lxml")
+    judul = soup.title.get_text(strip=True) if soup.title else ""
+    m = re.match(r"^\s*([A-Z]{4}\d{4})\.(\d{1,3})\s*:\s*(.+?)\s*(?:\||$)", judul)
+    if m:
+        kode, kelas, nama = m.group(1), m.group(2), m.group(3).strip()
+        # Judul course UT kadang sudah memuat kelas di nama panjangnya
+        # ("... kelas 95"). Dibuang supaya tidak tampil dua kali.
+        nama = re.sub(r"\s+kelas\s+\d{1,3}\s*$", "", nama).strip()
+        if nama:
+            return MataKuliah(
+                id=str(cid), nama=nama, kode=kode, kelas=kelas,
+                slug=config.slugify(nama or f"matkul-{cid}", f"matkul-{cid}"),
+            )
+
+    for matkul in daftar_mata_kuliah_lengkap(klien):
+        if matkul.id == str(cid):
+            return matkul
+    raise moodle.MoodleError(f"Mata kuliah id {cid} tidak ada di akun ini.")
+
+
 def nilai_mata_kuliah(klien: moodle.Moodle, course_id: str) -> dict[int, dict[str, float | None]]:
     """Nilai Tugas & Diskusi per sesi dari laporan nilai pengguna.
 
@@ -532,13 +572,21 @@ def sesi_berisi_soal(
 
     Dipakai saat pengguna belum memilih sesi, untuk menampilkan pilihan
     yang memang punya pekerjaan.
+
+    Satu section = satu request, karena halaman course UT memakai format
+    onetopic yang isinya hanya section yang sedang dibuka. Section yang
+    gagal dibaca dilewati, bukan menggagalkan seluruh daftar: satu section
+    yang error tidak boleh membuat pilihan sesi kosong.
     """
     sections = daftar_section(klien, matkul)
     hasil: list[tuple[int, int]] = []
     for s in sections:
         if s == 0:
             continue
-        aktivitas = daftar_aktivitas(klien, matkul, s)
+        try:
+            aktivitas = daftar_aktivitas(klien, matkul, s)
+        except moodle.MoodleError:
+            continue
         hasil.append((s, sum(1 for a in aktivitas if a.boleh_ke_soal)))
     return hasil
 
@@ -575,6 +623,29 @@ def _tanggal_setelah(html: str, label: str) -> str | None:
     return f"{int(d.group(3)):04d}-{bulan:02d}-{int(d.group(1)):02d}"
 
 
+def _status_pengumpulan(html: str, jenis: str) -> str | None:
+    """Baca status pengumpulan eksplisit dari halaman activity Moodle."""
+    teks = BeautifulSoup(html, "lxml").get_text(" ", strip=True).lower()
+    if jenis == "Tugas":
+        if re.search(r"no submission|not submitted|belum mengirim|belum dikirim|belum terkirim", teks):
+            return "not_submitted"
+        if re.search(r"submitted for grading|submitted|sudah mengirim|sudah dikirim|terkirim", teks):
+            return "submitted"
+    else:
+        if re.search(r"no posts?|no discussions?|not made any posts?|belum ada posting|belum mengirim|belum membalas", teks):
+            return "not_submitted"
+        if re.search(r"your posts?\s*\d+|replies?\s*\d+|posts? made|sudah membalas|sudah mengirim", teks):
+            return "submitted"
+    return None
+
+
+def _nilai_aktivitas(
+    nilai: dict[int, dict[str, float | None]], jenis: str, nomor: int
+) -> float | None:
+    sesi = nomor if jenis == "Diskusi" else 2 * nomor + 1
+    return nilai.get(sesi, {}).get(jenis)
+
+
 def jadwal_mata_kuliah(klien: moodle.Moodle, matkul: MataKuliah) -> list[dict]:
     """Jadwal Diskusi & Tugas satu course: dari kapan sampai tenggat.
 
@@ -586,6 +657,7 @@ def jadwal_mata_kuliah(klien: moodle.Moodle, matkul: MataKuliah) -> list[dict]:
     tanggal mulai hasil hitungan itu, bukan tanggal buka asli.
     """
     sections = daftar_section(klien, matkul)
+    nilai = nilai_mata_kuliah(klien, matkul.id)
     items: list[dict] = []
     for s in sections:
         for a in daftar_aktivitas(klien, matkul, s):
@@ -595,11 +667,11 @@ def jadwal_mata_kuliah(klien: moodle.Moodle, matkul: MataKuliah) -> list[dict]:
                 continue
             try:
                 halaman = klien.ambil(a.url)
+                html = halaman.html
             except Exception:  # noqa: BLE001
-                continue
-            tenggat = _tanggal_setelah(halaman.html, "Due")
-            if not tenggat:
-                continue  # tanpa tenggat baris tidak bisa digambar
+                html = ""
+            jenis = "Diskusi" if a.modtype == "forum" else "Tugas"
+            tenggat = _tanggal_setelah(html, "Due")
             # Sesi mengikuti tempat activity berada; kalau tidak jelas,
             # pakai aturan yang sama dengan laporan nilai.
             sesi = a.section if a.section >= 1 else (
@@ -607,19 +679,22 @@ def jadwal_mata_kuliah(klien: moodle.Moodle, matkul: MataKuliah) -> list[dict]:
             )
             items.append(
                 {
-                    "jenis": "Diskusi" if a.modtype == "forum" else "Tugas",
+                    "jenis": jenis,
                     "nomor": a.nomor,
                     "sesi": sesi,
                     "nama": a.nama,
                     "url": a.url,
-                    "mulai": _tanggal_setelah(halaman.html, "Opened"),
+                    "mulai": _tanggal_setelah(html, "Opened"),
                     "tenggat": tenggat,
+                    "status_pengumpulan": _status_pengumpulan(html, jenis),
+                    "nilai": _nilai_aktivitas(nilai, jenis, a.nomor),
                 }
             )
 
-    items.sort(key=lambda x: x["tenggat"])
+    items.sort(key=lambda x: (x["tenggat"] or "9999-12-31", x["nama"].lower()))
+    items_bertenggat = [item for item in items if item["tenggat"]]
     tenggat_sebelum: date | None = None
-    for it in items:
+    for it in items_bertenggat:
         tgl_tenggat = date.fromisoformat(it["tenggat"])
         tgl_mulai = date.fromisoformat(it["mulai"]) if it["mulai"] else None
         turunan = False

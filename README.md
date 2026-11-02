@@ -273,7 +273,7 @@ Repo sudah punya `Dockerfile` dan `docker-compose.yml` (Podman/Docker):
 
 ```bash
 podman-compose up -d --build --force-recreate   # atau: docker compose up -d --build
-./restart.sh                                    # redeploy + cek sehat (Podman + nginx)
+./.restart.sh                                    # redeploy + cek sehat (Podman + nginx)
 ```
 
 Catatan:
@@ -282,8 +282,10 @@ Catatan:
   compose; `.env` yang di-bind tidak diubah) di belakang nginx.
 - Folder `output/`, `_kerja/`, `cache/`, dan `.env` di-bind ke host supaya
   hasil dan jejak job tetap ada walau container dibuat ulang.
-- `restart.sh` menyambungkan ulang container ke `app-network` dan memverifikasi
-  jalur nginx; script ini tidak pernah me-restart nginx.
+- `.restart.sh` adalah cara resmi redeploy project ini (bikin ulang image,
+  sambungkan ulang container ke `app-network`, tunggu siap, lalu verifikasi
+  jalur nginx). Script ini tidak pernah me-restart nginx.
+  `./restart.sh` (tanpa titik) masih ada sebagai shim ke `.restart.sh`.
 
 ## Hasil
 
@@ -320,7 +322,7 @@ Log tiap tahap ada di `_kerja/.../_log/`. Kalau satu course gagal di mode
 | `webui/server.py`   | Server HTTP + API (login, nilai, jadwal, job, SSE) |
 | `webui/static/`     | UI statis: `index.html`, `app.js`, `app.css`, `icons/` |
 | `.opencode/agents/` | Spec agent: scrapper, worker, research, vision    |
-| `Dockerfile` + `docker-compose.yml` + `restart.sh` | Build image dan redeploy container |
+| `Dockerfile` + `docker-compose.yml` + `.restart.sh` | Build image dan redeploy container |
 | `runner.bat`        | Shortcut Windows                                  |
 
 ## Catatan keamanan

@@ -39,6 +39,8 @@ import config  # noqa: E402
 import auth  # noqa: E402
 import docxprev  # noqa: E402
 from jobs import JobManager  # noqa: E402
+import courses  # noqa: E402
+import moodle  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 COOKIE_NAME = "tuton_session"
@@ -57,6 +59,46 @@ _JADWAL_CACHE: dict[str, tuple[float, float, dict]] = {}
 _JADWAL_LOCK = threading.Lock()
 _TTL_OK = 600.0
 _TTL_GAGAL = 30.0
+
+# Sesi per course. Membaca satu course berarti satu request per section, jadi
+# hasilnya disimpan sebentar di memori; itu yang membuat pindah-pindah pilihan
+# mata kuliah terasa langsung.
+#
+# Ini BUKAN cache "percaya saja": daftar sesi berubah saat dosen membuka sesi
+# baru, jadi UI punya tombol segarkan yang memanggil endpoint dengan
+# `?paksa=1` dan melewati cache ini sepenuhnya. Tanpa jalan keluar itu, sesi
+# baru bisa tersembunyi sampai TTL habis dan pengguna tidak punya cara
+# memunculkannya.
+_SESI_CACHE: dict[str, tuple[float, float, list[dict]]] = {}
+_SESI_LOCK = threading.Lock()
+_TTL_SESI = 120.0
+
+
+def _sesi_course(cid: str, paksa: bool = False) -> list[dict]:
+    """Sesi yang punya soal untuk satu course, dengan cache singkat."""
+    with _SESI_LOCK:
+        now = time.monotonic()
+        entri = _SESI_CACHE.get(cid)
+        if not paksa and entri and now - entri[0] < entri[1]:
+            return entri[2]
+    hasil = MANAGER.sessions(cid)
+    with _SESI_LOCK:
+        _SESI_CACHE[cid] = (time.monotonic(), _TTL_SESI, hasil)
+    return hasil
+
+
+def _sesi_semua(paksa: bool = False) -> list[dict]:
+    """Sesi lintas semua mata kuliah, dengan cache singkat yang sama."""
+    kunci = "*"
+    with _SESI_LOCK:
+        now = time.monotonic()
+        entri = _SESI_CACHE.get(kunci)
+        if not paksa and entri and now - entri[0] < entri[1]:
+            return entri[2]
+    hasil = MANAGER.semua_sesi()
+    with _SESI_LOCK:
+        _SESI_CACHE[kunci] = (time.monotonic(), _TTL_SESI, hasil)
+    return hasil
 
 
 # ----------------------------------------------------------- multipart
@@ -313,6 +355,14 @@ def _moodle_login() -> dict:
         return dict(result)
 
 
+def _paksa(query: dict) -> bool:
+    """True kalau klien minta melewati cache (`?paksa=1`)."""
+    nilai = query.get("paksa")
+    if isinstance(nilai, list):
+        nilai = nilai[0] if nilai else ""
+    return str(nilai or "").strip().lower() in {"1", "true", "ya", "yes"}
+
+
 def _moodle_masuk() -> str | None:
     """Pagar cookie: kembalikan pesan error kalau cookie Moodle tidak valid.
 
@@ -385,25 +435,17 @@ def _jadwal(cid: str) -> dict:
         entri = _JADWAL_CACHE.get(cid)
         if entri and now - entri[0] < entri[1]:
             return entri[2]
-        galat = _moodle_masuk()
-        if galat:
-            hasil = {"items": [], "error": galat}
-        else:
-            try:
-                import moodle  # noqa: PLC0415
-                import courses  # noqa: PLC0415
+        try:
+            import courses  # noqa: PLC0415
 
-                klien = moodle.Moodle()
-                matkul = next(
-                    (m for m in courses.daftar_mata_kuliah(klien) if m.id == cid),
-                    None,
-                )
-                if matkul is None:
-                    hasil = {"items": [], "error": "Mata kuliah tidak ditemukan."}
-                else:
-                    hasil = {"items": courses.jadwal_mata_kuliah(klien, matkul)}
-            except Exception as exc:  # noqa: BLE001
-                hasil = {"items": [], "error": str(exc)}
+            klien = moodle.Moodle()
+            # Langsung ke course yang diminta: mencari lewat daftar seluruh
+            # course berarti membuka /my/ lalu setiap halaman course hanya
+            # untuk menemukan satu id, dan itu yang membuat kartu ini lambat.
+            matkul = courses.mata_kuliah_dari_id(klien, cid)
+            hasil = {"items": courses.jadwal_mata_kuliah(klien, matkul)}
+        except Exception as exc:  # noqa: BLE001
+            hasil = {"items": [], "error": str(exc)}
         ttl = _TTL_OK if not hasil.get("error") else _TTL_GAGAL
         _JADWAL_CACHE[cid] = (now, ttl, hasil)
         return hasil
@@ -435,7 +477,7 @@ def _agents() -> list[dict]:
 
 
 _KUNCI_EDIT = [
-    "URL_MOODLE", "PRIMARY_MODEL", "VISION_MODEL",
+    "URL_MOODLE", "PRIMARY_MODEL", "VISION_MODEL", "FALLBACK_MODELS",
     "NAMA", "NIM", "SEMESTER", "UT_DAERAH", "PRODI",
     "APP_USERNAME", "WEB_HOST", "WEB_PORT",
 ]
@@ -449,10 +491,10 @@ def _reset_cache_moodle() -> int:
     """Bersihkan semua cache turunan cookie Moodle.
 
     Cakupannya: status login (60 detik), nilai (10 menit), jadwal per course
-    (10 menit), daftar course di memori JobManager (5 menit), dan halaman
-    HTML hasil scrape di folder `cache/` (TTL 1 jam). Tanpa ini, cookie baru
-    dari menu Pengaturan tidak pernah sampai ke halaman lain sampai semua
-    cache kedaluwarsa sendiri.
+    (10 menit), daftar sesi per course (2 menit), dan halaman HTML hasil
+    scrape di folder `cache/` (TTL 1 jam). Tanpa ini, cookie baru dari menu
+    Pengaturan tidak pernah sampai ke halaman lain sampai semua cache
+    kedaluwarsa sendiri.
     """
     global _MOODLE_STATUS_CACHE, _NILAI_CACHE
     with _MOODLE_STATUS_LOCK:
@@ -461,6 +503,8 @@ def _reset_cache_moodle() -> int:
         _NILAI_CACHE = None
     with _JADWAL_LOCK:
         _JADWAL_CACHE.clear()
+    with _SESI_LOCK:
+        _SESI_CACHE.clear()
     MANAGER.reset_courses_cache()
     jumlah = 0
     try:
@@ -504,6 +548,14 @@ def _settings_post(payload: dict) -> dict:
         if k in _KUNCI_MOODLE and nilai != lama[k]:
             berubah = True
         config.set_env_value(k, nilai)
+        if k == "FALLBACK_MODELS":
+            # config sudah dievaluasi saat impor, jadi daftar cadangan perlu
+            # dihitung ulang di memori. Tanpa ini perubahan hanya berlaku
+            # setelah server di-restart, dan job berikutnya tetap memakai
+            # model cadangan yang lama.
+            config.FALLBACK_MODELS = [
+                m.strip() for m in nilai.split(",") if m.strip()
+            ]
     if berubah:
         # Cookie/URL Moodle baru: buang semua hasil scrape lama supaya
         # dashboard, select matkul, nilai, dan jadwal langsung memakai
@@ -521,7 +573,7 @@ def _slug_dari(params: dict) -> str:
     return config.slugify(nama, "manual")
 
 
-def _submit_scrape(params: dict) -> list[str]:
+def _submit_scrape(params: dict) -> dict:
     # Pagar cookie: gagal cepat dengan pesan jelas sebelum job masuk antrean.
     galat = _moodle_masuk()
     if galat:
@@ -535,18 +587,50 @@ def _submit_scrape(params: dict) -> list[str]:
     params = {**params, "jenis": jenis}
     sesi = int(params.get("sesi") or 0)
     if params.get("matkul_id") == "semua":
+        if sesi < 1:
+            raise ValueError("Pilih sesi untuk semua mata kuliah.")
+        jenis = str(params.get("jenis") or "").strip()
         ids: list[str] = []
-        for mk in MANAGER.courses():
+        skipped: list[dict[str, str]] = []
+        klien = moodle.Moodle()
+        daftar = courses.daftar_mata_kuliah_lengkap(klien)
+        for mk in daftar:
+            try:
+                sesi_list = courses.sesi_berisi_soal(klien, mk)
+            except Exception as exc:  # noqa: BLE001
+                skipped.append({"matkul": mk.nama, "alasan": f"preflight gagal: {exc}"})
+                continue
+            pasangan = dict(sesi_list)
+            if sesi not in pasangan or not pasangan.get(sesi, 0):
+                skipped.append({"matkul": mk.nama, "alasan": f"sesi {sesi} tidak punya soal"})
+                continue
+            if jenis:
+                try:
+                    aktivitas = courses.daftar_aktivitas(klien, mk, sesi)
+                except Exception as exc:  # noqa: BLE001
+                    skipped.append({"matkul": mk.nama, "alasan": f"filter {jenis} gagal: {exc}"})
+                    continue
+                if not any(
+                    a.boleh_ke_soal and a.jenis_soal == jenis
+                    for a in aktivitas
+                ):
+                    skipped.append({"matkul": mk.nama, "alasan": f"tidak punya soal {jenis}"})
+                    continue
             job = MANAGER.submit(
                 "scrape",
-                {**params, "matkul_id": mk["id"]},
-                mk["slug"],
+                {**params, "matkul_id": mk.id},
+                mk.slug,
                 sesi,
             )
             ids.append(job.id)
-        return ids
+        if not ids:
+            raise ValueError(
+                f"Tidak ada mata kuliah yang punya soal"
+                f"{' ' + jenis if jenis else ''} pada sesi {sesi}."
+            )
+        return {"jobs": ids, "skipped": skipped}
     job = MANAGER.submit("scrape", params, _slug_dari(params), sesi)
-    return [job.id]
+    return {"jobs": [job.id], "skipped": []}
 
 
 def _submit_manual(body: bytes, ctype: str) -> str:
@@ -616,13 +700,14 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- GET
     def do_GET(self) -> None:  # noqa: N802
-        path = urllib.parse.urlparse(self.path).path
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
         if path == "/" or path == "/index.html":
             return self._static("index.html")
         if path.startswith("/static/"):
             return self._static(urllib.parse.unquote(path[len("/static/"):]))
         if path.startswith("/api/"):
-            return self._api_get(path)
+            return self._api_get(path, urllib.parse.parse_qs(parsed.query))
         self._not_found()
 
     def do_POST(self) -> None:  # noqa: N802
@@ -667,7 +752,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     # ---- API GET
-    def _api_get(self, path: str) -> None:
+    def _api_get(self, path: str, query: dict[str, list[str]] | None = None) -> None:
         if path == "/api/session":
             return _kirim_json(self, {"authenticated": _terautentikasi(self)})
         if _butuh_auth(self):
@@ -683,11 +768,17 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/nilai":
             return _kirim_json(self, _nilai_semua())
         if path == "/api/courses":
-            galat = _moodle_masuk()
-            if galat:
-                return _kirim_json(self, {"error": galat}, 400)
+            # Tidak ada `_moodle_masuk()` di sini: pengecekan itu memanggil
+            # `/my/` lagi, padahal `MANAGER.courses()` juga membuka `/my/`
+            # dan galatnya sudah berupa `MoodleError` yang jelas. Satu request
+            # per pemuatan halaman ini cukup.
             try:
                 return _kirim_json(self, MANAGER.courses())
+            except Exception as exc:  # noqa: BLE001
+                return _kirim_json(self, {"error": str(exc)}, 400)
+        if path == "/api/sessions":
+            try:
+                return _kirim_json(self, _sesi_semua(paksa=_paksa(query)))
             except Exception as exc:  # noqa: BLE001
                 return _kirim_json(self, {"error": str(exc)}, 400)
         if path.startswith("/api/jadwal/"):
@@ -703,16 +794,13 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/jobs/") and path.endswith("/events"):
             return self._kirim_events(path.split("/")[3])
         if path.startswith("/api/jobs/") and path.endswith("/stream"):
-            return self._stream(path.split("/")[3])
+            return self._stream(path.split("/")[3], query or {})
         if re.fullmatch(r"/api/jobs/[A-Za-z0-9\-]+", path):
             return self._job_detail(path.split("/")[3])
         if path.startswith("/api/courses/") and path.endswith("/sessions"):
-            galat = _moodle_masuk()
-            if galat:
-                return _kirim_json(self, {"error": galat}, 400)
             cid = path.split("/")[3]
             try:
-                return _kirim_json(self, MANAGER.sessions(cid))
+                return _kirim_json(self, _sesi_course(cid, paksa=_paksa(query)))
             except Exception as exc:  # noqa: BLE001
                 return _kirim_json(self, {"error": str(exc)}, 400)
         if path == "/api/settings":
@@ -785,8 +873,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/jobs/scrape":
             try:
                 payload = json.loads(self._baca_body().decode("utf-8"))
-                ids = _submit_scrape(payload)
-                return _kirim_json(self, {"jobs": ids})
+                return _kirim_json(self, _submit_scrape(payload))
             except Exception as exc:  # noqa: BLE001
                 return _kirim_json(self, {"error": str(exc)}, 400)
         if path == "/api/jobs/manual":
@@ -880,7 +967,9 @@ class Handler(BaseHTTPRequestHandler):
         if job is None:
             return self._not_found()
         events: list[dict] = []
-        if job.event_file.is_file():
+        with job.cond:
+            events = list(job.events)
+        if not events and job.event_file.is_file():
             for baris in job.event_file.read_text(encoding="utf-8", errors="replace").splitlines():
                 baris = baris.strip()
                 if baris:
@@ -888,15 +977,10 @@ class Handler(BaseHTTPRequestHandler):
                         events.append(json.loads(baris))
                     except ValueError:
                         pass
-        elif job.events:
-            # Folder kerja bisa sudah dibersihkan setelah DOCX jadi, jadi
-            # berkas event ikut hilang. Fallback ke buffer di memori supaya
-            # muat ulang halaman tetap menampilkan log yang sama.
-            events = list(job.events)
         _kirim_json(self, events)
 
     # ---- SSE
-    def _stream(self, jid: str) -> None:
+    def _stream(self, jid: str, query: dict[str, list[str]]) -> None:
         job = MANAGER.jobs.get(jid)
         if job is None:
             return self._not_found()
@@ -906,24 +990,28 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
-        idx = 0
+        try:
+            after = max(
+                0,
+                int(self.headers.get("Last-Event-ID") or (query.get("after") or ["0"])[0]),
+            )
+        except ValueError:
+            after = 0
         try:
             while True:
-                # Tombol "Bersihkan" memangkas job.events dari luar, jadi idx
-                # bisa sudah melewati panjang list. Kalau dibiarkan, event baru
-                # (yang kini berada di indeks 0..) tidak akan pernah terkirim.
-                if idx > len(job.events):
-                    idx = 0
-                while idx < len(job.events):
-                    ev = job.events[idx]
-                    idx += 1
+                with job.cond:
+                    events = [ev for ev in job.events if ev.get("seq", 0) > after]
+                    finished = job.finished
+                    status = job.status
+                for ev in events:
+                    after = max(after, ev.get("seq", after))
                     self.wfile.write(
-                        f"data: {json.dumps(ev, ensure_ascii=False)}\n\n".encode("utf-8")
+                        f"id: {after}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n".encode("utf-8")
                     )
                     self.wfile.flush()
-                if job.finished and idx >= len(job.events):
+                if finished:
                     self.wfile.write(
-                        f"event: done\ndata: {json.dumps({'status': job.status})}\n\n".encode(
+                        f"event: done\ndata: {json.dumps({'status': status})}\n\n".encode(
                             "utf-8"
                         )
                     )

@@ -234,6 +234,40 @@ BATAS_URL_CADANGAN = 6
 MAX_Coba_AGENT = 2
 TIMEOUT_AGENT_DETIK = 900
 
+# ------------------------------------------------------- model cadangan
+
+# Model yang dipakai bila model utama ditolak provider: kuota habis
+# (`provider.free-limit`, `provider.quota`), model tidak diizinkan, atau
+# sambungannya gagal. Daftar dipisah koma dan dicoba berurutan.
+#
+# Alasannya konkret: satu sesi "Aljabar Linear Elementer 95 sesi 8" gagal
+# total karena `ollama-cloud/gpt-oss:120b` menjawab 429 "Free usage limit
+# reached" untuk SETIAP panggilan. Pipeline hanya mencoba ulang model yang
+# sama dua kali, lalu berhenti tanpa peta soal -- padahal transkripsi bahan
+# ajarnya sudah selesai, dan model lain di mesin yang sama masih melayani.
+# Mengulang provider yang sedang menolak itu pekerjaan sia-sia; berpindah
+# model adalah satu-satunya jalan yang tersisa.
+_CADANGAN_BAWAAN = (
+    "ollama-cloud/gpt-oss:120b,"
+    "ollama-cloud/nemotron-3-super,"
+    "ollama-cloud/gpt-oss:20b,"
+    "9router/grok"
+)
+FALLBACK_MODELS = [
+    m.strip() for m in env("FALLBACK_MODELS", _CADANGAN_BAWAAN).split(",") if m.strip()
+]
+# Dipakai agent vision kalau model vision ditolak. Kosong berarti memakai
+# FALLBACK_MODELS apa adanya; isi hanya kalau ada model yang memang bisa
+# membaca gambar (model teks biasa akan menolak `--file` gambar).
+VISION_FALLBACK_MODELS = [
+    m.strip() for m in env("VISION_FALLBACK_MODELS", "").split(",") if m.strip()
+]
+
+# Pemanggilan percobaan ulang (MAX_Coba_AGENT) DAN pindah model cadangan
+# berbagi satu anggaran waktu ini. Tanpa anggaran bersama, satu peta soal bisa
+# memakan TIMEOUT_AGENT_DETIK kali berapa pun model cadangan yang ada.
+TIMEOUT_AGENT_TOTAL_DETIK = 2700
+
 # Ukuran minimum berkas hasil agent agar dianggap selesai. Tanpa ambang ini
 # peta soal yang sudah ditulis lengkap tapi tidak ditutup `SELESAI` akan
 # dipanggil ulang, dan percobaan kedua bisa menimpanya dengan isi lebih

@@ -1225,7 +1225,15 @@ def _render_markdown(doc: Document, md: str):
         # kehilangan tanda `-`-nya dan tercetak sebagai
         # "- Pivot kedua: ...". Persis itu yang dikeluhkan tutor: bullet ikut
         # tampil mentah di depan paragraf.
-        if line.count("$") >= 2 and "$$" not in line:
+        if (
+            line.count("$") >= 2
+            and "$$" not in line
+            and not (
+                _is_table_row(line)
+                and i + 1 < len(lines)
+                and re.match(r"^\s*\|[\s:|-]+\|\s*$", lines[i + 1])
+            )
+        ):
             label_m = _LABEL_DAFTAR_RE.match(line)
             if label_m and label_m.group(0).lstrip()[:1] in "-*+":
                 p = doc.add_paragraph(style="List Bullet")
@@ -1267,15 +1275,15 @@ def _render_markdown(doc: Document, md: str):
             table = doc.add_table(rows=1, cols=len(header_cells))
             table.style = "Table Grid"
             for col, cell in enumerate(header_cells):
-                table.rows[0].cells[col].text = cell
-                table.rows[0].cells[col].paragraphs[0].runs[0].bold = True
+                paragraph = table.rows[0].cells[col].paragraphs[0]
+                _tambah_inline(paragraph, cell)
+                for run in paragraph.runs:
+                    run.bold = True
             for row_data in rows:
                 cells = table.add_row().cells
                 for col in range(len(header_cells)):
-                    if col < len(row_data):
-                        cells[col].text = row_data[col]
-                    else:
-                        cells[col].text = ""
+                    paragraph = cells[col].paragraphs[0]
+                    _tambah_inline(paragraph, row_data[col] if col < len(row_data) else "")
             doc.add_paragraph()
             i = j
             continue

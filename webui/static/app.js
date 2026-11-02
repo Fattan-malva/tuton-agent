@@ -4,7 +4,7 @@
 
 const $ = (sel) => document.querySelector(sel);
 const view = $("#view");
-const state = { es: null, timer: null, routeId: 0, routeController: null, sesi: null };
+const state = { es: null, timer: null, routeId: 0, routeController: null, sesi: null, batchMessage: "" };
 const ICONS = {
   login: '<path d="M10 17l5-5-5-5M15 12H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/>',
   logout: '<path d="M14 17l5-5-5-5M19 12H9"/><path d="M12 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/>',
@@ -238,8 +238,12 @@ async function api(path, opts = {}) {
 
 const apiCache = new Map();
 
+// Daftar course dan sesi sengaja TIDAK di-cache di peramban. Sesi baru dibuka
+// dosen kapan saja, dan cache 5 menit di sini membuat pilihan sesi tidak
+// pernah bertambah walau halaman dimuat ulang. Cache singkat di server sudah
+// cukup untuk menghemat request saat pengguna berpindah-pindah pilihan.
 function apiCacheLifetime(path) {
-  if (path === "/api/courses" || path.startsWith("/api/courses/") || path === "/api/models") return 5 * 60 * 1000;
+  if (path === "/api/models") return 5 * 60 * 1000;
   if (path === "/api/moodle-status") return 60 * 1000;
   if (path === "/api/status" || path === "/api/agents") return 30 * 1000;
   return 0;
@@ -651,7 +655,8 @@ VIEWS.buat = async (routeId) => {
       <div class="row">
         <div class="col"><label class="field">Mata kuliah</label>
           <select id="sc-matkul"><option value="">— memuat —</option></select></div>
-        <div class="col"><label class="field">Sesi</label>
+        <div class="col"><label class="field">Sesi
+          <button type="button" class="btn sm ghost sesi-refresh" id="sc-sesi-refresh" title="Muat ulang daftar sesi dari Moodle">${icon("refresh")}</button></label>
           <select id="sc-sesi"></select></div>
         <div class="col"><label class="field" for="sc-jenis">Jenis soal</label>
           <select id="sc-jenis">
@@ -664,7 +669,6 @@ VIEWS.buat = async (routeId) => {
       sesi itu. Memilih Tugas atau Diskusi menyaring soalnya -- sesi campuran
       hanya menghasilkan jenis yang dipilih, dan namanya ikut menyebut jenis
       (mis. <span class="kbd">Basis_Data_64_Tugas.1.docx</span>).</div>
-      <label class="field"><input type="checkbox" id="sc-semua" style="width:auto;vertical-align:middle"> Proses semua mata kuliah (satu sesi)</label>
       <label class="field"><input type="checkbox" id="sc-tanpa-docx" style="width:auto;vertical-align:middle"> Tanpa buat DOCX (hanya .md)</label>
       <label class="field"><input type="checkbox" id="sc-tanpa-gambar" style="width:auto;vertical-align:middle"> Lewati transkripsi gambar</label>
       <div class="row">
@@ -734,6 +738,7 @@ VIEWS.buat = async (routeId) => {
     ? `<option value="">${esc(galatMatkul)}</option>`
     : '<option value="">— pilih —</option>';
   sel.innerHTML = optKosong +
+    `<option value="semua">Semua mata kuliah</option>` +
     courses.map((c) => `<option value="${esc(c.id)}">${esc(c.nama)}${c.kode ? " (" + esc(c.kode) + ")" : ""}</option>`).join("");
   const galatEl = $("#sc-msg");
   if (galatEl) galatEl.textContent = galatMatkul;
@@ -753,26 +758,55 @@ VIEWS.buat = async (routeId) => {
     });
   }
 
-  sel.addEventListener("change", async () => {
-    const changeRouteId = state.routeId;
+  // Muat sesi untuk mata kuliah yang dipilih. `paksa` dipakai tombol segarkan:
+  // ia melewati cache singkat di server supaya sesi baru yang baru dibuka
+  // dosen langsung muncul tanpa menunggu TTL habis.
+  let muatSesiKe = 0;
+  const muatSesi = async (paksa = false) => {
+    const putaran = ++muatSesiKe;
     const ses = $("#sc-sesi");
     const galat = $("#sc-msg");
     if (galat) galat.textContent = "";
+    if (!ses) return;
     if (!sel.value) { ses.innerHTML = ""; return; }
-    const list = await api(`/api/courses/${sel.value}/sessions`).catch((e) => e);
-    if (changeRouteId !== state.routeId || !ses.isConnected) return;
+    const semua = sel.value === "semua";
+    ses.disabled = true;
+    ses.innerHTML = `<option value="">${semua ? "menghitung sesi semua mata kuliah..." : "membaca sesi..."}</option>`;
+    const url = semua
+      ? `/api/sessions${paksa ? "?paksa=1" : ""}`
+      : `/api/courses/${sel.value}/sessions${paksa ? "?paksa=1" : ""}`;
+    const list = await api(url).catch((e) => e);
+    // Putaran yang lebih baru sudah berjalan: hasil lama dibuang supaya
+    // memilih mata kuliah berturut-turut cepat tidak saling menimpa.
+    if (putaran !== muatSesiKe || changeRouteIdSama(ses, routeId)) return;
+    ses.disabled = false;
     if (list instanceof Error) {
-      ses.innerHTML = "";
+      ses.innerHTML = '<option value="">gagal memuat sesi</option>';
       if (galat) galat.textContent = list.message;
       return;
     }
-    ses.innerHTML = (Array.isArray(list) ? list : [])
-      .map((s) => `<option value="${s.sesi}">Sesi ${s.sesi} (${s.jumlah} soal)</option>`).join("");
-  });
+    const arr = Array.isArray(list) ? list : [];
+    const adaSoal = arr.filter((s) => typeof s.jumlah === "undefined" || Number(s.jumlah) > 0);
+    if (!adaSoal.length) {
+      ses.innerHTML = '<option value="">tidak ada sesi dengan soal</option>';
+      return;
+    }
+    ses.innerHTML = adaSoal
+      .map((s) => `<option value="${s.sesi}">Sesi ${s.sesi}${typeof s.jumlah !== "undefined" ? " (" + s.jumlah + " soal)" : ""}</option>`)
+      .join("");
+  };
 
-  $("#sc-semua").addEventListener("change", (e) => {
-    $("#sc-matkul").disabled = e.target.checked;
-    $("#sc-sesi").disabled = e.target.checked;
+  function changeRouteIdSama(el, rid) {
+    return !el.isConnected || rid !== state.routeId;
+  }
+
+  sel.addEventListener("change", () => { muatSesi(); });
+  const tombolSesi = $("#sc-sesi-refresh");
+  if (tombolSesi) tombolSesi.addEventListener("click", async () => {
+    if (!sel.value) return;
+    tombolSesi.classList.add("spin");
+    await muatSesi(true);
+    tombolSesi.classList.remove("spin");
   });
 
   $("#mn-files").addEventListener("change", (e) => {
@@ -782,7 +816,7 @@ VIEWS.buat = async (routeId) => {
 
   $("#sc-submit").addEventListener("click", async () => {
     const submitRouteId = state.routeId;
-    const semua = $("#sc-semua").checked;
+    const semua = $("#sc-matkul").value === "semua";
     const body = {
       matkul_id: semua ? "semua" : $("#sc-matkul").value,
       sesi: parseInt($("#sc-sesi").value || "0", 10),
@@ -793,16 +827,28 @@ VIEWS.buat = async (routeId) => {
       model_mata: $("#sc-model-mata").value,
     };
     if (!semua && !body.matkul_id) { $("#sc-msg").textContent = "Pilih mata kuliah."; return; }
+    if (semua && !body.sesi) { $("#sc-msg").textContent = "Pilih sesi untuk semua mata kuliah."; return; }
+    // Tombol dikunci + diberi animasi selama antrean dibuat, supaya klik
+    // ganda tidak mendaftarkan dua job dan pengguna melihat progresnya.
+    const tombol = $("#sc-submit");
+    const pulih = tombolSibuk(tombol, "Mengantrekan job...");
+    if ($("#sc-msg")) $("#sc-msg").textContent = "";
     const r = await api("/api/jobs/scrape", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).catch((e) => ({ error: e.message }));
-    if (submitRouteId !== state.routeId) return;
-    if (r.error) { $("#sc-msg").textContent = r.error; return; }
+    if (r.error) { pulih(); $("#sc-msg").textContent = r.error; return; }
     const id = r.jobs[0];
-    location.hash = "#log:" + id;
-    if (r.jobs.length > 1)
-      setTimeout(() => alert(`${r.jobs.length} job diantrekan (semua mata kuliah).`), 200);
+    if (r.jobs.length > 1 || (r.skipped && r.skipped.length)) {
+      const total = r.jobs.length;
+      const dilewati = (r.skipped || []).map((item) => `${item.matkul}: ${item.alasan}`).join("; ");
+      state.batchMessage = `${total} job diantrekan.${dilewati ? ` Dilewati: ${dilewati}` : ""}`;
+    } else {
+      state.batchMessage = "";
+    }
+    // Tombol sengaja TIDAK dipulihkan: view langsung diganti ke Log Live,
+    // dan job-nya sudah tampil di sana.
+    if (submitRouteId === state.routeId) location.hash = "#log:" + id;
   });
 
   $("#mn-submit").addEventListener("click", async () => {
@@ -822,44 +868,105 @@ VIEWS.buat = async (routeId) => {
     fd.append("model", $("#mn-model").value);
     fd.append("model_mata", $("#mn-model-mata").value);
     for (const f of $("#mn-files").files) fd.append("file", f, f.name);
+    const tombol = $("#mn-submit");
+    const pulih = tombolSibuk(tombol, "Mengantrekan job...");
+    if ($("#mn-msg")) $("#mn-msg").textContent = "";
     const r = await api("/api/jobs/manual", { method: "POST", body: fd })
       .catch((e) => ({ error: e.message }));
-    if (submitRouteId !== state.routeId) return;
-    if (r.error) { $("#mn-msg").textContent = r.error; return; }
-    location.hash = "#log:" + r.jobs[0];
+    if (r.error) { pulih(); $("#mn-msg").textContent = r.error; return; }
+    if (submitRouteId === state.routeId) location.hash = "#log:" + r.jobs[0];
   });
 };
 
+// Kunci tombol dan tampilkan spinner di dalamnya sampai `pulih()` dipanggil.
+// Mengembalikan fungsi pemulih, jadi pemanggil bisa mengembalikan tombol ke
+// keadaan semula kalau pengiriman gagal.
+function tombolSibuk(tombol, teks = "Memproses...") {
+  if (!tombol) return () => {};
+  const label = tombol.querySelector("span");
+  const teksAsli = label ? label.textContent : "";
+  tombol.disabled = true;
+  tombol.classList.add("sibuk");
+  tombol.setAttribute("aria-busy", "true");
+  if (label) label.textContent = teks;
+  return () => {
+    if (!tombol.isConnected) return;
+    tombol.disabled = false;
+    tombol.classList.remove("sibuk");
+    tombol.removeAttribute("aria-busy");
+    if (label) label.textContent = teksAsli;
+  };
+}
+
+// Label pendek status job untuk daftar job di panel log.
+const STATUS_LABEL = {
+  queued: "antre", running: "berjalan", stopping: "menghentikan",
+  done: "selesai", error: "gagal", stopped: "dihentikan",
+};
+const STATUS_HIDUP = new Set(["queued", "running", "stopping"]);
+
+function jobItemMarkup(j) {
+  const status = STATUS_LABEL[j.status] || j.status || "?";
+  const judul = `${j.matkul || "manual"}${j.sesi ? ` · sesi ${j.sesi}` : ""}`;
+  const sub = [j.id, j.jenis, j.kind === "manual" ? "manual" : ""].filter(Boolean).join(" · ");
+  return `<button type="button" class="job-item${j.id === state.logJobId ? " active" : ""}"
+      data-job="${esc(j.id)}" data-status="${esc(j.status)}">
+    <span class="job-dot ${esc(j.status)}" aria-hidden="true"></span>
+    <span class="job-text">
+      <span class="job-title">${esc(judul)}</span>
+      <span class="job-sub">${esc(sub)}</span>
+    </span>
+    <span class="job-badge ${esc(j.status)}">${esc(status)}</span>
+  </button>`;
+}
+
 VIEWS.log = async (routeId) => {
-  let id = (location.hash.split(":")[1] || "").trim();
+  const id = (location.hash.split(":")[1] || "").trim();
   const jobs = await api("/api/jobs").catch(() => []);
   if (routeId !== state.routeId) return;
-  if (!id) id = jobs[0] ? jobs[0].id : "";
-  const selectedJob = jobs.find((job) => job.id === id);
-  const stoppable = selectedJob && ["queued", "running", "stopping"].includes(selectedJob.status);
-  setPills(id ? `<span class="badge blue">job ${esc(id)}</span>` : "");
+  // Job terbaru dibuka sendiri saat halaman dibuka tanpa `#log:<id>`; tidak
+  // perlu tombol "Tampilkan" lagi.
+  const dipilih = id || (jobs[0] ? jobs[0].id : "");
+  state.logJobId = dipilih;
+  const selectedJob = jobs.find((job) => job.id === dipilih);
+  const stoppable = selectedJob && STATUS_HIDUP.has(selectedJob.status);
+  setPills(dipilih ? `<span class="badge blue">job ${esc(dipilih)}</span>` : "");
+  const kosong = jobs.length === 0;
   view.innerHTML = `
-    <div class="row log-controls">
-      <div class="col log-select"><label class="field" for="log-sel">Job</label>
-        <select id="log-sel"><option value="">— pilih job —</option></select></div>
-      <div class="col log-action"><button class="btn" id="log-go">${icon("play")}<span>Tampilkan</span></button></div>
-    </div>
-    ${(stoppable || selectedJob) ? `<div class="log-stop-row">
-      ${stoppable ? `<button class="btn danger" id="log-stop">${icon("stop")}<span>Hentikan job</span></button>` : ""}
-      ${selectedJob ? `<button class="btn ghost" id="log-hapus" type="button">${icon("trash")}<span>Hapus job</span></button>` : ""}
-    </div>` : ""}
-    <div id="log-msg" class="err"></div>
-    <div class="console-bar">
-      <span id="console-spinner" class="spinner hidden"></span>
-      <span id="console-status" class="console-status">siap</span>
-      <span class="spacer"></span>
-      <span class="btns">
-        <button class="btn sm" id="log-copy" type="button">Salin</button>
-        <button class="btn sm" id="log-clear" type="button">Bersihkan</button>
-        <button class="btn sm" id="log-follow" type="button" aria-pressed="true">Gulir otomatis</button>
-      </span>
-    </div>
-    <div class="console" id="console"><span class="muted">Pilih job lalu tekan Tampilkan.</span></div>`;
+    <div class="log-layout">
+      <aside class="job-panel">
+        <div class="job-panel-head">
+          <strong>Daftar job</strong>
+          <span class="job-count">${jobs.length}</span>
+          <button class="btn sm ghost" id="log-refresh" type="button" title="Muat ulang daftar job">${icon("refresh")}</button>
+        </div>
+        <div class="job-list" id="job-list" role="listbox" aria-label="Daftar job">
+          ${kosong
+            ? `<div class="job-empty">Belum ada job. Jalankan dari menu Scrape atau Manual.</div>`
+            : jobs.map(jobItemMarkup).join("")}
+        </div>
+      </aside>
+      <section class="log-main">
+        <div class="log-actions">
+          ${stoppable ? `<button class="btn danger sm" id="log-stop">${icon("stop")}<span>Hentikan job</span></button>` : ""}
+          ${selectedJob ? `<button class="btn ghost sm" id="log-hapus" type="button">${icon("trash")}<span>Hapus job</span></button>` : ""}
+        </div>
+        <div id="log-msg" class="err">${esc(state.batchMessage || "")}</div>
+        <div class="console-bar">
+          <span id="console-spinner" class="spinner hidden"></span>
+          <span id="console-status" class="console-status">siap</span>
+          <span class="spacer"></span>
+          <span class="btns">
+            <button class="btn sm" id="log-copy" type="button">Salin</button>
+            <button class="btn sm" id="log-clear" type="button">Bersihkan</button>
+            <button class="btn sm" id="log-follow" type="button" aria-pressed="true">Gulir otomatis</button>
+          </span>
+        </div>
+        <div class="console" id="console">${dipilih
+          ? ""
+          : '<span class="muted">Belum ada job untuk ditampilkan.</span>'}</div>
+      </section>
+    </div>`;
 
   state.logFollow = state.logFollow !== false;
   const followBtn = $("#log-follow");
@@ -877,8 +984,8 @@ VIEWS.log = async (routeId) => {
     // Bersihkan juga sumber replay-nya (buffer memori + events.jsonl).
     // Kalau DOM saja yang dikosongkan, log lama muncul lagi lewat replay
     // saat halaman dimuat ulang.
-    if (id) {
-      api(`/api/jobs/${encodeURIComponent(id)}/clear-log`, { method: "POST" })
+    if (dipilih) {
+      api(`/api/jobs/${encodeURIComponent(dipilih)}/clear-log`, { method: "POST" })
         .catch(() => {});
     }
   });
@@ -889,21 +996,23 @@ VIEWS.log = async (routeId) => {
     catch (e) { /* clipboard ditolak */ }
   });
 
-  $("#log-sel").innerHTML = '<option value="">— pilih job —</option>' +
-    jobs.map((j) => `<option value="${esc(j.id)}">${esc(j.id)} · ${esc(j.matkul)} · ${esc(j.status)}</option>`).join("");
-  if (id) $("#log-sel").value = id;
-
-  $("#log-go").addEventListener("click", () => {
-    const v = $("#log-sel").value;
-    if (v) location.hash = "#log:" + v;
-    else attach(id);
+  // Klik satu baris daftar langsung menampilkan log job itu. Status di baris
+  // ikut diperbarui berkala (lihat `pantau` di bawah) tanpa memuat ulang
+  // halaman, jadi daftar tidak berkedip setiap kali ada job selesai.
+  $("#job-list").addEventListener("click", (event) => {
+    const tombol = event.target.closest("[data-job]");
+    if (!tombol) return;
+    const target = tombol.dataset.job;
+    if (target === state.logJobId) return;
+    location.hash = "#log:" + target;
   });
+  $("#log-refresh").addEventListener("click", () => route());
 
   const stopButton = $("#log-stop");
   if (stopButton) stopButton.addEventListener("click", async () => {
     stopButton.disabled = true;
     stopButton.querySelector("span").textContent = "Menghentikan...";
-    const result = await api(`/api/jobs/${encodeURIComponent(id)}/stop`, { method: "POST" })
+    const result = await api(`/api/jobs/${encodeURIComponent(dipilih)}/stop`, { method: "POST" })
       .catch((error) => ({ error: error.message }));
     if (routeId !== state.routeId || !stopButton.isConnected) return;
     if (result.error) {
@@ -917,14 +1026,14 @@ VIEWS.log = async (routeId) => {
   const hapusButton = $("#log-hapus");
   if (hapusButton) hapusButton.addEventListener("click", async () => {
     const ya = await konfirmasi({
-      judul: `Hapus job ${id}?`,
+      judul: `Hapus job ${dipilih}?`,
       pesan: "Job beserta folder kerja dan lognya dihapus permanen. Hasil DOCX di tab Result tidak ikut terhapus.",
       labelYa: "Hapus",
       labelTidak: "Batal",
       nada: "danger",
     });
     if (!ya || routeId !== state.routeId || !hapusButton.isConnected) return;
-    const r = await api(`/api/jobs/${encodeURIComponent(id)}/delete`, { method: "POST" })
+    const r = await api(`/api/jobs/${encodeURIComponent(dipilih)}/delete`, { method: "POST" })
       .catch((e) => ({ error: e.message }));
     if (routeId !== state.routeId) return;
     if (r && r.error) {
@@ -938,8 +1047,66 @@ VIEWS.log = async (routeId) => {
     else route();
   });
 
-  if (id) attach(id, routeId);
+  if (dipilih) {
+    // Job yang dibuka lewat klik bisa berada di luar area scroll daftar
+    // (mis. job lama di urutan bawah). Tanpa ini, penanda "aktif" tidak
+    // terlihat dan pengguna mengira tidak ada yang terpilih.
+    const aktif = $("#job-list")?.querySelector("[data-job].active");
+    if (aktif) aktif.scrollIntoView({ block: "nearest" });
+    attach(dipilih, routeId);
+    pantauDaftarJob(routeId);
+  }
 };
+
+// Segarkan daftar job tiap beberapa detik selama halaman ini terbuka.
+//
+// Hanya bagian yang berubah yang disentuh -- badge status dan penanda baris
+// aktif -- supaya log di sebelahnya tidak ikut ter-render ulang dan posisi
+// gulir pengguna tidak hilang. Job yang baru muncul ditambahkan di atas.
+let _pantauTimer = null;
+
+function pantauDaftarJob(routeId) {
+  if (_pantauTimer) clearTimeout(_pantauTimer);
+  const tick = async () => {
+    if (routeId !== state.routeId || !$("#job-list")) return;
+    const jobs = await api("/api/jobs").catch(() => null);
+    if (routeId !== state.routeId || !$("#job-list")) return;
+    if (jobs) {
+      const list = $("#job-list");
+      const ada = new Set(jobs.map((j) => j.id));
+      // Baris untuk job yang sudah dihapus dibuang, status yang lain diganti.
+      list.querySelectorAll("[data-job]").forEach((el) => {
+        const j = jobs.find((x) => x.id === el.dataset.job);
+        if (!j) { el.remove(); return; }
+        if (el.dataset.status === j.status) return;
+        el.dataset.status = j.status;
+        el.querySelector(".job-badge").textContent = STATUS_LABEL[j.status] || j.status;
+        el.querySelector(".job-badge").className = `job-badge ${j.status}`;
+        el.querySelector(".job-dot").className = `job-dot ${j.status}`;
+      });
+      const kosong = list.querySelector(".job-empty");
+      if (!jobs.length && !kosong) {
+        list.innerHTML = '<div class="job-empty">Belum ada job. Jalankan dari menu Scrape atau Manual.</div>';
+      } else if (jobs.length && kosong) {
+        kosong.remove();
+      }
+      const baru = jobs.filter((j) => !list.querySelector(`[data-job="${CSS.escape(j.id)}"]`));
+      if (baru.length) {
+        list.insertAdjacentHTML("afterbegin", baru.map(jobItemMarkup).join(""));
+      }
+      const hitung = document.querySelector(".job-count");
+      if (hitung) hitung.textContent = String(jobs.length);
+      if (!jobs.some((j) => j.id === state.logJobId) && ada.size) {
+        // Job yang sedang dibuka baru saja dihapus dari tempat lain: ikuti
+        // job terbaru daripada menampilkan panel kosong.
+        location.hash = jobs[0] ? "#log:" + jobs[0].id : "#log";
+        return;
+      }
+    }
+    _pantauTimer = setTimeout(tick, 4000);
+  };
+  _pantauTimer = setTimeout(tick, 4000);
+}
 
 async function attach(id, routeId = state.routeId) {
   if (routeId !== state.routeId) return;
@@ -958,7 +1125,8 @@ async function attach(id, routeId = state.routeId) {
 
   if (state.es) state.es.close();
   if (routeId !== state.routeId) return;
-  const es = new EventSource(`/api/jobs/${id}/stream`);
+  const after = evs.reduce((max, e) => Math.max(max, Number(e.seq) || 0), 0);
+  const es = new EventSource(`/api/jobs/${id}/stream?after=${after}`);
   state.es = es;
   consoleEl.classList.add("live");
   if (statusEl) { statusEl.textContent = "mengalir"; statusEl.className = "console-status running"; }
@@ -1256,9 +1424,38 @@ window.loadSessions = async function (cid, tr) {
       ${list.map((s) => `<span class="badge blue">Sesi ${s.sesi} — ${s.jumlah} soal</span>`).join("") || '<span class="muted">tidak ada</span>'}
     </div>`}
     <div class="section-title">Jadwal Diskusi &amp; Tugas</div>
-    <div class="card jadwal-card" id="jadwal-card"></div>`;
-  pasangJadwal(items, jadwal.error);
+    <div class="card jadwal-card" id="jadwal-card"></div>
+    <div class="section-title">Status Tugas &amp; Diskusi</div>
+    <div class="card aktivitas-card" id="aktivitas-card"></div>`;
+  pasangJadwal(items.filter((item) => item.tenggat), jadwal.error);
+  pasangAktivitas(items, jadwal.error);
 };
+
+function pasangAktivitas(items, galat) {
+  const card = $("#aktivitas-card");
+  if (!card) return;
+  if (galat) {
+    card.innerHTML = `<p class="muted">Status tidak bisa dimuat: ${esc(galat)}</p>`;
+    return;
+  }
+  if (!items.length) {
+    card.innerHTML = '<p class="muted">Belum ada Tugas/Diskusi di course ini.</p>';
+    return;
+  }
+  const status = (item) => {
+    if (item.status_pengumpulan === "submitted") return '<span class="badge green">sudah dikumpulkan</span>';
+    if (item.status_pengumpulan === "not_submitted") return '<span class="badge red">belum dikumpulkan</span>';
+    return '<span class="badge">tidak diketahui</span>';
+  };
+  const nilai = (item) => item.nilai == null ? '—' : esc(item.nilai);
+  card.innerHTML = `<div class="aktivitas-wrap"><table class="aktivitas-table">
+    <thead><tr><th>Aktivitas</th><th>Tenggat</th><th>Nilai</th><th>Status</th></tr></thead>
+    <tbody>${items.map((item) => `<tr>
+      <td><a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.nama)}</a><small>${esc(item.jenis)} ${esc(item.nomor)} · Sesi ${esc(item.sesi)}</small></td>
+      <td>${esc(item.tenggat || "—")}</td><td>${nilai(item)}</td><td>${status(item)}</td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
 
 // Kalender besar: tiap bar adalah rentang Diskusi/Tugas dari tanggal
 // dibuka sampai tenggatnya, memanjang melewati kolom hari.
@@ -1427,7 +1624,9 @@ VIEWS.settings = async (routeId) => {
             ? modelPickerMarkup(`set-${it.key}`, it.value, it.key)
             : `<input id="set-${esc(it.key)}" data-key="${esc(it.key)}" type="${it.rahasia ? "password" : "text"}"
                 value="${esc(it.rahasia ? "" : it.value)}"
-                placeholder="${it.rahasia ? (it.ada ? "biarkan kosong = tetap" : "isi baru") : ""}">`}
+                placeholder="${esc(it.key === "FALLBACK_MODELS"
+                  ? "model cadangan dipisah koma, dicoba bila model utama ditolak provider"
+                  : it.rahasia ? (it.ada ? "biarkan kosong = tetap" : "isi baru") : "")}">`}
         </div>`).join("")}
     </div>
     <button class="btn" id="set-save" style="margin-top:18px">Simpan</button>
