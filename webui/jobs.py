@@ -1,6 +1,6 @@
 """Manajer job: antre, jalankan Pipeline di thread, dan kumpulkan event.
 
-Satu job aktif dalam satu waktu supaya `opencode run` tidak membanjiri mesin.
+Satu job aktif dalam satu waktu supaya panggilan model tidak membanjiri mesin.
 Tiap event yang dikirim pipeline lewat `reporter` disimpan ke memori (untuk
 SSE) dan ke berkas `<job>/events.jsonl` (untuk replay saat halaman disegarkan).
 """
@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -69,20 +68,12 @@ class Job:
         self.error = ""
         self.hasil: dict = {}
         self.cancel_event = threading.Event()
-        self.session_ids: set[str] = set()
-        self.session_lock = threading.Lock()
         self.event_seq = 0
         self.dibuat = time.time()
         log_dir = config.work_dirs(slug, sesi)["log"]
         log_dir.mkdir(parents=True, exist_ok=True)
         self.event_file = log_dir / f"job-{id}.jsonl"
         self.reporter = self._buat_reporter()
-
-    def record_session(self, session_id: str) -> None:
-        if not session_id:
-            return
-        with self.session_lock:
-            self.session_ids.add(session_id)
 
     def _buat_reporter(self) -> "callable[[dict], None]":
         job = self
@@ -205,7 +196,7 @@ class JobManager:
             queued = jid in self._queue
             if queued:
                 self._queue.remove(jid)
-        job.reporter({"level": "warn", "stage": "stop", "msg": "Menghentikan job dan proses OpenCode..."})
+        job.reporter({"level": "warn", "stage": "stop", "msg": "Menghentikan job..."})
         if queued:
             self._finish_stopped(job)
         else:
@@ -242,35 +233,10 @@ class JobManager:
         return True, pesan
 
     def _finish_stopped(self, job: Job) -> None:
-        with job.session_lock:
-            session_ids = sorted(job.session_ids)
-        deleted = 0
-        failed = 0
-        executable = config.cari_opencode() if session_ids else None
-        for session_id in session_ids:
-            if executable is None:
-                failed += 1
-                continue
-            command = [str(executable), "session", "delete", "--standalone", session_id]
-            if executable.suffix.lower() in {".cmd", ".bat"}:
-                command = ["cmd", "/c", *command]
-            try:
-                result = subprocess.run(
-                    command, capture_output=True, text=True, timeout=15, check=False
-                )
-                if result.returncode == 0:
-                    deleted += 1
-                else:
-                    failed += 1
-            except (OSError, subprocess.SubprocessError):
-                failed += 1
-        if session_ids:
-            pesan = f"Proses berhenti; {deleted} sesi OpenCode dihapus."
-            if failed:
-                pesan += f" {failed} sesi gagal dihapus."
-        else:
-            pesan = "Proses job berhenti; tidak ada ID sesi OpenCode yang tercatat."
-        job.reporter({"level": "warn", "stage": "stop", "msg": pesan})
+        job.reporter({
+            "level": "warn", "stage": "stop",
+            "msg": "Proses job berhenti.",
+        })
         job.push_status("stopped")
         with job.cond:
             job.finished = True
@@ -280,21 +246,13 @@ class JobManager:
 
     @staticmethod
     def _model_utama(params: dict) -> str | None:
-        return (
-            params.get("model")
-            or config.env("PRIMARY_MODEL")
-            or config.PRIMARY_MODEL
-            or None
-        )
+        # Hanya pilihan eksplisit dari form. Default .env/runtime dibiarkan
+        # kosong supaya model per agent di runtime/runtime.json tetap berlaku.
+        return params.get("model") or None
 
     @staticmethod
     def _model_mata(params: dict) -> str | None:
-        return (
-            params.get("model_mata")
-            or config.env("VISION_MODEL")
-            or config.VISION_MODEL
-            or None
-        )
+        return params.get("model_mata") or None
 
     def _run(self, job: Job) -> None:
         if job.kind == "manual":
@@ -320,7 +278,6 @@ class JobManager:
                 reporter=job.reporter,
                 manual=manual,
                 cancel_event=job.cancel_event,
-                session_callback=job.record_session,
             )
             hasil = pipe.jalankan()
         else:
@@ -339,7 +296,6 @@ class JobManager:
                 tanpa_docx=bool(job.params.get("tanpa_docx", False)),
                 reporter=job.reporter,
                 cancel_event=job.cancel_event,
-                session_callback=job.record_session,
                 # Jenis yang dipilih di form run Moodle: "" (otomatis)
                 # berarti kerjakan seluruh soal sesi apa adanya.
                 jenis=job.params.get("jenis", ""),

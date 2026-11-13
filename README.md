@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="webui/static/icons/icons.png" width="150" alt="Logo joki-tuton" />
+  <img src="web/public/icon.png" width="150" alt="Logo joki-tuton" />
 
   <h1>tuton-agent</h1>
 
@@ -11,7 +11,7 @@
 
   <p>
     <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+" />
-    <img src="https://img.shields.io/badge/OpenCode-v2-111111" alt="OpenCode v2" />
+    <img src="https://img.shields.io/badge/API-OpenAI--compatible-111111" alt="API OpenAI-compatible" />
     <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Podman-282C34" alt="Windows | Linux | Podman" />
     <img src="https://img.shields.io/badge/Web_UI-Python_stdlib-2E7D32" alt="Web UI Python stdlib" />
   </p>
@@ -75,35 +75,33 @@ hanging indent).
 ## Persyaratan
 
 - Python 3.10+ (`py` launcher di Windows, atau `python`/`python3` langsung)
-- [OpenCode v2](https://opencode.ai) terinstal dan perintah `opencode` ada di
-  PATH — pipeline memanggil `opencode run` untuk semua tahap agent
+- Endpoint **OpenAI-compatible** (base URL, API key, dan daftar model) —
+  diatur dari menu **Provider** di UI, tidak perlu memasang CLI tambahan
 - Akun Moodle UT (`elearning.ut.ac.id`) dengan cookie login yang masih hidup
 - Paket Python: `pip install -r requirements.txt`
 
-## Instalasi OpenCode v2
+## Menyiapkan Provider
 
-1. Install dari situs resmi: `https://opencode.ai` atau jalankan:
+Runtime agent sekarang berjalan di dalam aplikasi (Python), memakai API
+`/chat/completions` yang kompatibel dengan OpenAI. Tidak ada `opencode run`
+maupun `opencode.json` yang dibaca.
 
-   ```powershell
-   npm install -g opencode-ai
-   ```
+1. Jalankan UI, buka menu **Provider**.
+2. Isi nama, base URL (mis. `https://9router.example/v1`), API key, lalu tekan
+   **Tes & ambil model** untuk mengambil daftar model dari `/v1/models`.
+3. Simpan. Di kartu **Model per agent**, pilih model untuk `scrapper`,
+   `research`, `worker`, dan `vision` (vision wajib model yang bisa membaca
+   gambar). Biarkan kosong untuk memakai `PRIMARY_MODEL`/`VISION_MODEL` dari
+   `.env`.
 
-2. Pastikan perintah `opencode` bisa dipanggil dari terminal mana pun:
+Provider, API key, model agent, dan server MCP disimpan di `runtime/runtime.json`
+(mode `0600`, masuk `.gitignore`). API key tidak pernah dikirim balik ke
+browser; saat mengubah provider, kosongkan kolom API key untuk mempertahankan
+nilai lama.
 
-   ```powershell
-   opencode --version
-   ```
-
-   Kalau tidak dikenali, tambahkan folder global npm ke `PATH`
-   (biasanya `%APPDATA%\npm`).
-
-3. Untuk menghemat cost model vision, pakai provider Ollama Cloud — jalankan
-   `/connect` di chat OpenCode CLI, pilih **Ollama Cloud**, lalu masukkan
-   API key-nya.
-
-   Pipeline memakai model utama untuk pemetaan/penjawaban/riset, dan model
-   penglihatan untuk transkripsi gambar soal (sesuaikan dengan yang tersedia).
-   Lihat `config.PRIMARY_MODEL` dan `config.VISION_MODEL` kalau perlu ganti.
+Model cadangan di `FALLBACK_MODELS` (dipisah koma, bentuk
+`provider/model`) dicoba otomatis kalau provider menolak model utama — kuota
+habis, model tidak tersedia, atau autentikasi gagal.
 
 ## Setup Project
 
@@ -192,10 +190,13 @@ Urutan menu sesuai tampilan aplikasi:
 
 | Menu             | Isi                                                                 |
 |------------------|---------------------------------------------------------------------|
-| **Dashboard**    | Status Moodle, versi OpenCode/Python/platform, ringkasan, **grafik nilai** |
+| **Dashboard**    | Status Moodle, jumlah provider/model, Python/platform, ringkasan, **grafik nilai** |
 | **Courses**      | Daftar mata kuliah — klik barisnya untuk chip sesi + kalender jadwal |
 | **Kerjakan Tugas** | Dari Moodle (pilih course, sesi, dan **jenis: Otomatis/Tugas/Diskusi**) atau **Input Manual** (teks soal + unggah berkas; output rapi per `output/<slug>/sesi-<N>/`) |
 | **Agent Worker** | Keempat agent (scrapper, research, vision, worker) beserta model yang dipakai |
+| **Provider**     | CRUD provider OpenAI-compatible, tes koneksi, ambil `/v1/models`, dan model per agent |
+| **MCP**          | Server MCP remote (streamable HTTP): URL, header, tes + daftar tool, pilih agent yang boleh memakainya |
+| **Skill**        | Unggah, sunting, dan hapus `SKILL.md` di `.opencode/skills/<nama>/` |
 | **Result**       | Daftar dokumen hasil dari disk `output/` — **klik untuk pratinjau**, unduh, hapus berkas, atau hapus seluruh mata kuliah |
 | **Log Live**     | Konsol log real-time per job (Server-Sent Events; bisa disegarkan karena event tersimpan di `<job>/events.jsonl`), bersihkan log atau **hapus job** |
 | **Pengaturan**   | Edit `.env`, termasuk cookie Moodle (cookie & password disensor) + **mode gelap** |
@@ -229,15 +230,13 @@ Urutan menu sesuai tampilan aplikasi:
 ### Ikon & Add to Home Screen
 
 <p align="center">
-  <img src="webui/static/icons/favicon-64.png" width="78" alt="favicon-64" />
+  <img src="web/public/icon.png" width="78" alt="icon.png" />
   &nbsp;&nbsp;&nbsp;
-  <img src="webui/static/icons/apple-touch-icon.png" width="78" alt="apple-touch-icon 180px" />
-  &nbsp;&nbsp;&nbsp;
-  <img src="webui/static/icons/icons.png" width="78" alt="icons.png 1254px" />
+  <img src="web/public/apple-touch-icon.png" width="78" alt="apple-touch-icon 180px" />
 </p>
-<p align="center"><sub><code>favicon-64.png</code> · <code>apple-touch-icon.png</code> (180×180) · <code>icons.png</code> (1254×1254)</sub></p>
+<p align="center"><sub><code>icon.png</code> · <code>apple-touch-icon.png</code> (180×180)</sub></p>
 
-- Ikon tab browser memakai `icons.png` apa adanya; iPhone memakai
+- Ikon tab browser memakai `icon.png` apa adanya; iPhone memakai
   `apple-touch-icon.png` saat ditambahkan ke layar utama.
 - `apple-touch-icon` sengaja dibuat **penuh dan opaque** (tanpa kanal alpha,
   area transparan sudah dipotong ke bidang solid berwarna sama dengan latar
@@ -319,8 +318,15 @@ Log tiap tahap ada di `_kerja/.../_log/`. Kalau satu course gagal di mode
 | `reader.py`         | Proxy lokal untuk agent (semua URL Moodle→127.0.0.1) |
 | `attachments.py`    | Unduh lampiran, render PDF→gambar, kumpulkan gambar soal |
 | `tools/docx.py`     | Renderer DOCX: equation Word, daftar pustaka, template |
-| `webui/server.py`   | Server HTTP + API (login, nilai, jadwal, job, SSE) |
-| `webui/static/`     | UI statis: `index.html`, `app.js`, `app.css`, `icons/` |
+| `webui/server.py`   | Server HTTP + API (login, nilai, jadwal, job, SSE, provider/MCP/skill) |
+| `webui/static/`     | Hasil build UI; di image Docker diisi dari `web/out/` |
+| `web/`              | Sumber UI Next.js (static export ke `web/out/`) |
+| `runtime/runtime.json` | Provider, API key, model agent, server MCP (dibuat dari menu, mode 0600) |
+| `agent_runner.py`   | Runtime agent in-process: prompt spec + tool loop |
+| `openai_client.py`  | Klien `/chat/completions` (streaming, tool call, klasifikasi galat) |
+| `agent_tools.py`    | Tool lokal: read/write/edit/glob/grep/webfetch/skill |
+| `mcp_client.py`     | Klien MCP remote (streamable HTTP) |
+| `runtime_config.py` | Baca/tulis `runtime/runtime.json` dan resolusi `provider/model` |
 | `.opencode/agents/` | Spec agent: scrapper, worker, research, vision    |
 | `Dockerfile` + `docker-compose.yml` + `.restart.sh` | Build image dan redeploy container |
 | `runner.bat`        | Shortcut Windows                                  |

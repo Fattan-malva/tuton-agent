@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 from datetime import date
 from pathlib import Path
 
@@ -128,8 +127,10 @@ SESSION_TIMEOUT_SECONDS = 21600
 
 # ---------------------------------------------------------------- model
 
-PRIMARY_MODEL = env("PRIMARY_MODEL", "opencode/big-pickle")
-VISION_MODEL = env("VISION_MODEL", "ollama-cloud/gemma4:31b")
+# Nilai awal saja; sumber utama adalah `runtime/runtime.json` (menu Provider).
+# Dikosongkan berarti wajib diisi lewat menu tersebut.
+PRIMARY_MODEL = env("PRIMARY_MODEL", "")
+VISION_MODEL = env("VISION_MODEL", "")
 
 
 # ---------------------------------------------------------------- web app
@@ -236,23 +237,10 @@ TIMEOUT_AGENT_DETIK = 900
 
 # ------------------------------------------------------- model cadangan
 
-# Model yang dipakai bila model utama ditolak provider: kuota habis
-# (`provider.free-limit`, `provider.quota`), model tidak diizinkan, atau
-# sambungannya gagal. Daftar dipisah koma dan dicoba berurutan.
-#
-# Alasannya konkret: satu sesi "Aljabar Linear Elementer 95 sesi 8" gagal
-# total karena `ollama-cloud/gpt-oss:120b` menjawab 429 "Free usage limit
-# reached" untuk SETIAP panggilan. Pipeline hanya mencoba ulang model yang
-# sama dua kali, lalu berhenti tanpa peta soal -- padahal transkripsi bahan
-# ajarnya sudah selesai, dan model lain di mesin yang sama masih melayani.
-# Mengulang provider yang sedang menolak itu pekerjaan sia-sia; berpindah
-# model adalah satu-satunya jalan yang tersisa.
-_CADANGAN_BAWAAN = (
-    "ollama-cloud/gpt-oss:120b,"
-    "ollama-cloud/nemotron-3-super,"
-    "ollama-cloud/gpt-oss:20b,"
-    "9router/grok"
-)
+# Model yang dipakai bila model utama ditolak provider: kuota habis,
+# model tidak diizinkan, atau sambungannya gagal. Daftar dipisah koma dan
+# dicoba berurutan, memakai bentuk `provider/model`.
+_CADANGAN_BAWAAN = ""
 FALLBACK_MODELS = [
     m.strip() for m in env("FALLBACK_MODELS", _CADANGAN_BAWAAN).split(",") if m.strip()
 ]
@@ -274,96 +262,6 @@ TIMEOUT_AGENT_TOTAL_DETIK = 2700
 # pendek. Angka ini di bawah ukuran peta soal yang wajar (puluhan ribu byte)
 # tapi di atas kerangka berisi judul saja (ratusan byte).
 MIN_ISI_HASIL = 800
-
-
-# ------------------------------------------------------- cari executable opencode
-
-# Windows hanya menempelkan ekstensi `.exe` saat `CreateProcess` mencari
-# program di PATH. `shutil.which("opencode")` di mesin ini mengembalikan
-# `...\npm\opencode.CMD` -- shim yang dibuat `npm install`, bukan programnya.
-# Memanggil shim itu tanpa shell berakhir dengan FileNotFoundError yang
-# menyesatkan, karena opencode sebenarnya terpasang.
-#
-# Jadi shim dibaca dulu: npm menuliskan path `.exe` asli di dalamnya, dan
-# path itu yang dipakai sebagai perintah. Kalau shim tidak bisa dibaca,
-# lokasi standar paket npm diperiksa, dan terakhir barulah shim dipakai
-# lewat `cmd /c`.
-_RE_EXE_DALAM_SHIM = re.compile(r'"%dp0%\\([^"]+\.exe)"', re.I)
-
-# Shim npm cuma beberapa KB, tapi `opencode` yang ditemukan `shutil.which`
-# di Linux/macOS adalah binary asli atau symlink ke binary (± 200 MB di
-# mesin ini). Regex di atas tetap tidak akan cocok di dalam binary, jadi
-# membaca seluruhnya hanya membuang waktu: tanpa batas ini satu panggilan
-# `cari_opencode()` butuh 4-21 detik, cukup untuk membuat halaman UI dan
-# tiap langkah agent terasa macet.
-_BATAS_SHIM_BESAR = 1_048_576  # 1 MB
-
-
-def _executable_dari_shim(shim: Path) -> Path | None:
-    """Ambil path `.exe` asli yang ditunjuk shim npm."""
-    try:
-        if shim.stat().st_size > _BATAS_SHIM_BESAR:
-            return None
-        isi = shim.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    for cocok in _RE_EXE_DALAM_SHIM.findall(isi):
-        kandidat = shim.parent / cocok
-        if kandidat.is_file():
-            return kandidat
-    return None
-
-
-def _executable_dari_paket(shim: Path) -> Path | None:
-    """Cari `.exe` di lokasi paket yang biasa dipakai `npm install -g`."""
-    akar = shim.parent
-    for relatif in (
-        Path("node_modules") / "@opencode" / "cli" / "bin" / "opencode.exe",
-        Path("node_modules") / "opencode-ai" / "bin" / "opencode.exe",
-    ):
-        kandidat = akar / relatif
-        if kandidat.is_file():
-            return kandidat
-    for kandidat in sorted(akar.glob("opencode*.exe")):
-        if kandidat.is_file():
-            return kandidat
-    return None
-
-
-# Hasil sukses `cari_opencode()`; `None` berarti belum pernah dicari.
-_CACHE_OPENCODE: Path | None = None
-
-
-def cari_opencode() -> Path | None:
-    """Path executable opencode yang benar-benar bisa dijalankan.
-
-    Mengembalikan `None` kalau opencode tidak terpasang sama sekali. Shim
-    `.cmd`/`.bat` yang tidak bisa dipetakan ke `.exe` tetap dikembalikan;
-    pemanggil yang harus menjalankannya lewat `cmd /c`.
-
-    Hasil sukses disimpan di memori (`_CACHE_OPENCODE`): pipeline memanggil
-    fungsi ini tiap langkah agent dan UI tiap memuat status/model, jadi
-    pencarian diulang-ulang cuma memperlambat. Pencarian GAGAL tidak
-    disimpan supaya opencode yang baru dipasang langsung ketahuan tanpa
-    perlu restart proses.
-    """
-    global _CACHE_OPENCODE
-    if _CACHE_OPENCODE is not None:
-        return _CACHE_OPENCODE
-    ditemukan = shutil.which("opencode")
-    if not ditemukan:
-        return None
-    shim = Path(ditemukan)
-    if shim.suffix.lower() in (".exe", ".com"):
-        _CACHE_OPENCODE = shim
-        return shim
-    for pemeta in (_executable_dari_shim, _executable_dari_paket):
-        asli = pemeta(shim)
-        if asli is not None:
-            _CACHE_OPENCODE = asli
-            return asli
-    _CACHE_OPENCODE = shim
-    return shim
 
 
 # ---------------------------------------------------------------- agent

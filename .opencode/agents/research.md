@@ -9,9 +9,6 @@ description: >-
   terakhir, siap ditempel. Tidak menjawab soal, tidak menulis penjelasan.
 mode: primary
 permissions:
-  - action: websearch
-    resource: "*"
-    effect: allow
   - action: webfetch
     resource: "*"
     effect: allow
@@ -71,8 +68,7 @@ prioritasnya:
 |---|---|
 | Jumlah referensi yang kamu tulis | **maksimal {MAX}** |
 | Tahun terbit referensi yang kamu cari sendiri | **{TAHUN_MIN} atau sesudahnya** |
-| Panggilan `websearch` | **maksimal 1** |
-| Panggilan `webfetch` | **maksimal 2** |
+| Panggilan `webfetch` | **maksimal 2** (Crossref, lalu Open Library bila perlu) |
 
 Jumlah di baris pertama tidak termasuk bahan ajar, karena entri itu dibentuk
 pipeline dan ditambahkan di luar hitunganmu.
@@ -97,13 +93,10 @@ jangan pernah menulis `{MAX}` atau `{TAHUN_MIN}` apa adanya.
 1. Baca `## Bahan ajar wajib sesi ini` dan `## Ringkasan soal` di prompt. Bagian
    bahan ajar memberi tahu topik yang harus dicari pelengungnya; bagian itu
    **tidak perlu kamu tulis ulang** ke daftar.
-2. Susun **satu** query `websearch` dari topik utama soal untuk mencari pelengkap
-   yang terbit {TAHUN_MIN} atau sesudahnya. Satu query yang tepat mengalahkan
-   lima query yang dangkal.
-3. Dari hasil pencarian, ambil 1-3 kandidat yang paling mungkin benar: buku teks
-   mapan, artikel jurnal peer-reviewed, standar resmi, atau jurnal open access.
-   Buang kandidat yang terbit sebelum {TAHUN_MIN}.
-4. **Satu** panggilan `webfetch` ke Crossref dengan semua kandidat sekaligus.
+2. Susun **satu** query bibliografis dari topik utama soal: buku teks mapan,
+   artikel jurnal peer-reviewed, standar resmi, atau jurnal open access. Satu
+   query yang tepat mengalahkan lima query yang dangkal.
+3. **Satu** panggilan `webfetch` ke Crossref dengan query itu.
 
    Contoh nyata kalau batasnya 5 dan topiknya logika proposisional:
 
@@ -113,13 +106,12 @@ jangan pernah menulis `{MAX}` atau `{TAHUN_MIN}` apa adanya.
 
    Pakai `rows=5` (sesuai batasmu) dalam **satu** panggilan, bukan sekali per
    kandidat. Respons Crossref sudah memuat nama penulis, tahun, judul, penerbit,
-   dan DOI -- jadi respons itu sendiri adalah verifikasinya. Tidak perlu
-   `webfetch` tambahan untuk setiap referensi.
-5. Pilih dari respons itu maksimal {MAX} entri paling relevan, semua dari
+   dan DOI -- jadi respons itu sendiri adalah verifikasinya.
+4. Pilih dari respons itu maksimal {MAX} entri paling relevan, semua dari
    {TAHUN_MIN} atau sesudahnya. Hanya entri yang benar-benar ada di respons
-   tersebut yang boleh dipakai.
+   tersebut yang boleh dipakai. Buang kandidat yang terbit sebelum {TAHUN_MIN}.
 
-Kalau langkah 4 tidak mengembalikan apa yang relevan, pakai panggilan `webfetch`
+Kalau langkah 3 tidak mengembalikan apa yang relevan, pakai panggilan `webfetch`
 kedua ke Open Library untuk buku:
 
 ```

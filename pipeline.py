@@ -19,24 +19,22 @@ karena `worker` harus menyalinnya apa adanya, bukan mencari sendiri.
 from __future__ import annotations
 
 import importlib.util
-import json
-import queue
 import re
-import signal
 import shutil
-import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import agent_runner
 import attachments
 import config
 import courses
 import html2md
 import moodle
 import reader as reader_mod
+import runtime_config
 from courses import Aktivitas, MataKuliah, Sesi
 
 
@@ -87,56 +85,6 @@ class HasilAgent:
 # sebelum memanggil agent, supaya tahap berikutnya tidak membuang 8-15 detik
 # (dan satu putaran percobaan ulang) untuk provider yang jelas sedang habis.
 _MODEL_DITOLAK: set[str] = set()
-
-# Galat penyedia yang berarti "model ini tidak bisa dipakai sekarang", bukan
-# "pekerjaannya gagal". Pola dicocokkan ke JSON galat opencode apa adanya;
-# teks pesannya berbeda-beda antar provider, jadi yang diambil adalah intinya.
-_GALAT_PROVIDER_RE = re.compile(
-    r'"(?:provider\.(?:free-limit|quota|no-route|auth)|FreeUsageLimitError|'
-    r'Insufficient Balance|[^"]*(?:usage limit|usage credits|insufficient (?:balance|credit)|'
-    r'model (?:is )?not (?:found|available|included)|unavailable|unauthorized)[^"]*)',
-    re.IGNORECASE,
-)
-
-
-def _galat_provider(keluaran: str) -> str:
-    """Ambil pesan galat penyedia model dari keluaran JSONL opencode.
-
-    opencode menulis galat sebagai baris JSONL `{"type":"error", ...}` dan
-    tetap keluar dengan kode 0. Tanpa dibaca di sini, kegagalan kuota terlihat
-    sama seperti model yang berhenti di tengah jalan, dan pipeline mengulang
-    model yang sama sampai percobaannya habis.
-    """
-    for b in keluaran.splitlines():
-        b = b.strip()
-        if not b.startswith('{"type":"error"'):
-            continue
-        try:
-            data = json.loads(b)
-        except ValueError:
-            if _GALAT_PROVIDER_RE.search(b):
-                return b[:180]
-            continue
-        galat = data.get("error")
-        if not isinstance(galat, dict):
-            continue
-        jenis = str(galat.get("type") or "")
-        pesan = str(galat.get("message") or "")
-        if jenis.startswith("provider.") or _GALAT_PROVIDER_RE.search(jenis + " " + pesan):
-            return (pesan or jenis)[:180]
-    return ""
-
-
-def _waktu_tunggu_galat(keluaran: str) -> int:
-    """`retryAfterMs` dari galat terakhir, dalam detik. 0 kalau tidak ada."""
-    for b in reversed(keluaran.splitlines()):
-        if "retryAfterMs" not in b:
-            continue
-        m = re.search(r'"retryAfterMs"\s*:\s*(\d+)', b)
-        if m:
-            return max(0, int(m.group(1)) // 1000)
-    return 0
-
 
 def _urutkan_model(utama: str, cadangan: list[str]) -> list[str]:
     """Model yang akan dicoba, berurutan, tanpa duplikat, tanpa yang ditolak."""
@@ -260,137 +208,6 @@ def _ringkas_singkat(nilai: object) -> str:
     return Path(teks).name or Path(teks).parent.name
 
 
-def _alir(event: dict) -> None:
-    """Cetak satu baris ringkas soal apa yang sedang dikerjakan agent.
-
-    Agent `worker` satu sesi bisa berjalan beberapa menit tanpa mengetik
-    apa pun ke terminal. Tanpa baris seperti ini, tidak ada cara membedakan
-    "masih bekerja" dari "macet". Yang ditampilkan bukan isi jawaban --
-    teksnya sendiri sudah masuk ke berkas hasil dan nanti masuk dokumen --
-    tapi jenis pekerjaannya: langkah ke berapa, tool apa yang dipanggil, dan
-    token yang terpakai.
-
-    Setiap baris disaring `_saring_token` lebih dulu. Model kadang menulis
-    ulang URL yang baru saja dia buka, dan URL Reader memuat kunci akses
-    (`?u=...&k=...`) yang masih hidup selama pipeline berjalan.
-    """
-    if not _ALIRAN_KELUARAN:
-        return
-
-    jenis = event.get("type")
-    part = event.get("part")
-    if not isinstance(part, dict):
-        return
-
-    if jenis == "text":
-        teks = part.get("text") or ""
-        baris = (teks.strip().splitlines() or [""])[0].strip()
-        if not baris:
-            return
-        print(f"      . {_saring_token(baris)[:_BARIS_MAKS]}", file=sys.stderr, flush=True)
-
-    elif jenis == "tool_use":
-        alat = part.get("tool") or "?"
-        keadaan = part.get("state") or {}
-        status = ""
-        if isinstance(keadaan, dict):
-            status = str(keadaan.get("status") or "")
-            muatan = keadaan.get("input") or {}
-            if isinstance(muatan, dict):
-                ringkas = (
-                    muatan.get("filePath")
-                    or muatan.get("path")
-                    or muatan.get("pattern")
-                    or muatan.get("url")
-                )
-                if ringkas:
-                    status = f"{status} {_ringkas_singkat(ringkas)}"
-        print(f"      > {alat} {status}".rstrip(), file=sys.stderr, flush=True)
-
-    elif jenis == "step_finish":
-        usage = part.get("tokens") or {}
-        if isinstance(usage, dict):
-            masuk = usage.get("input") or 0
-            keluar = usage.get("output") or 0
-            print(
-                f"      = langkah selesai ({masuk} in / {keluar} out token)",
-                file=sys.stderr, flush=True,
-            )
-
-
-def _event_dari_json(data: dict, nama: str) -> dict:
-    """Ubah satu event JSONL opencode jadi kamus peristiwa untuk UI.
-
-    Dipakai oleh `panggil_agent` bila ada `reporter`. Hasilnya setara dengan
-    apa yang `._alir` cetak ke terminal, tapi berstruktur supaya klien bisa
-    mewarnai baris dan menampilkan token per langkah.
-    """
-    jenis = data.get("type")
-    part = data.get("part")
-    if not isinstance(part, dict):
-        return {}
-    if jenis == "text":
-        teks = (part.get("text") or "").strip().splitlines() or [""]
-        baris = teks[0].strip()
-        if not baris:
-            return {}
-        return {"level": "text", "agent": nama, "msg": _saring_token(baris)[:_BARIS_MAKS]}
-    if jenis == "tool_use":
-        alat = part.get("tool") or "?"
-        keadaan = part.get("state") or {}
-        status = ""
-        if isinstance(keadaan, dict):
-            status = str(keadaan.get("status") or "")
-            muatan = keadaan.get("input") or {}
-            if isinstance(muatan, dict):
-                ringkas = (
-                    muatan.get("filePath")
-                    or muatan.get("path")
-                    or muatan.get("pattern")
-                    or muatan.get("url")
-                )
-                if ringkas:
-                    status = f"{status} {_ringkas_singkat(ringkas)}"
-        return {"level": "tool", "agent": nama, "msg": f"{alat} {status}".rstrip()}
-    if jenis == "step_finish":
-        usage = part.get("tokens") or {}
-        masuk = keluar = 0
-        if isinstance(usage, dict):
-            masuk = usage.get("input") or 0
-            keluar = usage.get("output") or 0
-        return {
-            "level": "step", "agent": nama,
-            "msg": f"langkah selesai ({masuk} in / {keluar} out token)",
-        }
-    return {}
-
-
-def _hentikan_pohon_proses(proses: subprocess.Popen) -> None:
-    if proses.poll() is not None:
-        return
-    if sys.platform == "win32":
-        try:
-            proses.send_signal(signal.CTRL_BREAK_EVENT)
-            proses.wait(timeout=0.5)
-        except (OSError, subprocess.SubprocessError):
-            pass
-    if proses.poll() is None and sys.platform == "win32":
-        try:
-            subprocess.run(
-                ["taskkill", "/PID", str(proses.pid), "/T", "/F"],
-                capture_output=True, text=True, timeout=2, check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            pass
-    elif proses.poll() is None:
-        proses.terminate()
-    try:
-        proses.wait(timeout=1)
-    except subprocess.TimeoutExpired:
-        proses.kill()
-        proses.wait()
-
-
 def panggil_agent(
     *,
     nama: str,
@@ -403,208 +220,64 @@ def panggil_agent(
     reporter: "callable[[dict], None] | None" = None,
     stage: str = "",
     cancel_event: threading.Event | None = None,
-    session_callback: "callable[[str], None] | None" = None,
 ) -> HasilAgent:
-    """Jalankan satu agent lewat `opencode run` dan kumpulkan keluarannya.
-
-    `--auto` sengaja tidak dipakai. Flag itu menyetujui setiap permintaan
-    izin tanpa batas, termasuk yang tidak diizinkan spec agent. Semua
-    agent di `.opencode/agents/` sudah mendeklarasikan izin yang mereka
-    perlukan dengan `effect: allow`, jadi tidak ada permintaan izin yang
-    perlu dijawab otomatis.
-
-    `--standalone` dipakai supaya proses tidak bergantung pada service
-    latar yang mungkin tidak berjalan saat pipeline dipanggil.
-    """
-    executable = config.cari_opencode()
-    if executable is None:
-        raise PipelineGagal(
-            "opencode tidak ditemukan di PATH. Pasang opencode "
-            "(npm install -g opencode-ai) lalu jalankan ulang."
-        )
-
-    perintah = [
-        str(executable), "run",
-        "--standalone",
-        "--agent", nama,
-        "--model", model,
-        "--format", "json",
-    ]
-    for b in berkas or []:
-        perintah += ["--file", str(b)]
-
-    # Prompt dikirim lewat stdin, bukan sebagai argumen.
-    #
-    # Argumen `message` di `opencode run` bersifat opsional dan dibaca dari
-    # stdin kalau tidak diberikan. Prompt pipeline berisi baris baru, `&`,
-    # `|`, `>`, kutip, dan `\frac{a}{b}`. Semua itu akan diurai ulang oleh
-    # ParseCommandLine Windows dan, kalau executable-nya shim `.cmd`, sekali
-    # lagi oleh cmd.exe. Pengujian menunjukkan prompt sampai dalam keadaan
-    # terpotong atau ditafsirkan sebagai operator. stdin tidak melewati
-    # parse argumen sama sekali, jadi bentuk teks apa pun aman.
-
+    """Jalankan satu agent lewat runner in-process (OpenAI-compatible)."""
     batas = waktu_maks or config.TIMEOUT_AGENT_DETIK
     mulai = time.monotonic()
     if cancel_event and cancel_event.is_set():
         raise PipelineDibatalkan("Job dihentikan pengguna.")
 
-    # stdout dibaca sambil mengalir, bukan dikumpulkan diam-diam.
-    #
-    # `--format json` menulis JSONL satu baris per event, dan event itu muncul
-    # saat kejadiannya terjadi, bukan setelah model selesai. Membacanya langsung
-    # dari pipa membuat proses agent terlihat di terminal. `subprocess.run`
-    # dengan `capture_output` Instead menunggu sampai proses selesai, jadi tidak
-    # ada yang bisa ditampilkan selama beberapa menit itu.
-    #
-    # stderr dikumpulkan lewat thread supaya tidak menumpuk di pipa dan
-    # memblokir opencode ketika isinya banyak.
+    def lapor(level: str, pesan: str) -> None:
+        baris = _saring_token(pesan)[:_BARIS_MAKS]
+        if not diam and _ALIRAN_KELUARAN:
+            awalan = {"text": "      . ", "tool": "      > ", "step": "      = "}
+            print(f"{awalan.get(level, '      ! ')}{baris}", file=sys.stderr, flush=True)
+        if reporter is not None:
+            event = {"level": level, "agent": nama, "msg": baris}
+            if stage:
+                event["stage"] = stage
+            reporter(event)
+
     try:
-        proses = subprocess.Popen(  # noqa: S603
-            perintah,
-            cwd=str(cwd) if cwd else None,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
-            start_new_session=sys.platform != "win32",
+        hasil = agent_runner.jalankan(
+            nama=nama,
+            prompt=prompt,
+            model=model,
+            berkas=berkas,
+            cwd=cwd,
+            batas=batas,
+            cancel_event=cancel_event,
+            lapor=lapor,
         )
-    except FileNotFoundError as exc:
-        raise PipelineGagal(
-            f"Executable `{executable}` tidak bisa dijalankan. "
-            "Kalau ini shim npm, pastikan paket opencode terpasang penuh."
-        ) from exc
-    except OSError as exc:
-        raise PipelineGagal(f"Gagal menjalankan opencode: {exc}") from exc
+    except agent_runner.Dibatalkan as exc:
+        raise PipelineDibatalkan(str(exc)) from exc
 
-    kumpulan_stderr: list[str] = []
-
-    def kumpulkan_stderr() -> None:
-        if proses.stderr is not None:
-            kumpulan_stderr.append(proses.stderr.read())
-
-    benang = threading.Thread(target=kumpulkan_stderr, name="jkt-stderr", daemon=True)
-    benang.start()
-
-    baris_antre: queue.Queue[str | None] = queue.Queue()
-
-    def baca_stdout() -> None:
-        if proses.stdout is None:
-            baris_antre.put(None)
-            return
-        try:
-            for b in proses.stdout:
-                baris_antre.put(b)
-        finally:
-            baris_antre.put(None)
-
-    benang_stdout = threading.Thread(target=baca_stdout, name="jkt-stdout", daemon=True)
-    benang_stdout.start()
-
-    if proses.stdin is not None:
-        try:
-            proses.stdin.write(prompt)
-            proses.stdin.close()
-        except (BrokenPipeError, OSError):
-            # opencode menolak prompt (mis. model tidak tersedia). Prosesnya
-            # tetap dibaca sampai habis supaya stderr-nya jelas.
-            pass
-
-    potongan: list[str] = []
-    while True:
-        if cancel_event and cancel_event.is_set():
-            _hentikan_pohon_proses(proses)
-            benang.join(timeout=1)
-            benang_stdout.join(timeout=1)
-            raise PipelineDibatalkan("Job dihentikan pengguna.")
-        sisa = batas - (time.monotonic() - mulai)
-        if sisa <= 0:
-            _hentikan_pohon_proses(proses)
-            return HasilAgent(
-                perintah=perintah,
-                selesai=False,
-                stdout=_teks_dari_json("".join(potongan)),
-                stderr="".join(kumpulan_stderr)
-                + f"\nMelewati batas waktu {batas} detik.",
-                durasi=time.monotonic() - mulai,
-                kode=-1,
-            )
-        try:
-            b = baris_antre.get(timeout=min(sisa, 0.25 if cancel_event else 1.0))
-        except queue.Empty:
-            continue
-        if b is None:
-            break
-        potongan.append(b)
-        if diam:
-            continue
-        b = b.strip()
-        if b.startswith("{"):
-            try:
-                data = json.loads(b)
-                if session_callback:
-                    part_data = data.get("part")
-                    session_id = (
-                        data.get("sessionID") or data.get("sessionId")
-                        or data.get("session_id")
-                    )
-                    if isinstance(part_data, dict):
-                        session_id = session_id or part_data.get("sessionID") or part_data.get("sessionId")
-                    if session_id:
-                        session_callback(str(session_id))
-                _alir(data)
-                # Saluran sampingan untuk UI: event yang sama persis yang
-                # dicetak ke terminal dikirim ke `reporter` (bila ada). CLI
-                # tidak memakai ini, jadi tampilannya tidak berubah.
-                if reporter is not None:
-                    ev = _event_dari_json(data, nama)
-                    if ev:
-                        ev["stage"] = stage
-                        reporter(ev)
-            except ValueError:
-                pass
-
-    proses.wait()
-    benang.join(timeout=5)
-    durasi = time.monotonic() - mulai
-    keluaran = "".join(potongan)
-
-    # `--format json` mengeluarkan JSONL per langkah. Yang dibutuhkan pipeline
-    # adalah teks jawabannya, jadi JSON-nya dibongkar lebih dulu. Kalau tidak
-    # ada yang cocok, keluaran mentah tetap dipakai supaya log tetap berguna.
-    teks = _teks_dari_json(keluaran) or keluaran
-
-    # `SELESAI` adalah penanda yang diminta tiap spec agent. Tanpa
-    # penandanya, keluaran yang ada belum tentu utuh dan tidak boleh dipakai.
-    selesai = "SELESAI" in teks.upper()
-
-    galat = _galat_provider(keluaran)
-    if galat:
-        _MODEL_DITOLAK.add(model)
-        print(
-            f"      ! model {model} menolak permintaan: {galat}",
-            file=sys.stderr, flush=True,
-        )
-        tunggu = _waktu_tunggu_galat(keluaran)
-        if tunggu:
+    teks = hasil.teks
+    selesai = bool(teks) and "SELESAI" in teks.upper()
+    galat = ""
+    stderr = ""
+    if hasil.galat:
+        stderr = hasil.galat
+        if hasil.ditolak:
+            galat = hasil.galat
+            _MODEL_DITOLAK.add(model)
             print(
-                f"        kuota pulih sekitar {tunggu // 60} menit lagi; "
-                "pipeline memakai model cadangan",
+                f"      ! model {model} menolak permintaan: {galat}",
                 file=sys.stderr, flush=True,
             )
+    elif hasil.batas_waktu:
+        stderr = hasil.galat
 
     return HasilAgent(
-        perintah=perintah,
-        selesai=selesai,
+        perintah=hasil.perintah,
+        selesai=selesai and not hasil.galat,
         stdout=teks,
-        stderr="".join(kumpulan_stderr),
-        durasi=durasi,
-        kode=proses.returncode,
+        stderr=stderr,
+        durasi=hasil.durasi if hasil.durasi else time.monotonic() - mulai,
+        kode=0 if not hasil.galat else -1,
         model=model,
         galat_provider=galat,
-        model_ditolak=bool(galat),
+        model_ditolak=hasil.ditolak,
     )
 
 
@@ -614,61 +287,6 @@ def _isi_cukup(berkas: Path) -> bool:
         return berkas.is_file() and berkas.stat().st_size >= config.MIN_ISI_HASIL
     except OSError:
         return False
-
-
-def _teks_dari_json(keluaran: str) -> str:
-    """Ambil teks assistant dari keluaran `--format json`.
-
-    Keluaran opencode bukan satu objek JSON, melainkan JSONL: satu objek per
-    baris, setiap langkah punya event sendiri. Teks jawaban berada di
-    `part.text`, bukan di kunci atas. Parser lama hanya mencari kunci atas,
-    jadi ia mengembalikan string kosong dan setiap pemanggilan agent dianggap
-    gagal.
-
-    Bentuk lain tetap ditangani sebagai cadangan, karena `--format json`
-    berbeda versi bisa berbeda.
-    """
-    import json  # noqa: PLC0415
-
-    potongan: list[str] = []
-
-    for b in keluaran.splitlines():
-        b = b.strip()
-        if not b.startswith("{"):
-            continue
-        try:
-            data = json.loads(b)
-        except ValueError:
-            continue
-        if not isinstance(data, dict):
-            continue
-
-        # Bentuk JSONL opencode: {"type": "text", "part": {...,"text": ...}}
-        part = data.get("part")
-        if isinstance(part, dict):
-            teks = part.get("text")
-            if isinstance(teks, str) and teks.strip():
-                potongan.append(teks)
-
-            # Varian: blok alat butuh tool state, bukan teks jawaban.
-            if not potongan and data.get("type") in ("tool", "tool_use"):
-                continue
-
-        # Cadangan bentuk datar.
-        if not potongan:
-            for kunci in ("text", "result", "output", "content"):
-                nilai = data.get(kunci)
-                if isinstance(nilai, str) and nilai.strip():
-                    potongan.append(nilai)
-                elif isinstance(nilai, list):
-                    gabungan = "\n".join(
-                        str(item.get("text", "")) if isinstance(item, dict) else str(item)
-                        for item in nilai
-                    ).strip()
-                    if gabungan:
-                        potongan.append(gabungan)
-
-    return "\n".join(potongan).strip()
 
 
 def panggil_agent_bertahap(
@@ -684,7 +302,6 @@ def panggil_agent_bertahap(
     reporter: "callable[[dict], None] | None" = None,
     stage: str = "",
     cancel_event: threading.Event | None = None,
-    session_callback: "callable[[str], None] | None" = None,
     model_cadangan: list[str] | None = None,
 ) -> HasilAgent:
     """Panggil agent, ulang bila gagal atau berkas hasilnya tidak muncul.
@@ -753,10 +370,26 @@ def panggil_agent_bertahap(
             hasil = panggil_agent(
                 nama=nama, prompt=prompt, model=model_ini, berkas=berkas, cwd=cwd,
                 diam=diam, reporter=reporter, stage=stage,
-                cancel_event=cancel_event, session_callback=session_callback,
+                cancel_event=cancel_event,
                 waktu_maks=min(config.TIMEOUT_AGENT_DETIK, int(sisa)),
             )
             terakhir = hasil
+
+            # Model tanpa tool call yang baik kadang menulis seluruh hasil di
+            # jawaban akhir, bukan ke berkas. Selamatkan hasilnya daripada
+            # membuang satu putaran percobaan ulang.
+            if (
+                hasil_wajib is not None
+                and hasil.selesai
+                and not hasil_wajib.is_file()
+                and len(hasil.stdout.strip()) >= config.MIN_ISI_HASIL
+            ):
+                hasil_wajib.parent.mkdir(parents=True, exist_ok=True)
+                hasil_wajib.write_text(hasil.stdout.strip() + "\n", encoding="utf-8")
+                print(
+                    f"    ! {label or nama}: hasil ditulis dari jawaban akhir model",
+                    file=sys.stderr,
+                )
 
             if hasil_wajib is None:
                 lengkap = hasil.selesai
@@ -847,11 +480,12 @@ class Pipeline:
         reporter: "callable[[dict], None] | None" = None,
         manual: "dict | None" = None,
         cancel_event: threading.Event | None = None,
-        session_callback: "callable[[str], None] | None" = None,
         jenis: str = "",
     ) -> None:
         self.matkul = matkul
         self.nomor = nomor_sesi
+        self._utama_dipilih = bool(model_utama)
+        self._mata_dipilih = bool(model_mata)
         self.model_utama = model_utama or config.PRIMARY_MODEL
         self.model_mata = model_mata or config.VISION_MODEL
         # Model cadangan dipakai begitu model utama ditolak provider (kuota
@@ -875,7 +509,6 @@ class Pipeline:
         # seperti sebelum hook ini ada.
         self.reporter = reporter
         self.cancel_event = cancel_event
-        self.session_callback = session_callback
         # `manual` mengalihkan pipeline ke mode input soal dari pengguna
         # (tempel teks + unggah berkas) tanpa menyentuh Moodle. `None`
         # berarti jalur scrape biasa.
@@ -893,6 +526,16 @@ class Pipeline:
         self.dirs = config.work_dirs(matkul.slug, nomor_sesi)
         self.reader: reader_mod.Reader | None = None
         self.hasil = HasilSesi(matkul=matkul, sesi=Sesi(nomor_sesi, nomor_sesi))
+
+    def _model_agent(self, nama: str) -> str:
+        """Model satu agent: pilihan form, lalu runtime/runtime.json, lalu default."""
+        if nama == config.AGENT_VISION:
+            if self._mata_dipilih:
+                return self.model_mata
+            return runtime_config.model_agent(nama, self.model_mata)
+        if self._utama_dipilih:
+            return self.model_utama
+        return runtime_config.model_agent(nama, self.model_utama)
 
     # -------------------------------------------------------------- utilitas
 
@@ -1449,19 +1092,18 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
         self._agent = config.AGENT_SCRAPPER
         self._log(
             f"  [4/8] Peta soal: agent {config.AGENT_SCRAPPER}, "
-            f"model {self.model_utama}"
+            f"model {self._model_agent(config.AGENT_SCRAPPER)}"
         )
         hasil = panggil_agent_bertahap(
             nama=config.AGENT_SCRAPPER,
             prompt=prompt,
-            model=self.model_utama,
+            model=self._model_agent(config.AGENT_SCRAPPER),
             cwd=config.BASE_DIR,
             hasil_wajib=tujuan,
             label="peta soal",
             reporter=self.reporter,
             stage=self._tahap,
             cancel_event=self.cancel_event,
-            session_callback=self.session_callback,
             model_cadangan=self.model_cadangan,
         )
         self._simpan_log("scrapper.log", hasil.stdout + "\n\n--- STDERR ---\n" + hasil.stderr)
@@ -1647,12 +1289,12 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
         self._agent = config.AGENT_VISION
         self._log(
             f"        Transkripsi {gambar.name}: agent "
-            f"{config.AGENT_VISION}, model {self.model_mata}"
+            f"{config.AGENT_VISION}, model {self._model_agent(config.AGENT_VISION)}"
         )
         hasil = panggil_agent_bertahap(
             nama=config.AGENT_VISION,
             prompt=prompt,
-            model=self.model_mata,
+            model=self._model_agent(config.AGENT_VISION),
             berkas=[gambar],
             cwd=config.BASE_DIR,
             hasil_wajib=file_tujuan,
@@ -1660,7 +1302,6 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
             reporter=self.reporter,
             stage=self._tahap,
             cancel_event=self.cancel_event,
-            session_callback=self.session_callback,
             model_cadangan=self.model_cadangan_mata,
         )
         self._simpan_log(
@@ -1791,19 +1432,18 @@ akun yang tidak boleh ikut terbawa ke berkas yang diserahkan ke tutor.
         no = "3/5" if self.manual is not None else "6/8"
         self._log(
             f"  [{no}] Daftar pustaka: agent {config.AGENT_RESEARCH}, "
-            f"model {self.model_utama}"
+            f"model {self._model_agent(config.AGENT_RESEARCH)}"
         )
         hasil = panggil_agent_bertahap(
             nama=config.AGENT_RESEARCH,
             prompt=prompt,
-            model=self.model_utama,
+            model=self._model_agent(config.AGENT_RESEARCH),
             cwd=config.BASE_DIR,
             hasil_wajib=tujuan,
             label="daftar pustaka",
             reporter=self.reporter,
             stage=self._tahap,
             cancel_event=self.cancel_event,
-            session_callback=self.session_callback,
             model_cadangan=self.model_cadangan,
         )
         self._simpan_log(
@@ -2161,19 +1801,18 @@ Struktur jawaban yang diminta dokumen akhir:
         no = "4/5" if self.manual is not None else "7/8"
         self._log(
             f"  [{no}] Menulis jawaban: agent {config.AGENT_WORKER}, "
-            f"model {self.model_utama}"
+            f"model {self._model_agent(config.AGENT_WORKER)}"
         )
         hasil = panggil_agent_bertahap(
             nama=config.AGENT_WORKER,
             prompt=prompt,
-            model=self.model_utama,
+            model=self._model_agent(config.AGENT_WORKER),
             cwd=config.BASE_DIR,
             hasil_wajib=tujuan,
             label="jawaban",
             reporter=self.reporter,
             stage=self._tahap,
             cancel_event=self.cancel_event,
-            session_callback=self.session_callback,
             model_cadangan=self.model_cadangan,
         )
         self._simpan_log(

@@ -23,7 +23,6 @@ import platform
 import re
 import shutil
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -36,18 +35,25 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import config  # noqa: E402
+import agent_runner  # noqa: E402
 import auth  # noqa: E402
 import docxprev  # noqa: E402
 from jobs import JobManager  # noqa: E402
 import courses  # noqa: E402
 import moodle  # noqa: E402
+import mcp_client  # noqa: E402
+import openai_client  # noqa: E402
+import runtime_config  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+# Saat pengembangan, `webui/static` belum tentu ada (hasil build Next.js
+# di-copy ke sana hanya ketika image Docker dibuat). Pakai `web/out` langsung
+# supaya `python webui/server.py` tetap bisa dipakai tanpa langkah copy.
+if not (STATIC_DIR / "index.html").is_file():
+    STATIC_DIR = ROOT / "web" / "out"
 COOKIE_NAME = "tuton_session"
 SECRET = auth.buat_secret()
 MANAGER = JobManager()
-_MODEL_CACHE: tuple[float, list[str]] | None = None
-_OPENCODE_VERSION_CACHE: tuple[bool, str | None] = (False, None)
 # Cache Moodle: tuple (waktu, ttl_detik, data). TTL sukses panjang, TTL gagal
 # pendek supaya cookie baru yang disimpan lewat Pengaturan langsung terbaca
 # -- hasil error tidak boleh berdiam 10 menit di cache.
@@ -99,6 +105,125 @@ def _sesi_semua(paksa: bool = False) -> list[dict]:
     with _SESI_LOCK:
         _SESI_CACHE[kunci] = (time.monotonic(), _TTL_SESI, hasil)
     return hasil
+
+
+def _moodle_login() -> dict:
+    global _MOODLE_STATUS_CACHE
+    with _MOODLE_STATUS_LOCK:
+        now = time.monotonic()
+        if _MOODLE_STATUS_CACHE:
+            waktu, ttl, data = _MOODLE_STATUS_CACHE
+            if now - waktu < ttl:
+                return dict(data)
+        try:
+            import moodle  # noqa: PLC0415
+
+            klien = moodle.Moodle()
+            masuk, pesan = klien.cek_login()
+            result = {"masuk": masuk, "pesan": pesan}
+        except Exception as exc:  # noqa: BLE001
+            result = {"masuk": False, "pesan": str(exc)}
+        # Cookie mati di-cache sebentar saja (20 detik) supaya perbaikan
+        # cookie lewat Pengaturan langsung terasa di halaman berikutnya.
+        _MOODLE_STATUS_CACHE = (now, 60.0 if result["masuk"] else 20.0, result)
+        return dict(result)
+
+
+def _paksa(query: dict) -> bool:
+    """True kalau klien minta melewati cache (`?paksa=1`)."""
+    nilai = query.get("paksa")
+    if isinstance(nilai, list):
+        nilai = nilai[0] if nilai else ""
+    return str(nilai or "").strip().lower() in {"1", "true", "ya", "yes"}
+
+
+def _moodle_masuk() -> str | None:
+    """Pagar cookie: kembalikan pesan error kalau cookie Moodle tidak valid.
+
+    Dipakai endpoint yang menyajikan data Moodle (courses, sesi, jadwal,
+    nilai). Tanpa pagar ini, cache memori/disk bisa menyajikan daftar lama
+    selama cookie sudah mati sehingga select matkul terlihat "hidup" padahal
+    sesi sudah ditolak server.
+    """
+    status = _moodle_login()
+    if status.get("masuk"):
+        return None
+    return status.get("pesan") or "Cookie Moodle tidak valid."
+
+
+def _nilai_semua() -> dict:
+    """Nilai Tugas & Diskusi semua matkul.
+
+    Sukses di-cache 10 menit; hasil error cuma 30 detik supaya setelah cookie
+    diganti nilai langsung bisa ditarik lagi tanpa menunggu cache lama.
+    """
+    global _NILAI_CACHE
+    with _NILAI_LOCK:
+        now = time.monotonic()
+        if _NILAI_CACHE:
+            waktu, ttl, data = _NILAI_CACHE
+            if now - waktu < ttl:
+                return data
+        galat = _moodle_masuk()
+        if galat:
+            hasil = {"courses": [], "sesi": [], "error": galat}
+        else:
+            try:
+                import moodle  # noqa: PLC0415
+                import courses  # noqa: PLC0415
+
+                klien = moodle.Moodle()
+                daftar = courses.daftar_mata_kuliah(klien)
+                courses_out: list[dict] = []
+                sesi_semua: set[int] = set()
+                for mk in daftar:
+                    per_sesi = courses.nilai_mata_kuliah(klien, mk.id)
+                    if not per_sesi:
+                        continue
+                    sesi_semua.update(per_sesi.keys())
+                    courses_out.append(
+                        {
+                            "id": mk.id,
+                            "nama": mk.nama,
+                            "titik": [
+                                {"sesi": s, **per_sesi[s]} for s in sorted(per_sesi)
+                            ],
+                        }
+                    )
+                hasil = {"courses": courses_out, "sesi": sorted(sesi_semua)}
+            except Exception as exc:  # noqa: BLE001
+                hasil = {"courses": [], "sesi": [], "error": str(exc)}
+        _NILAI_CACHE = (now, _TTL_OK if not hasil.get("error") else _TTL_GAGAL, hasil)
+        return hasil
+
+
+def _jadwal(cid: str) -> dict:
+    """Jadwal Diskusi & Tugas satu course, di-cache 10 menit.
+
+    Mengambil tanggal `Opened:`/`Due:` dari tiap halaman activity -- bisa
+    belasan request saat pertama kali, jadi hasilnya disimpan di memori
+    dan halamannya sendiri sudah ikut tercache oleh klien Moodle.
+    """
+    with _JADWAL_LOCK:
+        now = time.monotonic()
+        entri = _JADWAL_CACHE.get(cid)
+        if entri and now - entri[0] < entri[1]:
+            return entri[2]
+        try:
+            import moodle  # noqa: PLC0415
+            import courses  # noqa: PLC0415
+
+            klien = moodle.Moodle()
+            # Langsung ke course yang diminta: mencari lewat daftar seluruh
+            # course berarti membuka /my/ lalu setiap halaman course hanya
+            # untuk menemukan satu id, dan itu yang membuat kartu ini lambat.
+            matkul = courses.mata_kuliah_dari_id(klien, cid)
+            hasil = {"items": courses.jadwal_mata_kuliah(klien, matkul)}
+        except Exception as exc:  # noqa: BLE001
+            hasil = {"items": [], "error": str(exc)}
+        ttl = _TTL_OK if not hasil.get("error") else _TTL_GAGAL
+        _JADWAL_CACHE[cid] = (now, ttl, hasil)
+        return hasil
 
 
 # ----------------------------------------------------------- multipart
@@ -286,174 +411,79 @@ def _butuh_auth(handler) -> bool:
 # --------------------------------------------------------- status/agents
 
 
-def _opencode_version() -> str | None:
-    global _OPENCODE_VERSION_CACHE
-    if _OPENCODE_VERSION_CACHE[0]:
-        return _OPENCODE_VERSION_CACHE[1]
-    exe = config.cari_opencode()
-    if exe is None:
-        version = None
-    else:
+def _provider_publik(p: dict) -> dict:
+    """Provider untuk klien: API key tidak pernah ikut dikirim utuh."""
+    return {
+        "id": p.get("id") or "",
+        "name": p.get("name") or p.get("id") or "",
+        "base_url": p.get("base_url") or "",
+        "models": [str(m) for m in (p.get("models") or [])],
+        "ada_key": bool(p.get("api_key")),
+    }
+
+
+def _models() -> dict:
+    models = runtime_config.semua_model()
+    return {
+        "models": models,
+        "error": "" if models else "Belum ada model. Tambahkan provider di menu Provider.",
+    }
+
+
+def _provider_state() -> dict:
+    return {
+        "providers": [_provider_publik(p) for p in runtime_config.providers()],
+        "agents": runtime_config.muat()["agents"],
+        "models": runtime_config.semua_model(),
+        "error": _models()["error"],
+    }
+
+
+def _mcp_publik(server: dict) -> dict:
+    return {
+        "id": server.get("id") or "",
+        "name": server.get("name") or server.get("id") or "",
+        "url": server.get("url") or "",
+        "headers": sorted((server.get("headers") or {}).keys()),
+        "agents": server.get("agents") or [],
+        "tools": server.get("tools") or [],
+        "enabled": server.get("enabled") is not False,
+    }
+
+
+def _skills_dir() -> Path:
+    return config.BASE_DIR / ".opencode" / "skills"
+
+
+def _skills_list() -> list[dict]:
+    out: list[dict] = []
+    for path in sorted(_skills_dir().glob("*/SKILL.md")):
         try:
-            out = subprocess.run(
-                [str(exe), "--version"], capture_output=True, text=True, timeout=15
-            )
-            baris = (out.stdout or out.stderr).strip().splitlines()
-            version = baris[0].strip() if baris else "terpasang"
-        except (OSError, subprocess.SubprocessError):
-            version = "terpasang (versi gagal dibaca)"
-    _OPENCODE_VERSION_CACHE = (True, version)
-    return version
-
-
-def _opencode_models() -> dict:
-    global _MODEL_CACHE
-    now = time.time()
-    if _MODEL_CACHE and now - _MODEL_CACHE[0] < 300:
-        return {"models": _MODEL_CACHE[1], "error": ""}
-    exe = config.cari_opencode()
-    if exe is None:
-        return {"models": [], "error": "OpenCode tidak ditemukan."}
-    command = [str(exe), "models"]
-    if exe.suffix.lower() in {".cmd", ".bat"}:
-        command = ["cmd", "/c", *command]
-    try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=20,
+            stat = path.stat()
+        except OSError:
+            continue
+        out.append(
+            {
+                "name": path.parent.name,
+                "ukuran": stat.st_size,
+                "waktu": stat.st_mtime,
+            }
         )
-    except (OSError, subprocess.SubprocessError):
-        return {"models": [], "error": "Daftar model OpenCode gagal dimuat."}
-    if result.returncode != 0:
-        return {"models": [], "error": "Daftar model OpenCode gagal dimuat."}
-    models = list(dict.fromkeys(line.strip() for line in result.stdout.splitlines() if line.strip()))
-    if not models:
-        return {"models": [], "error": "Tidak ada model OpenCode yang tersedia."}
-    _MODEL_CACHE = (now, models)
-    return {"models": models, "error": ""}
+    return out
 
 
-def _moodle_login() -> dict:
-    global _MOODLE_STATUS_CACHE
-    with _MOODLE_STATUS_LOCK:
-        now = time.monotonic()
-        if _MOODLE_STATUS_CACHE:
-            waktu, ttl, data = _MOODLE_STATUS_CACHE
-            if now - waktu < ttl:
-                return dict(data)
-        try:
-            import moodle  # noqa: PLC0415
-
-            klien = moodle.Moodle()
-            masuk, pesan = klien.cek_login()
-            result = {"masuk": masuk, "pesan": pesan}
-        except Exception as exc:  # noqa: BLE001
-            result = {"masuk": False, "pesan": str(exc)}
-        # Cookie mati di-cache sebentar saja (20 detik) supaya perbaikan
-        # cookie lewat Pengaturan langsung terasa di halaman berikutnya.
-        _MOODLE_STATUS_CACHE = (now, 60.0 if result["masuk"] else 20.0, result)
-        return dict(result)
-
-
-def _paksa(query: dict) -> bool:
-    """True kalau klien minta melewati cache (`?paksa=1`)."""
-    nilai = query.get("paksa")
-    if isinstance(nilai, list):
-        nilai = nilai[0] if nilai else ""
-    return str(nilai or "").strip().lower() in {"1", "true", "ya", "yes"}
-
-
-def _moodle_masuk() -> str | None:
-    """Pagar cookie: kembalikan pesan error kalau cookie Moodle tidak valid.
-
-    Dipakai endpoint yang menyajikan data Moodle (courses, sesi, jadwal,
-    nilai). Tanpa pagar ini, cache memori/disk bisa menyajikan daftar lama
-    selama cookie sudah mati sehingga select matkul terlihat "hidup" padahal
-    sesi sudah ditolak server.
-    """
-    status = _moodle_login()
-    if status.get("masuk"):
-        return None
-    return status.get("pesan") or "Cookie Moodle tidak valid."
-
-
-def _nilai_semua() -> dict:
-    """Nilai Tugas & Diskusi semua matkul.
-
-    Sukses di-cache 10 menit; hasil error cuma 30 detik supaya setelah cookie
-    diganti nilai langsung bisa ditarik lagi tanpa menunggu cache lama.
-    """
-    global _NILAI_CACHE
-    with _NILAI_LOCK:
-        now = time.monotonic()
-        if _NILAI_CACHE:
-            waktu, ttl, data = _NILAI_CACHE
-            if now - waktu < ttl:
-                return data
-        galat = _moodle_masuk()
-        if galat:
-            hasil = {"courses": [], "sesi": [], "error": galat}
-        else:
-            try:
-                import moodle  # noqa: PLC0415
-                import courses  # noqa: PLC0415
-
-                klien = moodle.Moodle()
-                daftar = courses.daftar_mata_kuliah(klien)
-                courses_out: list[dict] = []
-                sesi_semua: set[int] = set()
-                for mk in daftar:
-                    per_sesi = courses.nilai_mata_kuliah(klien, mk.id)
-                    if not per_sesi:
-                        continue
-                    sesi_semua.update(per_sesi.keys())
-                    courses_out.append(
-                        {
-                            "id": mk.id,
-                            "nama": mk.nama,
-                            "titik": [
-                                {"sesi": s, **per_sesi[s]} for s in sorted(per_sesi)
-                            ],
-                        }
-                    )
-                hasil = {"courses": courses_out, "sesi": sorted(sesi_semua)}
-            except Exception as exc:  # noqa: BLE001
-                hasil = {"courses": [], "sesi": [], "error": str(exc)}
-        _NILAI_CACHE = (now, _TTL_OK if not hasil.get("error") else _TTL_GAGAL, hasil)
-        return hasil
-
-
-def _jadwal(cid: str) -> dict:
-    """Jadwal Diskusi & Tugas satu course, di-cache 10 menit.
-
-    Mengambil tanggal `Opened:`/`Due:` dari tiap halaman activity -- bisa
-    belasan request saat pertama kali, jadi hasilnya disimpan di memori
-    dan halamannya sendiri sudah ikut tercache oleh klien Moodle.
-    """
-    with _JADWAL_LOCK:
-        now = time.monotonic()
-        entri = _JADWAL_CACHE.get(cid)
-        if entri and now - entri[0] < entri[1]:
-            return entri[2]
-        try:
-            import courses  # noqa: PLC0415
-
-            klien = moodle.Moodle()
-            # Langsung ke course yang diminta: mencari lewat daftar seluruh
-            # course berarti membuka /my/ lalu setiap halaman course hanya
-            # untuk menemukan satu id, dan itu yang membuat kartu ini lambat.
-            matkul = courses.mata_kuliah_dari_id(klien, cid)
-            hasil = {"items": courses.jadwal_mata_kuliah(klien, matkul)}
-        except Exception as exc:  # noqa: BLE001
-            hasil = {"items": [], "error": str(exc)}
-        ttl = _TTL_OK if not hasil.get("error") else _TTL_GAGAL
-        _JADWAL_CACHE[cid] = (now, ttl, hasil)
-        return hasil
+def _skill_nama(nilai: str) -> str:
+    nama = str(nilai or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", nama):
+        raise ValueError("Nama skill hanya huruf kecil, angka, garis, dan garis bawah.")
+    return nama
 
 
 def _status() -> dict:
+    provider = runtime_config.providers()
+    model = runtime_config.semua_model()
     return {
-        "opencode": _opencode_version(),
+        "providers": f"{len(provider)} provider / {len(model)} model",
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "primary_model": config.env("PRIMARY_MODEL") or config.PRIMARY_MODEL,
@@ -466,10 +496,13 @@ def _agents() -> list[dict]:
     prim = config.env("PRIMARY_MODEL") or config.PRIMARY_MODEL
     vis = config.env("VISION_MODEL") or config.VISION_MODEL
     return [
-        {"name": config.AGENT_SCRAPPER, "model": prim},
-        {"name": config.AGENT_RESEARCH, "model": prim},
-        {"name": config.AGENT_VISION, "model": vis},
-        {"name": config.AGENT_WORKER, "model": prim},
+        {
+            "name": nama,
+            "model": runtime_config.model_agent(
+                nama, vis if nama == config.AGENT_VISION else prim
+            ),
+        }
+        for nama in runtime_config.AGENTS
     ]
 
 
@@ -538,6 +571,8 @@ def _settings_get() -> list[dict]:
 
 def _settings_post(payload: dict) -> dict:
     lama = {k: config.env(k) for k in _KUNCI_MOODLE}
+    nim_lama = config.env("NIM")
+    nim_berubah = False
     berubah = False
     for k, v in payload.items():
         if k not in _KUNCI_EDIT and k not in _KUNCI_RAHASIA:
@@ -547,6 +582,8 @@ def _settings_post(payload: dict) -> dict:
         nilai = str(v).strip()
         if k in _KUNCI_MOODLE and nilai != lama[k]:
             berubah = True
+        if k == "NIM" and nilai != nim_lama:
+            nim_berubah = True
         config.set_env_value(k, nilai)
         if k == "FALLBACK_MODELS":
             # config sudah dievaluasi saat impor, jadi daftar cadangan perlu
@@ -556,12 +593,209 @@ def _settings_post(payload: dict) -> dict:
             config.FALLBACK_MODELS = [
                 m.strip() for m in nilai.split(",") if m.strip()
             ]
+    if nim_berubah:
+        # Status Diskusi bergantung pada NIM; jadwal lama harus dihitung ulang.
+        with _JADWAL_LOCK:
+            _JADWAL_CACHE.clear()
     if berubah:
         # Cookie/URL Moodle baru: buang semua hasil scrape lama supaya
         # dashboard, select matkul, nilai, dan jadwal langsung memakai
         # sesi yang baru tanpa perlu restart server.
         dibersihkan = _reset_cache_moodle()
         return {"ok": True, "moodle_disegarkan": True, "cache_dibersihkan": dibersihkan}
+    return {"ok": True}
+
+
+# ------------------------------------------------- provider / mcp / skill
+
+
+def _daftar_model_payload(payload: dict) -> list[str]:
+    models = payload.get("models")
+    if isinstance(models, str):
+        models = re.split(r"[,\n]+", models)
+    if not isinstance(models, list):
+        models = []
+    return [str(m).strip() for m in models if str(m).strip()]
+
+
+def _provider_simpan(payload: dict) -> dict:
+    data = runtime_config.muat()
+    pid = str(payload.get("id") or "").strip()
+    nama = str(payload.get("name") or "").strip()
+    base_url = str(payload.get("base_url") or "").strip().rstrip("/")
+    if not nama:
+        raise ValueError("Nama provider wajib diisi.")
+    if not re.match(r"^https?://", base_url):
+        raise ValueError("Base URL harus diawali http:// atau https://.")
+    models = _daftar_model_payload(payload)
+    if not models:
+        raise ValueError("Isi minimal satu model ID.")
+    if pid:
+        if not runtime_config.id_valid(pid):
+            raise ValueError("ID provider tidak sah.")
+    else:
+        pid = runtime_config.slug(nama)
+        if not runtime_config.id_valid(pid):
+            raise ValueError("Nama provider tidak bisa dijadikan ID.")
+        dasar, n = pid, 2
+        while runtime_config.provider(pid):
+            pid = f"{dasar}-{n}"
+            n += 1
+    lama = runtime_config.provider(pid) or {}
+    api_key = str(payload.get("api_key") or "").strip()
+    entri = {
+        "id": pid,
+        "name": nama,
+        "base_url": base_url,
+        "api_key": api_key or lama.get("api_key") or "",
+        "models": models,
+    }
+    data["providers"] = [
+        entri if p.get("id") == pid else p for p in data["providers"]
+    ]
+    if not any(p.get("id") == pid for p in data["providers"]):
+        data["providers"].append(entri)
+    runtime_config.simpan(data)
+    return {"ok": True, "id": pid}
+
+
+def _provider_hapus(payload: dict) -> dict:
+    pid = str(payload.get("id") or "").strip()
+    data = runtime_config.muat()
+    data["providers"] = [p for p in data["providers"] if p.get("id") != pid]
+    data["agents"] = {
+        k: v for k, v in data["agents"].items()
+        if not str(v).startswith(f"{pid}/")
+    }
+    runtime_config.simpan(data)
+    return {"ok": True}
+
+
+def _provider_tes(payload: dict) -> dict:
+    pid = str(payload.get("id") or "").strip()
+    lama = (runtime_config.provider(pid) or {}) if pid else {}
+    try:
+        models = openai_client.daftar_model(
+            str(payload.get("base_url") or lama.get("base_url") or "").strip(),
+            str(payload.get("api_key") or lama.get("api_key") or "").strip(),
+        )
+        return {"ok": True, "models": models}
+    except openai_client.GalatProvider as exc:
+        return {"ok": False, "error": exc.pesan}
+
+
+def _agent_model_simpan(payload: dict) -> dict:
+    models = payload.get("models")
+    if not isinstance(models, dict):
+        raise ValueError("Format model agent tidak dikenal.")
+    data = runtime_config.muat()
+    agents = dict(data["agents"])
+    for nama, ref in models.items():
+        if nama not in runtime_config.AGENTS:
+            continue
+        ref = str(ref or "").strip()
+        if ref:
+            runtime_config.resolve(ref)
+            agents[nama] = ref
+        else:
+            agents.pop(nama, None)
+    data["agents"] = agents
+    runtime_config.simpan(data)
+    return {"ok": True}
+
+
+def _mcp_simpan(payload: dict) -> dict:
+    data = runtime_config.muat()
+    sid = str(payload.get("id") or "").strip()
+    nama = str(payload.get("name") or "").strip()
+    url = str(payload.get("url") or "").strip()
+    if not nama:
+        raise ValueError("Nama server MCP wajib diisi.")
+    if not re.match(r"^https?://", url):
+        raise ValueError("URL MCP harus diawali http:// atau https://.")
+    if not sid:
+        sid = runtime_config.slug(nama)
+        if not runtime_config.id_valid(sid):
+            raise ValueError("Nama server tidak bisa dijadikan ID.")
+        dasar, n = sid, 2
+        while any(m.get("id") == sid for m in data["mcp"]):
+            sid = f"{dasar}-{n}"
+            n += 1
+    lama = next((m for m in data["mcp"] if m.get("id") == sid), {})
+    headers = payload.get("headers")
+    if not isinstance(headers, dict) or not headers:
+        headers = lama.get("headers") or {}
+    headers = {
+        str(k).strip(): str(v).strip()
+        for k, v in headers.items()
+        if str(k).strip() and str(v).strip()
+    }
+    agents = payload.get("agents")
+    if not isinstance(agents, list):
+        agents = lama.get("agents") or []
+    agents = [a for a in agents if a in runtime_config.AGENTS]
+    entri = {
+        "id": sid,
+        "name": nama,
+        "url": url,
+        "headers": headers,
+        "agents": agents,
+        "tools": [str(t) for t in (payload.get("tools") or []) if str(t).strip()],
+        "enabled": payload.get("enabled") is not False,
+    }
+    data["mcp"] = [entri if m.get("id") == sid else m for m in data["mcp"]]
+    if not any(m.get("id") == sid for m in data["mcp"]):
+        data["mcp"].append(entri)
+    runtime_config.simpan(data)
+    return {"ok": True, "id": sid}
+
+
+def _mcp_hapus(payload: dict) -> dict:
+    sid = str(payload.get("id") or "").strip()
+    data = runtime_config.muat()
+    data["mcp"] = [m for m in data["mcp"] if m.get("id") != sid]
+    runtime_config.simpan(data)
+    return {"ok": True}
+
+
+def _mcp_tes(payload: dict) -> dict:
+    sid = str(payload.get("id") or "").strip()
+    lama = next((m for m in runtime_config.muat()["mcp"] if m.get("id") == sid), {})
+    server = {
+        "id": sid or "uji",
+        "url": str(payload.get("url") or lama.get("url") or "").strip(),
+        "headers": payload.get("headers") or (lama.get("headers") or {}),
+    }
+    try:
+        tools = mcp_client.daftar_tool(server)
+        return {
+            "ok": True,
+            "tools": [
+                {"name": t.get("name"), "description": t.get("description") or ""}
+                for t in tools
+            ],
+        }
+    except mcp_client.GalatMcp as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _skill_simpan(payload: dict) -> dict:
+    nama = _skill_nama(payload.get("name"))
+    isi = payload.get("content")
+    if not isinstance(isi, str) or not isi.strip():
+        raise ValueError("Isi skill tidak boleh kosong.")
+    folder = _skills_dir() / nama
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "SKILL.md").write_text(isi, encoding="utf-8")
+    return {"ok": True, "name": nama}
+
+
+def _skill_hapus(payload: dict) -> dict:
+    nama = _skill_nama(payload.get("name"))
+    folder = _skills_dir() / nama
+    if not folder.is_dir():
+        raise ValueError("Skill tidak ditemukan.")
+    shutil.rmtree(folder)
     return {"ok": True}
 
 
@@ -702,13 +936,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
-        if path == "/" or path == "/index.html":
-            return self._static("index.html")
-        if path.startswith("/static/"):
-            return self._static(urllib.parse.unquote(path[len("/static/"):]))
         if path.startswith("/api/"):
             return self._api_get(path, urllib.parse.parse_qs(parsed.query))
-        self._not_found()
+        if path == "/":
+            return self._static("index.html")
+        return self._static(path)
 
     def do_POST(self) -> None:  # noqa: N802
         path = urllib.parse.urlparse(self.path).path
@@ -716,31 +948,76 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_post(path)
         self._not_found()
 
+    def do_HEAD(self) -> None:  # noqa: N802
+        # Prefetch Next.js memakai HEAD untuk rute halaman. Tanpa ini server
+        # menjawab 501 dan konsol peramban penuh error.
+        path = urllib.parse.urlparse(self.path).path
+        if path.startswith("/api/"):
+            self.send_response(405)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        return self._static(path, head=True)
+
     # ---- static
-    def _static(self, rel: str) -> None:
-        rel = rel.replace("\\", "/")
-        target = (STATIC_DIR / rel).resolve()
-        if not str(target).startswith(str(STATIC_DIR.resolve())) or not target.is_file():
-            return self._not_found()
+    def _static(self, rel: str, head: bool = False) -> None:
+        target = self._static_target(rel)
+        if target is None:
+            return self._not_found(head)
         ctype, _ = mimetypes.guess_type(target.name)
         if target.suffix == ".js":
             ctype = "application/javascript"
         elif target.suffix == ".css":
             ctype = "text/css"
+        elif target.suffix == ".txt":
+            ctype = "text/plain; charset=utf-8"
         data = target.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", ctype or "application/octet-stream")
         self.send_header("Content-Length", str(len(data)))
-        if target.suffix in {".html", ".js", ".css"}:
+        rel_posix = target.relative_to(STATIC_DIR.resolve()).as_posix()
+        if rel_posix.startswith("_next/static/"):
+            # Nama berkas Next.js mengandung hash isi, aman di-cache selamanya.
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        elif target.suffix in {".html", ".txt", ".json"}:
             self.send_header("Cache-Control", "no-cache")
-        elif target.suffix in {".png", ".svg", ".ico", ".webp"}:
-            # Ikon statis boleh disimpan peramban lama; icons.png berukuran
-            # besar jadi tidak perlu diunduh ulang tiap kali tab dibuka.
+        elif target.suffix in {".png", ".svg", ".ico", ".webp", ".woff2"}:
             self.send_header("Cache-Control", "public, max-age=86400")
         self.end_headers()
-        self.wfile.write(data)
+        if not head:
+            self.wfile.write(data)
 
-    def _not_found(self) -> None:
+    def _static_target(self, rel: str) -> Path | None:
+        """Cari berkas hasil `next build` untuk sebuah URL.
+
+        Static export menyimpan rute sebagai `<rute>/index.html` plus payload
+        RSC (`index.txt`, `__next.*.txt`) yang dipakai navigasi client-side.
+        Keduanya harus disajikan apa adanya, dan `/buat` tanpa garis miring
+        harus jatuh ke `buat/index.html`.
+        """
+        base = STATIC_DIR.resolve()
+        bersih = urllib.parse.unquote(rel.replace("\\", "/")).lstrip("/")
+        if not bersih:
+            kandidat = ["index.html"]
+        elif bersih.endswith("/"):
+            kandidat = [bersih + "index.html", bersih + "index.txt"]
+        elif "." in bersih.rsplit("/", 1)[-1]:
+            kandidat = [bersih]
+        else:
+            kandidat = [
+                bersih + "/index.html",
+                bersih + ".html",
+                bersih,
+                bersih + "/index.txt",
+                bersih + ".txt",
+            ]
+        for k in kandidat:
+            target = (base / k).resolve()
+            if target.is_relative_to(base) and target.is_file():
+                return target
+        return None
+
+    def _not_found(self, head: bool = False) -> None:
         # Content-Length wajib ada, sama seperti respons 401 di `_butuh_auth`:
         # `/favicon.ico` (diminta otomatis tiap kali tab dibuka) juga lewat
         # sini, jadi tanpa header ini satu koneksi browser ikut menggantung.
@@ -749,7 +1026,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if not head:
+            self.wfile.write(body)
 
     # ---- API GET
     def _api_get(self, path: str, query: dict[str, list[str]] | None = None) -> None:
@@ -762,7 +1040,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/agents":
             return _kirim_json(self, _agents())
         if path == "/api/models":
-            return _kirim_json(self, _opencode_models())
+            return _kirim_json(self, _models())
         if path == "/api/moodle-status":
             return _kirim_json(self, _moodle_login())
         if path == "/api/nilai":
@@ -805,6 +1083,24 @@ class Handler(BaseHTTPRequestHandler):
                 return _kirim_json(self, {"error": str(exc)}, 400)
         if path == "/api/settings":
             return _kirim_json(self, _settings_get())
+        if path == "/api/providers":
+            return _kirim_json(self, _provider_state())
+        if path == "/api/mcp":
+            return _kirim_json(
+                self, {"servers": [_mcp_publik(m) for m in runtime_config.muat()["mcp"]]}
+            )
+        if path == "/api/skills":
+            return _kirim_json(self, {"skills": _skills_list()})
+        if path.startswith("/api/skills/"):
+            nama = urllib.parse.unquote(path.split("/")[3])
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", nama or ""):
+                return _kirim_json(self, {"error": "Nama skill tidak sah."}, 400)
+            berkas = _skills_dir() / nama / "SKILL.md"
+            if not berkas.is_file():
+                return _kirim_json(self, {"error": "Skill tidak ditemukan."}, 404)
+            return _kirim_json(
+                self, {"name": nama, "content": berkas.read_text(encoding="utf-8", errors="replace")}
+            )
         if path.startswith("/api/download/"):
             return self._download(path.split("/")[3])
         if path.startswith("/api/download-output/"):
@@ -866,6 +1162,30 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 payload = json.loads(self._baca_body().decode("utf-8"))
                 return _kirim_json(self, _hasil_hapus(payload))
+            except ValueError as exc:
+                return _kirim_json(self, {"error": str(exc)}, 400)
+            except Exception as exc:  # noqa: BLE001
+                return _kirim_json(self, {"error": str(exc)}, 500)
+        if path.startswith("/api/providers/") or path in {
+            "/api/agents/models", "/api/mcp/save", "/api/mcp/delete",
+            "/api/mcp/test", "/api/skills/save", "/api/skills/delete",
+        }:
+            try:
+                payload = json.loads(self._baca_body().decode("utf-8") or "{}")
+                aksi = {
+                    "/api/providers/save": _provider_simpan,
+                    "/api/providers/delete": _provider_hapus,
+                    "/api/providers/test": _provider_tes,
+                    "/api/agents/models": _agent_model_simpan,
+                    "/api/mcp/save": _mcp_simpan,
+                    "/api/mcp/delete": _mcp_hapus,
+                    "/api/mcp/test": _mcp_tes,
+                    "/api/skills/save": _skill_simpan,
+                    "/api/skills/delete": _skill_hapus,
+                }.get(path)
+                if aksi is None:
+                    return _kirim_json(self, {"error": "Aksi tidak dikenal."}, 404)
+                return _kirim_json(self, aksi(payload))
             except ValueError as exc:
                 return _kirim_json(self, {"error": str(exc)}, 400)
             except Exception as exc:  # noqa: BLE001
@@ -1157,19 +1477,6 @@ def main() -> None:
 
     signal.signal(signal.SIGTERM, _hentikan_sinyal)
     signal.signal(signal.SIGINT, _hentikan_sinyal)
-
-    # Panaskan cache opencode di background. Versi dan daftar model sama-sama
-    # butuh menjalankan subproses `opencode` (±1-6 detik, tergantung kecepatan
-    # provider). Kalau baru dihitung saat request pertama tiba, Dashboard dan
-    # Settings terasa macet sekali tiap kali server di-restart.
-    def _panaskan_cache() -> None:
-        try:
-            _opencode_version()
-            _opencode_models()
-        except Exception:  # noqa: BLE001
-            pass
-
-    threading.Thread(target=_panaskan_cache, daemon=True).start()
 
     try:
         httpd.serve_forever()

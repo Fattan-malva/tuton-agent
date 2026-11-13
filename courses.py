@@ -639,6 +639,110 @@ def _status_pengumpulan(html: str, jenis: str) -> str | None:
     return None
 
 
+def _forum_balasan(html: str, nim: str) -> dict | None:
+    """Status, nilai, dan feedback Diskusi dari post forum milik NIM.
+
+    Status ditentukan dari ada/tidaknya post yang ditulis NIM sendiri, bukan
+    dari teks "your posts" di halaman activity. Satu NIM boleh membalas
+    berkali-kali: nilai yang dipakai rating tertinggi. Feedback diambil dari
+    balasan orang lain (tutor) di bawah post tersebut.
+    """
+    if not nim:
+        return None
+    soup = BeautifulSoup(html, "lxml")
+    posts = soup.select(".forumpost")
+    if not posts:
+        return None
+
+    pola_nim = re.compile(rf"(?<!\d){re.escape(nim)}(?!\d)")
+    sendiri: list[dict] = []
+    balasan: dict[str, list[str]] = {}
+    for p in posts:
+        post_id = p.get("data-post-id") or ""
+        tautan_penulis = p.select_one('header a[href*="user/view.php"]')
+        penulis = (
+            tautan_penulis.get_text(" ", strip=True) if tautan_penulis else ""
+        )
+        if not penulis:
+            # Starter post tidak punya tautan penulis; aria-label memuat
+            # "Re: Forum Diskusi.1 by NAMA NIM".
+            m = re.search(r"\bby\s+(.+)$", p.get("aria-label") or "", re.I)
+            penulis = m.group(1).strip() if m else ""
+        isi = p.select_one(".post-content-container")
+        teks = " ".join(isi.get_text(" ", strip=True).split()) if isi else ""
+
+        nilai: float | None = None
+        rating = p.select_one(".ratingaggregate")
+        if rating:
+            m = re.search(r"\d+(?:[.,]\d+)?", rating.get_text(" ", strip=True))
+            if m:
+                try:
+                    nilai = float(m.group(0).replace(",", "."))
+                except ValueError:
+                    nilai = None
+
+        induk = None
+        for tautan in p.select("a[data-region='post-action']"):
+            if "parent" not in (tautan.get("title") or "").lower():
+                continue
+            m = re.search(r"#p(\d+)$", tautan.get("href") or "")
+            if m:
+                induk = m.group(1)
+                break
+        if induk and teks and not pola_nim.search(penulis):
+            balasan.setdefault(induk, []).append(
+                f"{penulis}: {teks}" if penulis else teks
+            )
+        if pola_nim.search(penulis):
+            sendiri.append({"id": post_id, "nilai": nilai})
+
+    if not sendiri:
+        return {"status": "not_submitted", "nilai": None, "feedback": None}
+
+    terbaik = max(
+        sendiri, key=lambda x: x["nilai"] if x["nilai"] is not None else -1
+    )
+    feedback: list[str] = []
+    for post in sendiri:
+        for isi in balasan.get(post["id"], []):
+            if isi not in feedback:
+                feedback.append(isi)
+    return {
+        "status": "submitted",
+        "nilai": terbaik["nilai"],
+        "feedback": "\n\n".join(feedback) or None,
+    }
+
+
+def _feedback_tugas(html: str) -> str | None:
+    """Komentar tutor dari tabel Feedback di halaman Tugas."""
+    soup = BeautifulSoup(html, "lxml")
+    for tr in soup.select("div.feedback tr"):
+        header = tr.find("th")
+        if header is None:
+            continue
+        if "feedback comment" not in header.get_text(" ", strip=True).lower():
+            continue
+        td = tr.find("td")
+        if td is None:
+            continue
+        # Kadang komentar tutor menyalin jawaban mahasiswa dulu, dipisah
+        # baris "----". Ambil bagian setelah pemisah itu saja.
+        wadah = td.select_one(".hidefull") or td
+        for p in wadah.find_all("p"):
+            if not re.fullmatch(r"-{3,}", p.get_text(strip=True)):
+                continue
+            sisa = " ".join(
+                s.get_text(" ", strip=True) for s in p.find_next_siblings()
+            )
+            if sisa.strip():
+                return " ".join(sisa.split())
+        teks = " ".join(wadah.get_text(" ", strip=True).split())
+        if teks:
+            return teks
+    return None
+
+
 def _nilai_aktivitas(
     nilai: dict[int, dict[str, float | None]], jenis: str, nomor: int
 ) -> float | None:
@@ -658,6 +762,7 @@ def jadwal_mata_kuliah(klien: moodle.Moodle, matkul: MataKuliah) -> list[dict]:
     """
     sections = daftar_section(klien, matkul)
     nilai = nilai_mata_kuliah(klien, matkul.id)
+    nim = config.env("NIM")
     items: list[dict] = []
     for s in sections:
         for a in daftar_aktivitas(klien, matkul, s):
@@ -677,6 +782,19 @@ def jadwal_mata_kuliah(klien: moodle.Moodle, matkul: MataKuliah) -> list[dict]:
             sesi = a.section if a.section >= 1 else (
                 a.nomor if a.modtype == "forum" else 2 * a.nomor + 1
             )
+            forum = _forum_balasan(html, nim) if jenis == "Diskusi" else None
+            if forum:
+                status = forum["status"]
+                feedback = forum["feedback"]
+                nilai_aktivitas = (
+                    forum["nilai"]
+                    if forum["nilai"] is not None
+                    else _nilai_aktivitas(nilai, jenis, a.nomor)
+                )
+            else:
+                status = _status_pengumpulan(html, jenis)
+                feedback = _feedback_tugas(html) if jenis == "Tugas" else None
+                nilai_aktivitas = _nilai_aktivitas(nilai, jenis, a.nomor)
             items.append(
                 {
                     "jenis": jenis,
@@ -686,8 +804,9 @@ def jadwal_mata_kuliah(klien: moodle.Moodle, matkul: MataKuliah) -> list[dict]:
                     "url": a.url,
                     "mulai": _tanggal_setelah(html, "Opened"),
                     "tenggat": tenggat,
-                    "status_pengumpulan": _status_pengumpulan(html, jenis),
-                    "nilai": _nilai_aktivitas(nilai, jenis, a.nomor),
+                    "status_pengumpulan": status,
+                    "nilai": nilai_aktivitas,
+                    "feedback": feedback,
                 }
             )
 

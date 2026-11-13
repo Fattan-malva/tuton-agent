@@ -85,3 +85,14 @@ $RECYCLE.BIN/
 # daftar ini.
 # Skrip redeploy lokal (VPS-only, tidak ikut ke repo)
 .restart.sh
+
+# ------------------------------------------------------- UI Next.js (web/)
+# Sumber UI ada di `web/`, hasil build-nya disalin ke image (bukan ke repo).
+web/node_modules/
+web/.next/
+web/out/
+web/tsconfig.tsbuildinfo
+
+# State runtime (provider/API key/server MCP) ditulis saat aplikasi jalan.
+runtime/
+runtime.json
