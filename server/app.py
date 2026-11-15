@@ -458,10 +458,15 @@ def _lupakan_token(handler) -> None:
 
     Tanpa ini, cookie yang baru disimpan lewat Pengaturan baru dipakai
     setelah TTL cache token habis dan pengguna melihat sesi Moodle lama.
+    Cache provider ikut dibuang supaya perubahan dari menu Provider langsung
+    terlihat pada request berikutnya, bukan setelah TTL 20 detik.
     """
     token = _bearer(handler)
     with _TOKEN_LOCK:
-        _TOKEN_CACHE.pop(token, None)
+        entri = _TOKEN_CACHE.pop(token, None)
+    user_id = str(((entri[1] if entri else None) or {}).get("id") or "")
+    if user_id:
+        supabase.providers_lupakan(user_id)
 
 
 def _pasang_scope(handler) -> dict | None:

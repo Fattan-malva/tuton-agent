@@ -2,6 +2,7 @@
 
 import { useUser } from '@clerk/react'
 import { ChevronsUpDown } from 'lucide-react'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
 import { AccountDialog } from './account-dialog'
 
@@ -26,16 +27,17 @@ export function NavUser() {
               size='lg'
               className='data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground'
             >
-              <div className='flex size-8 items-center justify-center rounded-lg bg-primary text-xs font-bold text-primary-foreground'>
-                {inisial(nama)}
-              </div>
-              <div className='grid flex-1 text-start text-sm leading-tight'>
+              <Avatar className='size-8'>
+                <AvatarImage src={user?.imageUrl} alt={nama} />
+                <AvatarFallback>{inisial(nama)}</AvatarFallback>
+              </Avatar>
+              <div className='grid flex-1 text-start text-sm leading-tight group-data-[collapsible=icon]:hidden'>
                 <span className='truncate font-semibold'>{nama}</span>
                 <span className='truncate text-xs text-muted-foreground'>
                   {email || 'tuton.agent'}
                 </span>
               </div>
-              <ChevronsUpDown className='ms-auto size-4' />
+              <ChevronsUpDown className='ms-auto size-4 group-data-[collapsible=icon]:hidden' />
             </SidebarMenuButton>
           }
         />

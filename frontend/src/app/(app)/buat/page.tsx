@@ -408,7 +408,7 @@ export default function BuatPage() {
                       <Skeleton className='h-9 w-full' />
                     ) : (
                       <Select value={mnMatkul} onValueChange={setMnMatkul}>
-                        <SelectTrigger className='w-full'>
+                        <SelectTrigger className='h-10 w-full'>
                           <SelectValue placeholder='— pilih —' />
                         </SelectTrigger>
                         <SelectContent>
@@ -430,6 +430,7 @@ export default function BuatPage() {
                       min={1}
                       value={mnSesi}
                       onChange={(e) => setMnSesi(e.target.value)}
+                      className='h-10'
                     />
                   </div>
                 </div>
@@ -438,7 +439,7 @@ export default function BuatPage() {
                   <div className='space-y-2'>
                     <Label>Jenis</Label>
                     <Select value={mnJenis} onValueChange={setMnJenis}>
-                      <SelectTrigger className='w-full'>
+                      <SelectTrigger className='h-10 w-full'>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -449,20 +450,27 @@ export default function BuatPage() {
                   </div>
                   <div className='space-y-2'>
                     <Label htmlFor='mn-files'>Berkas soal</Label>
-                    <div className='relative'>
-                      <Input
-                        id='mn-files'
-                        type='file'
-                        multiple
-                        className='file:me-2'
-                        onChange={(e) => setMnFiles(e.target.files)}
-                      />
-                    </div>
-                    <p className='text-muted-foreground text-xs'>
-                      {mnFiles?.length
-                        ? `${mnFiles.length} berkas dipilih`
-                        : 'Bisa lebih dari satu berkas.'}
-                    </p>
+                    <label
+                      htmlFor='mn-files'
+                      className='border-input hover:bg-accent/40 flex min-h-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed px-3 py-4 text-center transition-colors'
+                    >
+                      <FileUp className='text-muted-foreground size-5' />
+                      <span className='text-sm font-medium'>
+                        {mnFiles?.length
+                          ? `${mnFiles.length} berkas dipilih`
+                          : 'Pilih berkas soal'}
+                      </span>
+                      <span className='text-muted-foreground text-xs'>
+                        DOC, PDF, atau gambar — bisa lebih dari satu
+                      </span>
+                    </label>
+                    <input
+                      id='mn-files'
+                      type='file'
+                      multiple
+                      className='sr-only'
+                      onChange={(e) => setMnFiles(e.target.files)}
+                    />
                   </div>
                 </div>
 
