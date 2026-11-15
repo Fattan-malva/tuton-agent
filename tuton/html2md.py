@@ -135,7 +135,6 @@ def _selaraskan_script_mathjax(soup: BeautifulSoup) -> None:
             script.decompose()
             continue
 
-        # Buang span hasil render dan pratinjau tepat sebelum script.
         for nama_kelas in ("MathJax_Preview", "MathJax", "mwe-math-element"):
             for span in script.find_all_previous(class_=nama_kelas, limit=1):
                 # Hanya buang kalau memang saudara langsung, supaya span
@@ -276,7 +275,6 @@ def bersihkan_teks(teks: str) -> str:
     teks = "\n".join(baris.rstrip() for baris in teks.split("\n"))
     teks = _BARIS_KOSONG_GANDA.sub("\n\n", teks)
 
-    # Kembalikan blok yang tadi disingkirkan.
     for i, isi in enumerate(simpan):
         teks = teks.replace(f"{_PLACEHOLDER_BLOK}{i}\x00", isi)
     return teks.strip()

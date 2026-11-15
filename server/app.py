@@ -23,7 +23,6 @@ import re
 import shutil
 import signal
 import sys
-import tempfile
 import threading
 import time
 import urllib.parse
@@ -31,7 +30,6 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-# Pastikan modul root (pipeline, config, ...) bisa diimpor.
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -43,8 +41,7 @@ from tuton import config  # noqa: E402
 from tuton import clerk  # noqa: E402
 from tuton import supabase  # noqa: E402
 from tuton import templates  # noqa: E402
-import docxprev  # noqa: E402
-import pratinjau_pdf  # noqa: E402
+from server import pratinjau_pdf  # noqa: E402
 from server.jobs import JobManager  # noqa: E402
 from tuton import courses  # noqa: E402
 from tuton import moodle  # noqa: E402
@@ -400,6 +397,11 @@ def _pengguna_sekarang() -> dict:
     return _PENGGUNA.get() or {}
 
 
+def _id_pengguna() -> str:
+    """User-id string dari konteks login; kosong kalau belum login."""
+    return str(_pengguna_sekarang().get("id") or "")
+
+
 def _scope_args() -> dict:
     """Argumen `config.scope()` dari pengguna yang sedang memanggil."""
     return config.scope_args()
@@ -716,7 +718,7 @@ def _settings_get() -> list[dict]:
     return out
 
 
-def _settings_post(payload: dict) -> dict:
+def _settings_post(payload: dict, handler) -> dict:
     """Simpan pengaturan: identitas/cookie ke Supabase, model ke .env.
 
     Cookie dan identitas hanya milik akun pemanggil, jadi tidak pernah
@@ -783,7 +785,7 @@ def _settings_post(payload: dict) -> dict:
         dibersihkan = _reset_cache_moodle()
         # Sumber token cache ikut dibuang, supaya cookie yang baru tidak
         # tertunda sampai TTL token habis.
-        _lupakan_token(self)
+        _lupakan_token(handler)
         return {"ok": True, "moodle_disegarkan": True, "cache_dibersihkan": dibersihkan}
     return {"ok": True}
 
@@ -913,7 +915,7 @@ def _template_simpan(payload: dict) -> dict:
     schema = payload.get("schema", {})
     if not isinstance(schema, dict):
         raise ValueError("Schema template harus berupa objek.")
-    supabase.template_save(_pengguna_sekarang(), {"id": template_id, "name": str(payload.get("name") or template_id).strip()[:120], "description": str(payload.get("description") or "").strip()[:500], "schema": schema, "is_default": bool(payload.get("is_default"))})
+    supabase.template_save(_id_pengguna(), {"id": template_id, "name": str(payload.get("name") or template_id).strip()[:120], "description": str(payload.get("description") or "").strip()[:500], "schema": schema, "is_default": bool(payload.get("is_default"))})
     return {"ok": True}
 
 
@@ -936,7 +938,7 @@ def _submit_scrape(params: dict) -> dict:
     jenis = str(params.get("jenis") or "").strip()
     if jenis not in {"", "Tugas", "Diskusi", "Kuis"}:
         raise ValueError("Jenis soal tidak dikenal.")
-    params = {**params, "jenis": jenis, "template_id": templates.resolve(_pengguna_sekarang(), params.get("template_id"))["id"]}
+    params = {**params, "jenis": jenis, "template_id": templates.resolve(_id_pengguna(), params.get("template_id"))["id"]}
     sesi = int(params.get("sesi") or 0)
     if params.get("matkul_id") == "semua":
         if sesi < 1:
@@ -1033,7 +1035,7 @@ def _submit_manual(body: bytes, ctype: str) -> str:
         "tanpa_docx": teks.get("tanpa_docx", "") == "on",
         "model": teks.get("model", ""),
         "model_mata": teks.get("model_mata", ""),
-        "template_id": templates.resolve(_pengguna_sekarang(), teks.get("template_id"))["id"],
+        "template_id": templates.resolve(_id_pengguna(), teks.get("template_id"))["id"],
     }
     job = MANAGER.submit(
         "manual", params, slug or "manual", sesi,
@@ -1208,10 +1210,8 @@ class Handler(BaseHTTPRequestHandler):
             return _kirim_json(self, _models())
         if path.startswith("/api/preview/pdf/"):
             return self._preview_pdf(urllib.parse.unquote(path[len("/api/preview/pdf/"):]))
-        if path.startswith("/api/templates/file/"):
-            return self._template_berkas(urllib.parse.unquote(path[len("/api/templates/file/"):]))
         if path == "/api/templates":
-            return _kirim_json(self, {"templates": templates.daftar(_pengguna_sekarang()), "default_id": templates.resolve(_pengguna_sekarang())["id"]})
+            return _kirim_json(self, {"templates": templates.daftar(_id_pengguna()), "default_id": templates.resolve(_id_pengguna())["id"]})
         if path == "/api/moodle-status":
             return _kirim_json(self, _moodle_login())
         if path == "/api/nilai":
@@ -1236,10 +1236,6 @@ class Handler(BaseHTTPRequestHandler):
             return _kirim_json(self, _jadwal(path.split("/")[3]))
         if path == "/api/results":
             return _kirim_json(self, _results_list())
-        if path.startswith("/api/results/preview/"):
-            return self._hasil_pratinjau(
-                urllib.parse.unquote(path[len("/api/results/preview/"):])
-            )
         if path == "/api/jobs":
             return _kirim_json(self, self._jobs_list())
         if path.startswith("/api/jobs/") and path.endswith("/events"):
@@ -1374,7 +1370,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/preview/hapus":
             try:
                 payload = json.loads(self._baca_body().decode("utf-8") or "{}")
-                pratinjau_pdf.hapus(_pengguna_sekarang()["id"], str(payload.get("id") or ""))
+                pratinjau_pdf.hapus(_id_pengguna(), str(payload.get("id") or ""))
                 return _kirim_json(self, {"ok": True})
             except Exception as exc:  # noqa: BLE001
                 return _kirim_json(self, {"error": str(exc)}, 400)
@@ -1395,7 +1391,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/settings":
             try:
                 payload = json.loads(self._baca_body().decode("utf-8"))
-                return _kirim_json(self, _settings_post(payload))
+                return _kirim_json(self, _settings_post(payload, self))
             except Exception as exc:  # noqa: BLE001
                 return _kirim_json(self, {"error": str(exc)}, 400)
         self._not_found()
@@ -1537,29 +1533,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _template_berkas(self, template_id: str) -> None:
-        """Kirim berkas DOCX template bawaan agar pratinjau memakai isi aslinya.
-
-        Hanya template bawaan yang punya berkas (lihat `templates.docx_path`);
-        ID asing atau template kustom tanpa berkas dijawab 404.
-        """
-        try:
-            berkas = templates.docx_path(_pengguna_sekarang(), template_id)
-        except ValueError:
-            return self._not_found()
-        if berkas is None:
-            return self._not_found()
-        data = berkas.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
-
     def _preview_buat(self, payload: dict) -> str:
         """Ambil DOCX (hasil atau template) lalu konversi ke PDF sementara."""
-        user_id = _pengguna_sekarang()["id"]
+        user_id = _id_pengguna()
         if payload.get("rel"):
             diambil = self._hasil_ambil(str(payload["rel"]))
             if diambil is None:
@@ -1577,7 +1553,7 @@ class Handler(BaseHTTPRequestHandler):
     def _preview_pdf(self, id_: str) -> None:
         """Kirim PDF pratinjau milik pemanggil; sesi orang lain dijawab 404."""
         try:
-            data = pratinjau_pdf.ambil_pdf(_pengguna_sekarang()["id"], id_)
+            data = pratinjau_pdf.ambil_pdf(_id_pengguna(), id_)
         except KeyError:
             return self._not_found()
         self.send_response(200)
@@ -1586,32 +1562,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
-
-    # ---- pratinjau
-    def _hasil_pratinjau(self, rel: str) -> None:
-        """Kirim isi DOCX sebagai HTML blok untuk modal pratinjau.
-
-        Diubah di server, bukan di peramban: peramban tidak bisa membaca
-        `.docx`, dan mengirim seluruh berkas agar diurai di sana hanya
-        membuang unduhan. HTML-nya HTML polos tanpa gaya apa pun; seluruh
-        tampilan datang dari kelas `.prev-*` di `app.css`.
-        """
-        diambil = self._hasil_ambil(rel)
-        if diambil is None:
-            return self._not_found()
-        data, nama = diambil
-        if not nama.lower().endswith(".docx"):
-            return _kirim_json(self, {"error": "Pratinjau hanya untuk berkas .docx."}, 400)
-        try:
-            # `docxprev.pratinjau` membaca berkas, jadi objek dari Storage
-            # ditulis ke berkas sementara lalu dibuang lagi.
-            with tempfile.TemporaryDirectory(prefix="tuton-prev-") as tmp:
-                path = Path(tmp) / "pratinjau.docx"
-                path.write_bytes(data)
-                isi = docxprev.pratinjau(path)
-        except Exception as exc:  # noqa: BLE001 - berkas korup atau bukan DOCX
-            return _kirim_json(self, {"error": f"Berkas tidak bisa dipratinjau: {exc}"}, 400)
-        _kirim_json(self, {"html": isi, "nama": nama, "renderer": "docx-preview"})
 
     def _download(self, jid: str) -> None:
         job = MANAGER.jobs.get(jid)

@@ -363,7 +363,6 @@ def nilai_mata_kuliah(klien: moodle.Moodle, course_id: str) -> dict[int, dict[st
         header = tr.find("th")
         if header is None:
             continue
-        # Hanya baris yang benar-benar punya sel nilai.
         td = tr.find("td", class_=re.compile(r"column-grade", re.I))
         if td is None:
             continue
@@ -427,7 +426,6 @@ def daftar_section(klien: moodle.Moodle, matkul: MataKuliah) -> list[int]:
         if m:
             nomor.add(int(m.group(1)))
     if not nomor:
-        # Tanpa dropdown, ambil dari tab onetopic.
         for tautan in soup.select("a.nav-link, ul.tabs li a"):
             m = re.search(r"section=(\d+)", tautan.get("href") or "")
             if m:

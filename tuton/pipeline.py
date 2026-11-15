@@ -18,7 +18,6 @@ karena `worker` harus menyalinnya apa adanya, bukan mencari sendiri.
 
 from __future__ import annotations
 
-import importlib.util
 import re
 import shutil
 import sys
@@ -569,7 +568,6 @@ class Pipeline:
         if self.manual is not None:
             return self._jalankan_manual()
 
-        # Jalur scrape butuh sesi Moodle yang sah.
         self.klien = moodle.Moodle()
         self._log(f"\n=== {self.matkul.label} - Sesi {self.nomor} ===")
 
@@ -580,7 +578,6 @@ class Pipeline:
             raise PipelineGagal(pesan)
         self._log(f"  [1/8] Sesi Moodle: {pesan}")
 
-        # 2. Petakan sesi: soal dan bahan ajar yang benar-benar milik sesi ini.
         sesi = courses.petakan_sesi(self.klien, self.matkul, self.nomor)
         self.hasil.sesi = sesi
         self.hasil.catatan.extend(sesi.catatan)
@@ -641,7 +638,7 @@ class Pipeline:
                     "tidak dibuat. Periksa koneksi Moodle serta _log."
                 )
             transkrip_soal = self._tahap_gambar_soal(gambar_soal)
-            peta = self._tahap_peta_sesi(transkrip_soal, soal_teks)
+            self._tahap_peta_sesi(transkrip_soal, soal_teks)
             transkrip = transkrip_soal + self._tahap_bahan_ajar()
             self.hasil.transkrip = transkrip
             referensi = self._tahap_referensi()
@@ -722,7 +719,6 @@ class Pipeline:
         ]
         self.hasil.gambar_soal = gambar
 
-        # 1. Transkripsi gambar soal (vision).
         transkrip: list[Path] = []
         if self.dengan_gambar and gambar:
             self._tahap = "1/5 vision"
@@ -739,13 +735,11 @@ class Pipeline:
             self._log("  [1/5] Tanpa transkripsi gambar")
         self.hasil.transkrip = transkrip
 
-        # 2. Susun peta soal sintetis dari input manual.
         self._tahap = "2/5 peta"
         self._log("  [2/5] Menyusun peta soal dari input manual...")
         peta = self._bangun_peta_manual(pertanyaan, berkas_unggah, transkrip, jenis)
         self.hasil.peta = peta
 
-        # 3. Daftar pustaka (research) -- bisa dilewati.
         referensi = None
         if m.get("dengan_referensi", True):
             self._tahap = "3/5 research"
@@ -754,12 +748,10 @@ class Pipeline:
         else:
             self._log("  [3/5] Daftar pustaka dilewati")
 
-        # 4. Jawaban (worker).
         self._tahap = "4/5 worker"
         self._log("  [4/5] Menulis jawaban (worker)...")
         self._tahap_jawaban(referensi, pertanyaan)
 
-        # 5. Dokumen DOCX.
         if not self.tanpa_docx:
             self._tahap = "5/5 docx"
             self._log("  [5/5] Membuat dokumen .docx...")
@@ -1916,18 +1908,9 @@ Struktur jawaban yang diminta dokumen akhir:
             **ident,
         }
 
-        # Dimuat lewat jalur berkas, bukan `import tools.docx`. Folder `tools`
-        # tidak punya `__init__.py`, jadi `from tuton.config import TEMPLATE_DIR` di
-        # dalamnya hanya berhasil kalau root proyek ada di `sys.path`.
-        sys.path.insert(0, str(config.BASE_DIR))
-        spec = importlib.util.spec_from_file_location(
-            "jkt_docx", config.TOOLS_DIR / "docx.py"
-        )
-        if spec is None or spec.loader is None:
-            raise PipelineGagal("tools/docx.py tidak bisa dimuat.")
-        docx_tool = importlib.util.module_from_spec(spec)
-        sys.modules["jkt_docx"] = docx_tool
-        spec.loader.exec_module(docx_tool)
+        # tools/docx.py tidak bergantung pada modul lain di proyek ini, jadi
+        # impor biasa cukup. Impor ditunda sampai tahap dokumen dijalankan.
+        from tools import docx as docx_tool
 
         from tuton import templates as template_store
         template = template_store.docx_path(config.current_user(), self.template_id)

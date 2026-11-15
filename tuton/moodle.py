@@ -187,7 +187,6 @@ class Moodle:
         if "/webservice/" in url or url.endswith("/token.php"):
             return True
 
-        # Periksa tag pembuka <body> saja, bukan seluruh dokumen.
         m = re.search(r"<body\b[^>]*>", html or "", re.I)
         if not m:
             # Tanpa tag <body> tidak ada yang bisa diperiksa. Kembalikan False

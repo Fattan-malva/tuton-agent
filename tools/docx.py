@@ -560,7 +560,6 @@ def _parse_latex_math(s: str) -> list[str]:
             i += 1
             continue
 
-        # LaTeX command
         if c == "\\":
             i += 1
             if i >= n:
@@ -572,7 +571,6 @@ def _parse_latex_math(s: str) -> list[str]:
                 nodes.append(_omml_run(nxt))
                 i += 1
                 continue
-            # Spacing commands: \  \, \; \: \! 
             if nxt == " ":
                 i += 1
                 continue
@@ -580,7 +578,6 @@ def _parse_latex_math(s: str) -> list[str]:
                 nodes.append(_omml_run(" " if nxt != "!" else ""))
                 i += 1
                 continue
-            # Command name
             if nxt.isalpha():
                 j = i
                 while j < n and s[j].isalpha():
@@ -676,12 +673,10 @@ def _parse_latex_math(s: str) -> list[str]:
                 else:
                     nodes.append(_omml_run(cmd))
                 continue
-            # \ followed by non-alpha: treat as text
             nodes.append(_omml_run(nxt))
             i += 1
             continue
 
-        # Superscript
         if c == "^":
             base = nodes.pop() if nodes else _omml_run("")
             i += 1
@@ -689,7 +684,6 @@ def _parse_latex_math(s: str) -> list[str]:
             nodes.append(_omml_sup(base, "".join(_parse_latex_math(exp)) if exp else _omml_run("")))
             continue
 
-        # Subscript
         if c == "_":
             base = nodes.pop() if nodes else _omml_run("")
             i += 1
@@ -698,7 +692,6 @@ def _parse_latex_math(s: str) -> list[str]:
             nodes.append(_omml_sub(base, sub_nodes))
             continue
 
-        # Brace group
         if c == "{":
             depth, start = 1, i + 1
             i += 1
@@ -752,14 +745,12 @@ def _parse_latex_math(s: str) -> list[str]:
             i += 1
             continue
 
-        # Numeric literal
         m = re.match(r"\d+(?:\.\d+)?", s[i:])
         if m:
             nodes.append(_omml_run(m.group()))
             i += m.end()
             continue
 
-        # Alphabetic variable (multi-letter run)
         if c.isalpha():
             j = i
             while j < n and s[j].isalpha():
@@ -768,7 +759,6 @@ def _parse_latex_math(s: str) -> list[str]:
             i = j
             continue
 
-        # * outside \-command → ×
         if c == "*":
             nodes.append(_omml_run("×"))
             i += 1
@@ -797,7 +787,6 @@ def _parse_latex_math(s: str) -> list[str]:
             i += len(matched[0])
             continue
 
-        # Everything else: parentheses, operators, brackets, etc.
         nodes.append(_omml_run(c))
         i += 1
 
@@ -992,7 +981,7 @@ def _line_is_display_math(line: str) -> bool:
     if not line or "$" in line:
         return False  # sudah ditangani jalur $...$ / $$...$$
     if not _LATEX_CMD_RE.search(line):
-        return False  # tidak ada perintah LaTeX → teks biasa
+        return False
     toks = _tokenize_rough(line)
     if not toks:
         return False
@@ -1162,7 +1151,6 @@ def _butir_bernomor(doc: Document, num: str, daftar_num_id: str | None):
 def _render_markdown(doc: Document, md: str):
     lines = md.splitlines()
     i = 0
-    ordered_idx = 0
     # Label baris terakhir (mis. "1. Soal Satu") + lebar indentasi yang harus
     # dipakai paragraf-paragraf berikutnya sampai label/heading berikutnya.
     pending_label_pt: float | None = None
@@ -1198,7 +1186,6 @@ def _render_markdown(doc: Document, md: str):
                 code_lines.append(lines[i])
                 i += 1
             _add_code_block(doc, "\n".join(code_lines))
-            ordered_idx = 0
             daftar_num_id = None
             continue
 
@@ -1225,7 +1212,6 @@ def _render_markdown(doc: Document, md: str):
                 _tambah_inline(p, line[label_m.end():])
                 if pending_label_pt:
                     p.paragraph_format.left_indent = Cm(0) + Pt(pending_label_pt)
-                ordered_idx = 0
                 daftar_num_id = None
             elif label_m:
                 num = label_m.group(0).strip().rstrip(".)")
@@ -1236,18 +1222,15 @@ def _render_markdown(doc: Document, md: str):
                 if pending_label_pt:
                     p.paragraph_format.left_indent = Cm(0) + Pt(pending_label_pt)
                 pending_label_pt = _label_indent_pt(f"{num}. ", body_font_pt)
-                ordered_idx = 1
             else:
                 p = doc.add_paragraph()
                 _tambah_inline(p, line)
                 if pending_label_pt:
                     p.paragraph_format.left_indent = Cm(0) + Pt(pending_label_pt)
-                ordered_idx = 0
                 daftar_num_id = None
             i += 1
             continue
 
-        # Tabel markdown
         if _is_table_row(line) and i + 1 < len(lines) and re.match(
             r"^\s*\|[\s:|-]+\|\s*$", lines[i + 1]
         ):
@@ -1376,7 +1359,6 @@ def _render_markdown(doc: Document, md: str):
                     _add_runs(p, seg)
             if not teks_di_luar:
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            ordered_idx = 0
             daftar_num_id = None
             continue
 
@@ -1414,14 +1396,12 @@ def _render_markdown(doc: Document, md: str):
             pending_label_pt = None
             continue
 
-        # Bullet list
         if re.match(r"^[-*]\s+", line):
             p = doc.add_paragraph(style="List Bullet")
             _add_runs(p, re.sub(r"^[-*]\s+", "", line))
             if pending_label_pt:
                 p.paragraph_format.left_indent = Cm(0) + Pt(pending_label_pt)
             i += 1
-            ordered_idx = 0
             daftar_num_id = None
             continue
 
@@ -1459,17 +1439,13 @@ def _render_markdown(doc: Document, md: str):
                 p.paragraph_format.left_indent = Cm(0) + Pt(pending_label_pt)
             # Butir bernomor itu sendiri jadi label untuk paragraf setelahnya.
             pending_label_pt = _label_indent_pt(f"{num}. ", body_font_pt)
-            ordered_idx = 1
             i += 1
             continue
 
-        ordered_idx = 0
         daftar_num_id = None
-        # Empty line → skip; blockquote → plain paragraph
         if not line.strip():
             i += 1
             continue
-        # Horizontal rule --- / *** → spacer paragraph
         if re.match(r"^[-*=_]{3,}\s*$", line.strip()):
             doc.add_paragraph()
             i += 1
@@ -2064,7 +2040,7 @@ def _heading_style(doc: Document, level: int) -> str:
 # akan tampil biru dan Calibri Light, dan itu langsung terbaca sebagai "dibuat
 # mesin", padahal yang salah hanya style bawaannya.
 _HEADING_FONT = "Times New Roman"
-_HEADING_COLOR = "000000"  # hitam
+_HEADING_COLOR = "000000"
 
 
 def _rapikan_heading(run, doc: Document, style_name: str, *, pt: int | None = None) -> None:
@@ -2627,7 +2603,6 @@ def _soal_bersih(soal_text: str) -> str:
         if _SOAL_LABEL_RE.match(line):
             continue
         out.append(line)
-    # Runtuhkan blok kosong berlebih yang ditinggalkan oleh penyaringan.
     teks = "\n".join(out).strip()
     teks = re.sub(r"\n{3,}", "\n\n", teks)
     return _buang_markah_reader(teks)
@@ -2694,7 +2669,6 @@ def _tulis_soal(
     if not gambar and not teks:
         return
 
-    # Judul "Soal" selalu bold hitam TNR, sama seperti heading lain.
     sh = doc.add_paragraph(style=_heading_style(doc, 2))
     run = sh.add_run("Soal")
     _rapikan_heading(run, doc, _heading_style(doc, 2))

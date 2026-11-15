@@ -338,7 +338,7 @@ def identitas() -> dict[str, str]:
 # Batas research. `research.md` menulis `{MAX}` dan `{TAHUN_MIN}` sebagai
 # placeholder, jadi pipeline menulis salinan spec yang sudah di-resolve per run.
 MAX_REFERENSI = 3
-TAHUN_MIN = date.today().year - 10  # "10 tahun terakhir"
+TAHUN_MIN = date.today().year - 10
 
 # Jumlah halaman yang boleh dibuka scrapper untuk satu sesi. Spec aslinya 12;
 # satu sesi nyata bisa punya 1 forum + 1 tugas + beberapa lampiran + 1 halaman
