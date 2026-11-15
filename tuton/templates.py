@@ -1,22 +1,17 @@
-"""Template job per pengguna. Fase 1: pilihan dan resolusi, bukan renderer."""
+"""Template jawaban: daftar, resolusi, dan renderer dari skema (tanpa berkas DOCX)."""
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
-from tuton import config, supabase
+from tuton import supabase
+from tuton import template_schema as skema_mod
 
 DEFAULT_ID = "akademik-standar"
-BUILTINS = (
-    {"id": "akademik-standar", "name": "Akademik standar", "description": "Format jawaban akademik umum."},
-    {"id": "ringkas", "name": "Ringkas", "description": "Jawaban padat dan langsung."},
-    {"id": "analitis", "name": "Analitis", "description": "Penjelasan dengan analisis lebih dalam."},
-    {"id": "diskusi", "name": "Diskusi", "description": "Format respons untuk forum diskusi."},
-    {"id": "tugas-terstruktur", "name": "Tugas terstruktur", "description": "Susunan jawaban tugas berbagian."},
-)
 
 
 def daftar(user_id: str) -> list[dict]:
-    return [*BUILTINS, *supabase.template_list(user_id)]
+    return [*skema_mod.preset_daftar(), *supabase.template_list(user_id)]
 
 
 def resolve(user_id: str, template_id: object = "") -> dict:
@@ -28,8 +23,34 @@ def resolve(user_id: str, template_id: object = "") -> dict:
     raise ValueError("Template tidak ditemukan.")
 
 
-def docx_path(user_id: str, template_id: object = "") -> Path | None:
-    """Resolve hanya file bawaan yang ada; template kustom belum punya DOCX."""
+def skema(user_id: str, template_id: object = "") -> dict:
+    """Skema ter-normalisasi untuk template bawaan atau milik user."""
     identitas = resolve(user_id, template_id)["id"]
-    path = config.TEMPLATE_DIR / f"{identitas}.docx"
-    return path if path.is_file() else None
+    bawaan = skema_mod.preset_skema(identitas)
+    if bawaan is not None:
+        return skema_mod.normalisasi(bawaan)
+    baris = supabase.template_get(user_id, identitas)
+    if baris is None:
+        raise ValueError("Template tidak ditemukan.")
+    return skema_mod.normalisasi(baris.get("schema") or {})
+
+
+def render_base(user_id: str, template_id: object, out_dir: Path) -> Path:
+    """Kerangka DOCX untuk pekerjaan: hanya judul, identitas, dan blok keep.
+
+    Isi jawaban belum ada; pipeline yang mengisi judul, identitas, dan jawaban.
+    """
+    berkas = Path(out_dir) / "kerangka.docx"
+    return skema_mod.render(skema(user_id, template_id), berkas, "pekerjaan")
+
+
+def pratinjau_docx(user_id: str, template_id: object = "", schema: dict | None = None) -> bytes:
+    """DOCX pratinjau penuh (sampel lorem, semua blok) untuk galeri dan editor.
+
+    Kalau `schema` diisi (dari editor), itu yang dipakai; selain itu template
+    bawaan atau milik user.
+    """
+    with tempfile.TemporaryDirectory(prefix="tuton-pratinjau-") as tmp:
+        sumber = skema_mod.normalisasi(schema) if schema is not None else skema(user_id, template_id)
+        berkas = skema_mod.render(sumber, Path(tmp) / "pratinjau.docx", "pratinjau")
+        return berkas.read_bytes()

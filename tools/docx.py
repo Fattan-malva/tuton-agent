@@ -1466,6 +1466,18 @@ def _render_markdown(doc: Document, md: str):
         i += 1
 
 
+MARKA_TEMPLATE = "tuton-template-v1"
+
+
+def _berkas_generated(doc: Document) -> bool:
+    """True kalau kerangka dibuat dari skema (tuton/template_schema.py).
+
+    Kerangka seperti ini sudah bersih dan sudah memakai tipografi final, jadi
+    pemotongan sampel dan penimpaan tipografi dilewati.
+    """
+    return (doc.core_properties.keywords or "") == MARKA_TEMPLATE
+
+
 def _load_base_document(template_path: Path | None):
     """Buka template sebagai dokumen dasar.
 
@@ -1489,7 +1501,7 @@ def _load_base_document(template_path: Path | None):
             # font isi template tak akan pernah terdeteksi dan `Normal` akan
             # kembali ke default-nya sendiri (Arial, bukan Times New Roman).
             font_name, font_size = _template_body_font(doc)
-            if not _siapkan_lembar(doc):
+            if not _berkas_generated(doc) and not _siapkan_lembar(doc):
                 # Bukan template format jawaban (tidak ada `Heading 2` sebagai
                 # penanda contoh). Kosongkan total supaya isinya tidak bocor ke
                 # dokumen hasil.
@@ -1921,7 +1933,7 @@ def build_docx(
     doc, from_template, font_name, font_size = _load_base_document(
         Path(template) if template else None
     )
-    if from_template:
+    if from_template and not _berkas_generated(doc):
         _apply_base_typography(doc, font_name, font_size)
 
     # Judul dan tabel identitas: template sudah menyediakan keduanya, jadi
@@ -2043,6 +2055,18 @@ _HEADING_FONT = "Times New Roman"
 _HEADING_COLOR = "000000"
 
 
+def _font_style(doc: Document, style_name: str) -> str:
+    """Nama font dari style heading, lalu Normal; cadangan Times New Roman."""
+    for nama in (style_name, "Normal"):
+        try:
+            name = doc.styles[nama].font.name
+        except KeyError:
+            name = None
+        if name:
+            return name
+    return _HEADING_FONT
+
+
 def _rapikan_heading(run, doc: Document, style_name: str, *, pt: int | None = None) -> None:
     """Jadikan satu run heading: bold, hitam, Times New Roman.
 
@@ -2051,8 +2075,9 @@ def _rapikan_heading(run, doc: Document, style_name: str, *, pt: int | None = No
     di style: begitu tutor mengubah font lewat style, hasil pipeline tetap
     konsisten dengan yang diminta di sini.
     """
+    font = _font_style(doc, style_name)
     run.bold = True
-    run.font.name = _HEADING_FONT
+    run.font.name = font
     run.font.color.rgb = RGBColor.from_string(_HEADING_COLOR)
     # `eastAsia`/`cs` wajib diisi juga; kalau tidak, teks dengan karakter
     # non-Latin akan jatuh ke font tema dan terlihat tidak serasi.
@@ -2062,10 +2087,10 @@ def _rapikan_heading(run, doc: Document, style_name: str, *, pt: int | None = No
         q = qn(attr)
         if q in rf.attrib:
             del rf.attrib[q]
-    rf.set(qn("w:ascii"), _HEADING_FONT)
-    rf.set(qn("w:hAnsi"), _HEADING_FONT)
-    rf.set(qn("w:eastAsia"), _HEADING_FONT)
-    rf.set(qn("w:cs"), _HEADING_FONT)
+    rf.set(qn("w:ascii"), font)
+    rf.set(qn("w:hAnsi"), font)
+    rf.set(qn("w:eastAsia"), font)
+    rf.set(qn("w:cs"), font)
 
     if pt is None:
         pt = _heading_pt(doc, style_name, 0)

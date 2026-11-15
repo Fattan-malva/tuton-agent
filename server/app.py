@@ -41,6 +41,7 @@ from tuton import config  # noqa: E402
 from tuton import clerk  # noqa: E402
 from tuton import supabase  # noqa: E402
 from tuton import templates  # noqa: E402
+from tuton import template_schema  # noqa: E402
 from server import pratinjau_pdf  # noqa: E402
 from server.jobs import JobManager  # noqa: E402
 from tuton import courses  # noqa: E402
@@ -912,9 +913,7 @@ def _template_simpan(payload: dict) -> dict:
     template_id = str(payload.get("id") or "").strip()
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", template_id):
         raise ValueError("ID template tidak sah.")
-    schema = payload.get("schema", {})
-    if not isinstance(schema, dict):
-        raise ValueError("Schema template harus berupa objek.")
+    schema = template_schema.normalisasi(payload.get("schema", {}))
     supabase.template_save(_id_pengguna(), {"id": template_id, "name": str(payload.get("name") or template_id).strip()[:120], "description": str(payload.get("description") or "").strip()[:500], "schema": schema, "is_default": bool(payload.get("is_default"))})
     return {"ok": True}
 
@@ -1541,11 +1540,10 @@ class Handler(BaseHTTPRequestHandler):
             if diambil is None:
                 raise ValueError("Berkas hasil tidak ditemukan.")
             docx_bytes = diambil[0]
+        elif payload.get("schema") is not None:
+            docx_bytes = templates.pratinjau_docx(user_id, schema=payload["schema"])
         elif payload.get("template_id"):
-            berkas = templates.docx_path(user_id, str(payload["template_id"]))
-            if berkas is None:
-                raise ValueError("Berkas template tidak ditemukan.")
-            docx_bytes = berkas.read_bytes()
+            docx_bytes = templates.pratinjau_docx(user_id, template_id=str(payload["template_id"]))
         else:
             raise ValueError("Sumber pratinjau kosong.")
         return pratinjau_pdf.buat(user_id, docx_bytes)

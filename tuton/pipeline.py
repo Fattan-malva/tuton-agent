@@ -1912,20 +1912,28 @@ Struktur jawaban yang diminta dokumen akhir:
         # impor biasa cukup. Impor ditunda sampai tahap dokumen dijalankan.
         from tools import docx as docx_tool
 
+        import shutil
+
         from tuton import templates as template_store
-        template = template_store.docx_path(config.current_user(), self.template_id)
 
         out = config.output_dir(self.matkul.slug, self.nomor)
         out.mkdir(parents=True, exist_ok=True)
-        docx_path, _ = docx_tool.save_doc(
-            jawaban_md=jawaban,
-            soal_text=soal_teks,
-            meta=meta,
-            out_dir=out,
-            template=template,
-            include_soal=True,
-            gambar_soal=self.hasil.gambar_soal or None,
-        )
+        # Kerangka dirender dari skema template yang dipilih ke folder sementara
+        # dan dibuang setelah dokumen jadi. Yang masuk keluaran hanya isi jawaban.
+        kerangka = out / ".template"
+        template = template_store.render_base(config.current_user(), self.template_id, kerangka)
+        try:
+            docx_path, _ = docx_tool.save_doc(
+                jawaban_md=jawaban,
+                soal_text=soal_teks,
+                meta=meta,
+                out_dir=out,
+                template=template,
+                include_soal=True,
+                gambar_soal=self.hasil.gambar_soal or None,
+            )
+        finally:
+            shutil.rmtree(kerangka, ignore_errors=True)
         self.hasil.docx = docx_path
         # `_simpan_aman` di `tools/docx.py` berpindah ke nama bernomor kalau
         # berkas tujuan sedang terkunci Word/OneDrive. Kalau itu terjadi, nama

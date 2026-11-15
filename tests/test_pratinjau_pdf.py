@@ -5,7 +5,9 @@ from unittest import mock
 
 from server import pratinjau_pdf
 
-DOCX = Path(__file__).resolve().parent.parent / "template" / "akademik-standar.docx"
+from tuton import templates
+
+DOCX_BYTES = templates.pratinjau_docx("", template_id="akademik-standar")
 
 
 @unittest.skipUnless(shutil.which("soffice") or shutil.which("libreoffice"), "LibreOffice tidak terpasang")
@@ -16,7 +18,7 @@ class TestPratinjauPdf(unittest.TestCase):
         pratinjau_pdf._SESI.clear()
 
     def test_konversi_lalu_hapus_bersih(self):
-        id_ = pratinjau_pdf.buat("user-a", DOCX.read_bytes())
+        id_ = pratinjau_pdf.buat("user-a", DOCX_BYTES)
         folder = pratinjau_pdf._SESI[id_]["folder"]
         self.assertTrue(folder.is_dir())
         self.assertTrue(pratinjau_pdf.ambil_pdf("user-a", id_).startswith(b"%PDF"))
@@ -26,14 +28,14 @@ class TestPratinjauPdf(unittest.TestCase):
             pratinjau_pdf.ambil_pdf("user-a", id_)
 
     def test_sesi_orang_lain_tidak_bisa_dibaca_atau_dihapus(self):
-        id_ = pratinjau_pdf.buat("user-a", DOCX.read_bytes())
+        id_ = pratinjau_pdf.buat("user-a", DOCX_BYTES)
         with self.assertRaises(KeyError):
             pratinjau_pdf.ambil_pdf("user-b", id_)
         self.assertFalse(pratinjau_pdf.hapus("user-b", id_))
         self.assertTrue(pratinjau_pdf.hapus("user-a", id_))
 
     def test_kadaluarsa_dibersihkan(self):
-        id_ = pratinjau_pdf.buat("user-a", DOCX.read_bytes())
+        id_ = pratinjau_pdf.buat("user-a", DOCX_BYTES)
         folder = pratinjau_pdf._SESI[id_]["folder"]
         with mock.patch.object(pratinjau_pdf, "TTL_DETIK", -1):
             self.assertEqual(pratinjau_pdf.bersihkan_kadaluarsa(), 1)

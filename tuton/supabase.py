@@ -232,6 +232,17 @@ def template_default(user_id: str) -> str:
         return ""
 
 
+def template_get(user_id: str, template_id: str) -> dict | None:
+    if not aktif() or not user_id:
+        return None
+    try:
+        r = requests.get(_url(TEMPLATE_TABLE), params={"select": "id,name,description,schema", "user_id": f"eq.{user_id}", "id": f"eq.{template_id}", "limit": "1"}, headers=_headers(), timeout=10)
+        rows = r.json() if r.ok and isinstance(r.json(), list) else []
+        return rows[0] if rows else None
+    except requests.RequestException:
+        return None
+
+
 def template_save(user_id: str, template: dict) -> None:
     if not aktif() or not user_id:
         return

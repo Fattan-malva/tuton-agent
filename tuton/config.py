@@ -19,7 +19,6 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TOOLS_DIR = BASE_DIR / "tools"
-TEMPLATE_DIR = BASE_DIR / "template"
 
 OUTPUT_DIR = BASE_DIR / "output"
 CACHE_DIR = BASE_DIR / "cache"
