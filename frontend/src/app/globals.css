@@ -263,3 +263,9 @@
 .jad-bar.tugas {
   @apply bg-tugas-soft text-tugas ring-tugas/30;
 }
+
+/* Animasi kilau untuk skeleton pratinjau DOCX (lihat docx-preview-frame.tsx). */
+@keyframes tuton-shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(200%); }
+}

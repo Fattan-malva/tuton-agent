@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { apiFetch, postJSON } from '@/lib/api'
+import { DocxPreviewFrame } from '@/components/docx-preview-frame'
 import { usePratinjauPdf } from '@/hooks/use-pratinjau-pdf'
 
 type Nilai = string | number | boolean | string[] | undefined
@@ -392,11 +393,7 @@ export function TemplateEditor({ editId, onBatal, onSimpan }: { editId?: string;
 
         <section className='bg-muted flex flex-col gap-2 rounded-lg border p-3 lg:sticky lg:top-4 lg:self-start'>
           <p className='text-sm font-medium'>Pratinjau</p>
-          <div className='relative h-[72vh] overflow-hidden rounded-md bg-white'>
-            {pratinjau.url && <iframe title='Pratinjau template' src={`${pratinjau.url}#view=FitH`} className='h-full w-full border-0' />}
-            {pratinjau.loading && <div className='text-muted-foreground absolute inset-0 flex items-center justify-center text-sm'>Memperbarui pratinjau…</div>}
-            {pratinjau.error && <div className='text-destructive absolute inset-0 flex items-center justify-center p-4 text-center text-sm'>{pratinjau.error}</div>}
-          </div>
+          <DocxPreviewFrame url={pratinjau.url} loading={pratinjau.loading} error={pratinjau.error} title='Pratinjau template' className='h-[72vh]' />
         </section>
       </div>
     </div>

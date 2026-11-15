@@ -1,10 +1,11 @@
 'use client'
 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DocxPreviewFrame } from '@/components/docx-preview-frame'
 import { usePratinjauPdf } from '@/hooks/use-pratinjau-pdf'
 
-// Pratinjau ukuran penuh satu template. PDF dibuat server saat dialog dibuka
-// dan dihapus saat dialog ditutup (sumber jadi null, lalu hook membersihkan).
+// Pratinjau ukuran penuh satu template. Ukuran modal sama dengan pratinjau
+// hasil di menu Result. PDF dibuat server saat dibuka dan dihapus saat ditutup.
 export function TemplatePreviewDialog({
   templateId,
   label,
@@ -17,16 +18,12 @@ export function TemplatePreviewDialog({
   const { url, loading, error } = usePratinjauPdf({ template_id: templateId })
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className='max-w-[calc(210mm+8rem)] gap-3 p-6'>
+      <DialogContent className='flex h-[92vh] max-h-[92vh] w-[96vw] max-w-[calc(210mm+8rem)] flex-col sm:max-w-[calc(210mm+8rem)]'>
         <DialogHeader>
-          <DialogTitle>Pratinjau {label}</DialogTitle>
+          <DialogTitle className='truncate'>Pratinjau {label}</DialogTitle>
           <DialogDescription>Contoh tata letak dengan teks lorem ipsum.</DialogDescription>
         </DialogHeader>
-        <div className='bg-muted h-[75vh] overflow-hidden rounded-md'>
-          {url && <iframe title={`Pratinjau ${label}`} src={`${url}#view=FitH`} className='h-full w-full border-0 bg-white' />}
-          {loading && <div className='text-muted-foreground flex h-full items-center justify-center text-sm'>Memuat pratinjau…</div>}
-          {error && <div className='text-muted-foreground flex h-full items-center justify-center p-4 text-center text-sm'>Pratinjau tidak tersedia untuk template ini.</div>}
-        </div>
+        <DocxPreviewFrame url={url} loading={loading} error={error} title={`Pratinjau ${label}`} className='min-h-0 flex-1' />
       </DialogContent>
     </Dialog>
   )

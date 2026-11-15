@@ -1,5 +1,6 @@
 'use client'
 
+import { DocxPreviewFrame } from '@/components/docx-preview-frame'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { Download, Eye, FileText, Search, Trash2 } from 'lucide-react'
@@ -296,23 +297,7 @@ function PreviewDialog({
           <DialogTitle className='truncate'>{preview?.nama}</DialogTitle>
           <DialogDescription>Pratinjau dokumen DOCX</DialogDescription>
         </DialogHeader>
-        <div className='bg-slate-100 min-h-0 flex-1 overflow-hidden rounded-md border'>
-          {loading && (
-            <div className='space-y-2 p-6'>
-              {Array.from({ length: 8 }).map((_, i) => (
-                <Skeleton key={i} className='h-4 w-full' />
-              ))}
-            </div>
-          )}
-          {error && <p className='text-destructive p-6 text-sm'>{error}</p>}
-          {url && (
-            <iframe
-              title={preview?.nama ?? 'Pratinjau'}
-              src={`${url}#view=FitH`}
-              className='h-full w-full border-0 bg-slate-100'
-            />
-          )}
-        </div>
+        <DocxPreviewFrame url={url} loading={loading} error={error} title={preview?.nama ?? 'Pratinjau'} className='min-h-0 flex-1' />
         <div className='flex justify-end gap-2'>
           <Button
             variant='outline'

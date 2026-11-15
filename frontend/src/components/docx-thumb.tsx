@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { Spinner } from '@/components/docx-preview-frame'
 import { usePratinjauPdf } from '@/hooks/use-pratinjau-pdf'
 
 // Lebar kertas A4 pada 96 dpi (210 mm). PDF dirender pada lebar ini lalu
@@ -46,7 +47,11 @@ export function DocxThumb({ templateId, label }: { templateId: string; label: st
           }}
         />
       )}
-      {loading && <div className='bg-muted absolute inset-0 animate-pulse' />}
+      {loading && (
+        <div className='bg-muted absolute inset-0 flex items-center justify-center'>
+          <Spinner className='size-6' />
+        </div>
+      )}
       {error && (
         <div className='text-muted-foreground absolute inset-0 flex items-center justify-center p-4 text-center text-xs'>
           Pratinjau tidak tersedia untuk template ini.
