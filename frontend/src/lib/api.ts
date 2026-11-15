@@ -97,6 +97,12 @@ export function postForm<T>(path: string, body: FormData) {
 }
 
 /** URL EventSource tidak bisa membawa header, jadi token ikut di query. */
+// `fetch` mentah untuk respons biner (mis. DOCX). Memakai token yang sama
+// dengan `request()`; server menolak `/api/*` tanpa header Authorization.
+export async function apiFetch(path: string): Promise<Response> {
+  return fetch(path, { cache: 'no-store', headers: await authHeaders() })
+}
+
 export async function streamUrl(path: string) {
   const token = await authHeaders()
   const auth = token.Authorization

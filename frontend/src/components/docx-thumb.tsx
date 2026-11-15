@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { renderAsync } from 'docx-preview'
+import { apiFetch } from '@/lib/api'
 
 // Lebar kertas A4 pada 96 dpi (210 mm). Pratinjau memakai ukuran ini supaya
 // tampilannya sama dengan halaman Word, bukan tiruan dengan CSS.
@@ -12,7 +13,6 @@ export const A4_PX = 794
 // yang sama. Halaman pertama diskalakan agar pas dengan kotak.
 export function DocxThumb({ url, label }: { url: string; label: string }) {
   const hostRef = useRef<HTMLDivElement>(null)
-  const [gagal, setGagal] = useState(false)
 
   useEffect(() => {
     const host = hostRef.current
@@ -34,8 +34,7 @@ export function DocxThumb({ url, label }: { url: string; label: string }) {
     ro.observe(host)
 
     let batal = false
-    setGagal(false)
-    fetch(url, { cache: 'no-store' })
+    apiFetch(url)
       .then((r) => {
         if (!r.ok) throw new Error('Template tidak bisa dimuat.')
         return r.arrayBuffer()
@@ -43,7 +42,16 @@ export function DocxThumb({ url, label }: { url: string; label: string }) {
       .then((buffer) => {
         if (!batal) return renderAsync(buffer, isi, gaya, { inWrapper: false, breakPages: true })
       })
-      .catch(() => { if (!batal) setGagal(true) })
+      .catch(() => {
+        // Pesan galat harus ditulis ke shadow root: host yang punya shadow
+        // root tidak menampilkan light DOM-nya, jadi teks di luar shadow
+        // akan tersembunyi dan kotaknya tampak kosong.
+        if (batal) return
+        const pesan = document.createElement('div')
+        pesan.textContent = 'Pratinjau tidak tersedia untuk template ini.'
+        pesan.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;text-align:center;font:12px system-ui,sans-serif;color:#6b7280;'
+        shadow.replaceChildren(pesan)
+      })
 
     return () => {
       batal = true
@@ -60,11 +68,6 @@ export function DocxThumb({ url, label }: { url: string; label: string }) {
       className='bg-muted relative w-full overflow-hidden'
       style={{ aspectRatio: '210 / 297' }}
     >
-      {gagal && (
-        <div className='text-muted-foreground absolute inset-0 flex items-center justify-center p-4 text-center text-xs'>
-          Pratinjau tidak tersedia untuk template ini.
-        </div>
-      )}
     </div>
   )
 }

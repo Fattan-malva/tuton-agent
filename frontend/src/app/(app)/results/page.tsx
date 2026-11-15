@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { Download, Eye, FileText, Search, Trash2 } from 'lucide-react'
-import { postJSON, streamUrl } from '@/lib/api'
+import { apiFetch, postJSON, streamUrl } from '@/lib/api'
 import type { ResultFile } from '@/lib/types'
 import { formatBytes } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -300,7 +300,7 @@ function PreviewDialog({
     setIsLoading(true)
     setError(null)
     host.replaceChildren()
-    fetch(`/api/download-output/${enc}`)
+    apiFetch(`/api/download-output/${enc}`)
       .then((response) => { if (!response.ok) throw new Error('DOCX tidak bisa dimuat.'); return response.arrayBuffer() })
       .then((buffer) => { if (!cancelled) return renderAsync(buffer, host, undefined, { breakPages: true }) })
       .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason : new Error(String(reason))) })
