@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { Download, Eye, FileText, Search, Trash2 } from 'lucide-react'
 import { postJSON, streamUrl } from '@/lib/api'
@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { renderAsync } from 'docx-preview'
 import {
   Table,
   TableBody,
@@ -286,9 +287,23 @@ function PreviewDialog({
   onClose: () => void
 }) {
   const enc = preview ? encodeRel(preview.rel) : null
-  const { data, isLoading, error } = useSWR<{ html: string }>(
-    enc ? `/api/results/preview/${enc}` : null,
-  )
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  useEffect(() => {
+    if (!enc || !containerRef.current) return
+    let cancelled = false
+    setIsLoading(true)
+    setError(null)
+    containerRef.current.replaceChildren()
+    fetch(`/api/download-output/${enc}`)
+      .then((response) => { if (!response.ok) throw new Error('DOCX tidak bisa dimuat.'); return response.arrayBuffer() })
+      .then((buffer) => { if (!cancelled && containerRef.current) return renderAsync(buffer, containerRef.current) })
+      .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason : new Error(String(reason))) })
+      .finally(() => { if (!cancelled) setIsLoading(false) })
+    return () => { cancelled = true; containerRef.current?.replaceChildren() }
+  }, [enc])
 
   return (
     <Dialog open={Boolean(preview)} onOpenChange={(open) => !open && onClose()}>
@@ -297,7 +312,7 @@ function PreviewDialog({
           <DialogTitle className='truncate'>{preview?.nama}</DialogTitle>
           <DialogDescription>Pratinjau dokumen DOCX</DialogDescription>
         </DialogHeader>
-        <div className='min-h-0 flex-1 overflow-auto rounded-md border p-4'>
+        <div className='min-h-0 flex-1 overflow-auto rounded-md border bg-slate-100 p-6'>
           {isLoading ? (
             <div className='space-y-2'>
               {Array.from({ length: 8 }).map((_, i) => (
@@ -305,18 +320,9 @@ function PreviewDialog({
               ))}
             </div>
           ) : error ? (
-            <p className='text-destructive text-sm'>
-              {String((error as Error).message)}
-            </p>
-          ) : data?.html?.trim() ? (
-            <div
-              className='prose prose-sm dark:prose-invert max-w-none'
-              dangerouslySetInnerHTML={{ __html: data.html }}
-            />
+            <p className='text-destructive text-sm'>{error.message}</p>
           ) : (
-            <p className='text-muted-foreground text-sm'>
-              Dokumen tidak memiliki teks yang bisa ditampilkan.
-            </p>
+            <div ref={containerRef} className='docx-preview min-w-[720px] bg-white p-6 text-black' />
           )}
         </div>
         <div className='flex justify-end gap-2'>
