@@ -452,21 +452,6 @@ def _omml_math_accent(cmd: str, inner: str) -> str:
     )
 
 
-def _omml_nary(chr_: str, sub: str, sup: str, inner: str) -> str:
-    sub_xml = "".join(_parse_latex_math(sub)) or _omml_run("")
-    sup_xml = "".join(_parse_latex_math(sup)) or _omml_run("")
-    inner_xml = "".join(_parse_latex_math(inner)) or _omml_run("")
-    return (
-        "<m:nary><m:naryPr>"
-        f'<m:chr m:val="{chr_}"/><m:limLoc m:val="undOvr"/>'
-        f'<m:subHide m:val="{"0" if sub else "1"}"/>'
-        f'<m:supHide m:val="{"0" if sup else "1"}"/>'
-        "</m:naryPr>"
-        f"<m:sub>{sub_xml}</m:sub><m:sup>{sup_xml}</m:sup>"
-        f"<m:e>{inner_xml}</m:e></m:nary>"
-    )
-
-
 def _omml_lim(base_cmd: str, limit: str, over: bool) -> str:
     """OMML untuk \\overset{}{} / \\underset{}{} / \\xrightarrow{}.
 
@@ -1505,28 +1490,6 @@ def _render_markdown(doc: Document, md: str):
         i += 1
 
 
-def _clean_soal(md: str) -> str:
-    """Buang metadata lampiran/transkripsi dari soal, pertahankan isi transkripsi."""
-    lines = md.splitlines()
-    out: list[str] = []
-    skip_attachments = False
-    for line in lines:
-        stripped = line.strip()
-        if re.match(r"^##\s+Lampiran\s*:?", stripped):
-            skip_attachments = True
-            continue
-        if re.match(r"^##\s+Isi\s+lampiran\b", stripped, re.IGNORECASE):
-            continue
-        if stripped == "# Transkrip Soal":
-            continue
-        if skip_attachments:
-            if re.match(r"^[-*]\s+", stripped) or not stripped:
-                continue
-            skip_attachments = False
-        out.append(line)
-    return "\n".join(out)
-
-
 def _load_base_document(template_path: Path | None):
     """Buka template sebagai dokumen dasar.
 
@@ -2016,7 +1979,7 @@ def build_docx(
     if include_soal:
         _tulis_soal(doc, soal_text, gambar_soal=gambar_soal)
 
-    # Jawab (dari markdown opencode)
+    # Jawab (dari markdown agent)
     body = _bersihkan_tanda_humanizer(_drop_identity_echo(_answer_body(jawaban_md)))
     if body.strip():
         _render_markdown(doc, body)
@@ -2082,7 +2045,7 @@ def _simpan_aman(doc: Document, out_docx: Path) -> Path:
 
 def _default_template_path() -> Path | None:
     """Template standar; `None` kalau folder template tidak ada."""
-    from config import TEMPLATE_DIR
+    from tuton.config import TEMPLATE_DIR
 
     if not TEMPLATE_DIR.is_dir():
         return None
@@ -2547,24 +2510,6 @@ def _tandai_placeholder_referensi(doc: Document) -> None:
             for run in p.runs:
                 run.italic = True
             return
-
-
-def _convert_to_doc(docx_path: Path, doc_path: Path) -> bool:
-    try:
-        import win32com.client  # type: ignore
-
-        word = win32com.client.Dispatch("Word.Application")
-        word.Visible = False
-        try:
-            wd = word.Documents.Open(str(docx_path.resolve()))
-            wd.SaveAs2(str(doc_path.resolve()), FileFormat=0)  # 0 = Word 97-2003 .doc
-            wd.Close(False)
-        finally:
-            word.Quit()
-        return True
-    except Exception as exc:  # noqa: BLE001
-        print(f"  ! Konversi ke .doc dilewati ({exc}). File .docx dipertahankan.")
-        return False
 
 
 def rangkas_dokumen(docx_path: Path) -> list[str]:

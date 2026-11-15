@@ -24,13 +24,12 @@ mata kuliah, lengkap dengan mata kuliah mana yang akan ikut.
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 
-import config
-import courses
-import moodle
-from pipeline import Pipeline, PipelineGagal
+from tuton import config
+from tuton import courses
+from tuton import moodle
+from tuton.pipeline import Pipeline, PipelineGagal
 
 GARIS = "=" * 68
 

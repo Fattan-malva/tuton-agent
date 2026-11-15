@@ -1,0 +1,406 @@
+"""Manajer job: antre, jalankan Pipeline di thread, dan kumpulkan event.
+
+Satu job aktif dalam satu waktu supaya panggilan model tidak membanjiri mesin.
+Tiap event yang dikirim pipeline lewat `reporter` disimpan ke memori (untuk
+SSE) dan ke berkas `<job>/events.jsonl` (untuk replay saat halaman disegarkan).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import threading
+import time
+
+from tuton import config
+from tuton import courses
+from tuton import moodle
+from tuton import pipeline
+
+
+def _hapus_folder_sesi(slug: str, sesi: int) -> str:
+    """Hapus `_kerja/<slug>/sesi-<N>/` milik satu job.
+
+    Mengembalikan pesan galat ketika gagal, atau string kosong ketika
+    berhasil dan ketika foldernya memang sudah tidak ada (pipeline
+    membersihkannya sendiri begitu DOCX jadi).
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", str(slug)) or ".." in str(slug):
+        return f"Nama folder tidak sah, tidak dihapus: {slug!r}"
+    try:
+        akar = config.work_dirs(str(slug), int(sesi))["root"]
+    except (KeyError, TypeError, ValueError):
+        # Konfigurasi uji kadang mengganti work_dirs dengan stub yang tidak
+        # memuat kunci "root"; tidak ada yang bisa dihapus, bukan kegagalan.
+        return ""
+    try:
+        shutil.rmtree(akar)
+    except FileNotFoundError:
+        return ""
+    except OSError as exc:
+        return f"Folder kerja tidak bisa dihapus: {exc}"
+    # Induk yang kini kosong (hanya menyimpan satu sesi) ikut dibuang supaya
+    # `_kerja/` tidak menumpuk folder mata kuliah yang sudah dihapus.
+    try:
+        induk = akar.parent
+        if induk.is_dir() and not any(induk.iterdir()):
+            induk.rmdir()
+    except OSError:
+        pass
+    return ""
+
+
+class Job:
+    """Satu pekerjaan (scrape atau manual) yang dilacak UI."""
+
+    def __init__(
+        self,
+        id: str,
+        kind: str,
+        params: dict,
+        slug: str,
+        sesi: int,
+        user: dict | None = None,
+        scope_args: dict | None = None,
+    ) -> None:
+        self.id = id
+        self.kind = kind  # "scrape" | "manual"
+        self.params = params
+        self.slug = slug
+        self.sesi = sesi
+        self.user_id = str((user or {}).get("id") or "")
+        self.user = user or {}
+        # Disimpan, bukan dibaca ulang saat job jalan: cookie/identitas harus
+        # tetap sama sepanjang satu job walau pengguna memperbarui pengaturan
+        # di tengah jalan, dan thread dispatcher tidak mewarisi contextvars
+        # dari thread request yang mengantrekannya.
+        self.scope_args = scope_args or {}
+        self.status = "queued"  # queued | running | done | error
+        self.events: list[dict] = []
+        self.cond = threading.Condition()
+        self.finished = False
+        self.error = ""
+        self.hasil: dict = {}
+        self.cancel_event = threading.Event()
+        self.event_seq = 0
+        self.dibuat = time.time()
+        with config.scope(**self.scope_args):
+            log_dir = config.work_dirs(slug, sesi)["log"]
+        log_dir.mkdir(parents=True, exist_ok=True)
+        self.event_file = log_dir / f"job-{id}.jsonl"
+        self.reporter = self._buat_reporter()
+
+    def _buat_reporter(self) -> "callable[[dict], None]":
+        job = self
+
+        def reporter(ev: dict) -> None:
+            ev = dict(ev)
+            ev["ts"] = time.time()
+            ev["job"] = job.id
+            with job.cond:
+                job.event_seq += 1
+                ev["seq"] = job.event_seq
+                job.events.append(ev)
+                job.cond.notify_all()
+            try:
+                with open(job.event_file, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
+            except OSError:
+                pass
+
+        return reporter
+
+    def push_status(self, status: str, error: str = "") -> None:
+        with self.cond:
+            self.status = status
+            if error:
+                self.error = error
+            self.cond.notify_all()
+
+    def clear_events(self) -> None:
+        """Kosongkan log permanen: memori (buffer SSE) dan events.jsonl.
+
+        Kalau cuma DOM yang dibersihkan, replay saat reload akan membaca
+        events.jsonl dan log lama muncul lagi.
+        """
+        with self.cond:
+            self.events.clear()
+        try:
+            self.event_file.write_text("", encoding="utf-8")
+        except OSError:
+            pass
+
+
+class JobManager:
+    """Menyimpan job, mengantre, dan menjalankan lewat thread dispatcher."""
+
+    def __init__(self) -> None:
+        self.jobs: dict[str, Job] = {}
+        self.lock = threading.Lock()
+        self._seq = 0
+        self._queue: list[str] = []
+        self._cv = threading.Condition()
+        t = threading.Thread(target=self._dispatch, name="jkt-dispatch", daemon=True)
+        t.start()
+
+    def reset_courses_cache(self) -> None:
+        """Dihapus: `courses()` sekarang selalu membaca Moodle.
+
+        Method ini masih dipanggil `server.py` saat cookie berganti, jadi
+        dibiarkan ada sebagai no-op supaya pemanggilnya tidak perlu diubah.
+        Cache HTML di `moodle.Moodle` yang dibersihkan di sana.
+        """
+
+    def clear_events(self, jid: str) -> bool:
+        with self.lock:
+            job = self.jobs.get(jid)
+        if job is None:
+            return False
+        job.clear_events()
+        return True
+
+    # ----------------------------------------------------------- pendaftaran
+
+    def submit(
+        self,
+        kind: str,
+        params: dict,
+        slug: str,
+        sesi: int,
+        user: dict | None = None,
+        scope_args: dict | None = None,
+    ) -> Job:
+        with self.lock:
+            self._seq += 1
+            jid = f"j{self._seq}-{int(time.time()) % 100000:05d}"
+            job = Job(jid, kind, params, slug, sesi, user, scope_args)
+            self.jobs[jid] = job
+        with self._cv:
+            self._queue.append(jid)
+            self._cv.notify()
+        return job
+
+    # --------------------------------------------------------------- antrean
+
+    def _dispatch(self) -> None:
+        while True:
+            with self._cv:
+                while not self._queue:
+                    self._cv.wait()
+                jid = self._queue.pop(0)
+            job = self.jobs.get(jid)
+            if job is None:
+                continue
+            if job.cancel_event.is_set():
+                self._finish_stopped(job)
+                continue
+            job.push_status("running")
+            try:
+                # Thread dispatcher tidak mewarisi ContextVar dari thread
+                # request yang mengantrekan job, jadi scope dipasang di sini.
+                with config.scope(**job.scope_args):
+                    self._run(job)
+            except pipeline.PipelineDibatalkan:
+                pass
+            except Exception as exc:  # noqa: BLE001 - laporkan ke UI
+                job.reporter({"level": "error", "stage": "", "msg": f"Gagal: {exc}"})
+                job.push_status("error", str(exc))
+            finally:
+                if job.cancel_event.is_set():
+                    self._finish_stopped(job)
+                with job.cond:
+                    job.finished = True
+                    job.cond.notify_all()
+
+    def stop(self, jid: str) -> bool:
+        with self.lock:
+            job = self.jobs.get(jid)
+        if job is None or job.status in {"done", "error", "stopped"}:
+            return False
+        job.cancel_event.set()
+        with self._cv:
+            queued = jid in self._queue
+            if queued:
+                self._queue.remove(jid)
+        job.reporter({"level": "warn", "stage": "stop", "msg": "Menghentikan job..."})
+        if queued:
+            self._finish_stopped(job)
+        else:
+            job.push_status("stopping")
+        return True
+
+    def hapus(self, jid: str) -> tuple[bool, str]:
+        """Hapus satu job dari daftar beserta folder kerjanya.
+
+        Job yang masih hidup ditolak: thread-nya masih memegang objek `Job`
+        dan masih menulis ke folder kerja, jadi folder yang dihapus akan
+        langsung dibuat ulang lagi oleh pipeline yang sedang berjalan.
+        """
+        with self.lock:
+            job = self.jobs.get(jid)
+            if job is None:
+                return False, "Job tidak ditemukan."
+            if job.status in {"queued", "running", "stopping"}:
+                return False, "Job masih berjalan. Hentikan dulu sebelum dihapus."
+            dipakai_lain = any(
+                lain is not job
+                and lain.user_id == job.user_id
+                and lain.slug == job.slug
+                and lain.sesi == job.sesi
+                for lain in self.jobs.values()
+            )
+            del self.jobs[jid]
+        with self._cv:
+            if jid in self._queue:
+                self._queue.remove(jid)
+        # Folder kerja sesi hanya dihapus kalau tidak ada job lain yang
+        # menunjuk ke sana; job lain pada (slug, sesi) yang sama masih
+        # membaca artefaknya untuk ditampilkan.
+        pesan = ""
+        if not dipakai_lain:
+            with config.scope(**job.scope_args):
+                pesan = _hapus_folder_sesi(job.slug, job.sesi)
+        return True, pesan
+
+    def _finish_stopped(self, job: Job) -> None:
+        job.reporter({
+            "level": "warn", "stage": "stop",
+            "msg": "Proses job berhenti.",
+        })
+        job.push_status("stopped")
+        with job.cond:
+            job.finished = True
+            job.cond.notify_all()
+
+    # ----------------------------------------------------------------- run
+
+    @staticmethod
+    def _model_utama(params: dict) -> str | None:
+        # Hanya pilihan eksplisit dari form. Default .env/runtime dibiarkan
+        # kosong supaya model per agent di runtime/runtime.json tetap berlaku.
+        return params.get("model") or None
+
+    @staticmethod
+    def _model_mata(params: dict) -> str | None:
+        return params.get("model_mata") or None
+
+    def _run(self, job: Job) -> None:
+        if job.kind == "manual":
+            mk = courses.MataKuliah(
+                id="manual",
+                nama=job.params.get("matkul_nama") or "Manual",
+                kode=job.params.get("matkul_kode") or "",
+                kelas=job.params.get("matkul_kelas") or "",
+                slug=job.slug,
+            )
+            manual = {
+                "question": job.params.get("question", ""),
+                "files": job.params.get("files", []),
+                "jenis": job.params.get("jenis", "Tugas"),
+                "dengan_referensi": bool(job.params.get("dengan_referensi", True)),
+            }
+            pipe = pipeline.Pipeline(
+                mk, int(job.params.get("sesi", 1)),
+                model_utama=self._model_utama(job.params),
+                model_mata=self._model_mata(job.params),
+                dengan_gambar=not job.params.get("tanpa_gambar", False),
+                tanpa_docx=bool(job.params.get("tanpa_docx", False)),
+                reporter=job.reporter,
+                manual=manual,
+                cancel_event=job.cancel_event,
+            )
+            hasil = pipe.jalankan()
+        else:
+            klien = moodle.Moodle()
+            daftar = courses.daftar_mata_kuliah_lengkap(klien)
+            mk = next(
+                (x for x in daftar if x.id == job.params.get("matkul_id")), None
+            )
+            if mk is None:
+                raise pipeline.PipelineGagal("Mata kuliah tidak ditemukan di akun.")
+            pipe = pipeline.Pipeline(
+                mk, int(job.params.get("sesi")),
+                model_utama=self._model_utama(job.params),
+                model_mata=self._model_mata(job.params),
+                dengan_gambar=not job.params.get("tanpa_gambar", False),
+                tanpa_docx=bool(job.params.get("tanpa_docx", False)),
+                reporter=job.reporter,
+                cancel_event=job.cancel_event,
+                # Jenis yang dipilih di form run Moodle: "" (otomatis)
+                # berarti kerjakan seluruh soal sesi apa adanya.
+                jenis=job.params.get("jenis", ""),
+            )
+            hasil = pipe.jalankan()
+        job.hasil = self._hasil_dict(hasil)
+        job.push_status("done")
+
+    @staticmethod
+    def _hasil_dict(h) -> dict:
+        if h is None:
+            return {}
+        return {
+            "docx": str(h.docx) if h.docx else None,
+            "jawaban": str(h.jawaban) if h.jawaban else None,
+            "peta": str(h.peta) if h.peta else None,
+            "referensi": str(h.referensi) if h.referensi else None,
+            "gagal": list(getattr(h, "gagal", []) or []),
+            "catatan": list(getattr(h, "catatan", []) or []),
+        }
+
+    # ------------------------------------------------------------- courses
+
+    def courses(self) -> list[dict]:
+        """Daftar mata kuliah, selalu dari Moodle (tanpa cache di memori).
+
+        Sengaja tanpa cache. Daftar course memang jarang berubah, tetapi
+        memakai cache berarti course yang baru ditambahkan admin, atau kelas
+        baru yang baru dibuka, tidak muncul sampai server di-restart. Cache
+        yang benar bukan di memori proses ini, melainkan cache HTML di
+        `moodle.Moodle` (`TTL_CACHE_DETIK`), dan itu bisa dibersihkan dari
+        menu Pengaturan.
+        """
+        klien = moodle.Moodle()
+        daftar = courses.daftar_mata_kuliah_lengkap(klien)
+        return [
+            {
+                "id": m.id, "nama": m.nama, "kode": m.kode,
+                "kelas": m.kelas, "slug": m.slug,
+            }
+            for m in daftar
+        ]
+
+    def sessions(self, cid: str) -> list[dict]:
+        """Sesi yang punya soal di satu course.
+
+        `cid` adalah id course yang sudah dipilih pengguna, jadi tidak perlu
+        mencari ulang seluruh daftar course. Versi lama memanggil
+        `daftar_mata_kuliah_lengkap` lebih dulu -- satu request `/my/` plus
+        satu request halaman course untuk setiap mata kuliah -- hanya untuk
+        menemukan satu course berdasarkan id. Dengan enam mata kuliah itu
+        berarti tujuh request tambahan sebelum satu pun section dibaca, dan
+        itulah yang membuat pilihan sesi terasa lama sekali.
+        """
+        klien = moodle.Moodle()
+        matkul = courses.mata_kuliah_dari_id(klien, cid)
+        res = courses.sesi_berisi_soal(klien, matkul)
+        return [{"sesi": s, "jumlah": n} for s, n in res]
+
+    def semua_sesi(self) -> list[dict]:
+        """Sesi yang punya soal, dijumlahkan lintas semua mata kuliah.
+
+        Dipakai pilihan "Semua mata kuliah". Daftar course-nya sudah ada di
+        hasil `courses()`, jadi di sini cukup membaca section-nya saja.
+        """
+        klien = moodle.Moodle()
+        daftar = courses.daftar_mata_kuliah_lengkap(klien)
+        hitung: dict[int, int] = {}
+        for mk in daftar:
+            try:
+                for s, n in courses.sesi_berisi_soal(klien, mk):
+                    hitung[s] = hitung.get(s, 0) + int(n or 0)
+            except Exception:  # noqa: BLE001 - satu course rusak tidak boleh menggagalkan daftar
+                continue
+        return [
+            {"sesi": s, "jumlah": hitung[s]} for s in sorted(hitung) if hitung[s] > 0
+        ]

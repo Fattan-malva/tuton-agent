@@ -67,8 +67,7 @@ htmlcov/
 *.tmp
 
 # ------------------------------------------------------------------- Node
-# opencode dipasang lewat npm; `.opencode/node_modules` bisa berukuran besar
-# dan isinya bukan milik proyek ini.
+# Artefak vendor lokal, bukan bagian sumber proyek.
 node_modules/
 
 # ------------------------------------------------------------------- OS
@@ -86,12 +85,12 @@ $RECYCLE.BIN/
 # Skrip redeploy lokal (VPS-only, tidak ikut ke repo)
 .restart.sh
 
-# ------------------------------------------------------- UI Next.js (web/)
-# Sumber UI ada di `web/`, hasil build-nya disalin ke image (bukan ke repo).
-web/node_modules/
-web/.next/
-web/out/
-web/tsconfig.tsbuildinfo
+# ------------------------------------------------------- UI Next.js (frontend/)
+# Sumber UI ada di `frontend/`, hasil build-nya disalin ke image (bukan ke repo).
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/tsconfig.tsbuildinfo
 
 # State runtime (provider/API key/server MCP) ditulis saat aplikasi jalan.
 runtime/

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="web/public/icon.png" width="150" alt="Logo joki-tuton" />
+  <img src="frontend/public/icon.png" width="150" alt="Logo joki-tuton" />
 
   <h1>tuton-agent</h1>
 
@@ -82,9 +82,8 @@ hanging indent).
 
 ## Menyiapkan Provider
 
-Runtime agent sekarang berjalan di dalam aplikasi (Python), memakai API
-`/chat/completions` yang kompatibel dengan OpenAI. Tidak ada `opencode run`
-maupun `opencode.json` yang dibaca.
+Runtime agent berjalan di dalam aplikasi (Python), memakai API
+`/chat/completions` yang kompatibel dengan OpenAI. Tidak memerlukan CLI eksternal.
 
 1. Jalankan UI, buka menu **Provider**.
 2. Isi nama, base URL (mis. `https://9router.example/v1`), API key, lalu tekan
@@ -115,18 +114,28 @@ Isi `.env`:
 
 ```text
 URL_MOODLE=https://elearning.ut.ac.id
-UT_NAMA=...
-UT_NIM=...
-UT_SEMESTER=...
-UT_PRODI=...
+
+# Login dashboard (Clerk)
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
+CLERK_SECRET_KEY=sk_live_...
+
+# Profil per akun (Supabase)
+SUPABASE_URL=https://<project>.supabase.co
+SUPABASE_SERVICE_KEY=sb_secret_...
 ```
 
-Isi `COOKIE_MOODLE` melalui menu **Pengaturan** setelah UI dijalankan. Salin
+Lalu jalankan `supabase/migrations/0001_user_identities.sql` di Supabase SQL
+Editor. Aplikasi ini **multi-user**: setiap akun Clerk punya cookie Moodle,
+identitas DOCX, folder kerja, dan hasil sendiri di tabel
+`public.user_identities`.
+
+Isi `COOKIE_MOODLE` per akun melalui menu **Pengaturan** setelah login. Salin
 nilai cookie `MoodleSession` dari browser (DevTools → Application → Cookies
-untuk `elearning.ut.ac.id`). Cookie ini hanya untuk mengambil data Moodle;
-login dashboard memakai `APP_USERNAME` dan `APP_PASSWORD`. Menyimpan cookie
-baru dari menu Pengaturan langsung mengaktifkannya di semua halaman —
-cache lama dibersihkan otomatis, tidak perlu restart.
+untuk `elearning.ut.ac.id`). Menyimpan cookie baru langsung mengaktifkannya —
+cache lama akun itu dibersihkan otomatis, tidak perlu restart.
+
+`COOKIE_MOODLE` di `.env` hanya dipakai sebagai cadangan untuk pemakaian CLI
+(`python main.py`); aplikasi web tidak pernah membacanya untuk akun mana pun.
 
 ## Menjalankan (CLI)
 
@@ -170,19 +179,19 @@ termasuk **log real-time** tiap tahap agent.
 Windows:
 
 ```powershell
-py webui/server.py
+py server/app.py
 # atau: runner_web.bat
 ```
 
 Linux:
 
 ```bash
-python3 webui/server.py
+python3 server/app.py
 ```
 
 Lalu buka <http://127.0.0.1:8000> (atau `WEB_PORT` di `.env`). Server
 mendengarkan `127.0.0.1` secara default; ganti `WEB_HOST` ke `0.0.0.0`
-hanya bila perlu diakses dari LAN, dan pastikan `APP_PASSWORD` sudah diisi.
+hanya bila perlu diakses dari LAN.
 
 ### Menu
 
@@ -196,7 +205,7 @@ Urutan menu sesuai tampilan aplikasi:
 | **Agent Worker** | Keempat agent (scrapper, research, vision, worker) beserta model yang dipakai |
 | **Provider**     | CRUD provider OpenAI-compatible, tes koneksi, ambil `/v1/models`, dan model per agent |
 | **MCP**          | Server MCP remote (streamable HTTP): URL, header, tes + daftar tool, pilih agent yang boleh memakainya |
-| **Skill**        | Unggah, sunting, dan hapus `SKILL.md` di `.opencode/skills/<nama>/` |
+| **Skill**        | Unggah, sunting, dan hapus `SKILL.md` di `skills/<nama>/` |
 | **Result**       | Daftar dokumen hasil dari disk `output/` — **klik untuk pratinjau**, unduh, hapus berkas, atau hapus seluruh mata kuliah |
 | **Log Live**     | Konsol log real-time per job (Server-Sent Events; bisa disegarkan karena event tersimpan di `<job>/events.jsonl`), bersihkan log atau **hapus job** |
 | **Pengaturan**   | Edit `.env`, termasuk cookie Moodle (cookie & password disensor) + **mode gelap** |
@@ -230,9 +239,9 @@ Urutan menu sesuai tampilan aplikasi:
 ### Ikon & Add to Home Screen
 
 <p align="center">
-  <img src="web/public/icon.png" width="78" alt="icon.png" />
+  <img src="frontend/public/icon.png" width="78" alt="icon.png" />
   &nbsp;&nbsp;&nbsp;
-  <img src="web/public/apple-touch-icon.png" width="78" alt="apple-touch-icon 180px" />
+  <img src="frontend/public/apple-touch-icon.png" width="78" alt="apple-touch-icon 180px" />
 </p>
 <p align="center"><sub><code>icon.png</code> · <code>apple-touch-icon.png</code> (180×180)</sub></p>
 
@@ -311,37 +320,67 @@ Log tiap tahap ada di `_kerja/.../_log/`. Kalau satu course gagal di mode
 | Folder/berkas       | Fungsi                                            |
 |---------------------|---------------------------------------------------|
 | `main.py`           | Antarmuka baris perintah                          |
-| `pipeline.py`       | Orkestrasi 8 tahap: login → soal → peta → lampiran → ref → jawaban → docx |
-| `config.py`         | Konstanta dan path                                |
-| `courses.py`        | Pemetaan course/section/soal, nilai, dan jadwal dari Moodle |
-| `moodle.py`         | Klien HTTP Moodle                                 |
-| `reader.py`         | Proxy lokal untuk agent (semua URL Moodle→127.0.0.1) |
-| `attachments.py`    | Unduh lampiran, render PDF→gambar, kumpulkan gambar soal |
+| `tuton/`            | Paket inti: pipeline, klien Moodle, agent runner, provider, tools, MCP, konfigurasi |
 | `tools/docx.py`     | Renderer DOCX: equation Word, daftar pustaka, template |
-| `webui/server.py`   | Server HTTP + API (login, nilai, jadwal, job, SSE, provider/MCP/skill) |
-| `webui/static/`     | Hasil build UI; di image Docker diisi dari `web/out/` |
-| `web/`              | Sumber UI Next.js (static export ke `web/out/`) |
+| `server/app.py`     | Server HTTP + API (login, nilai, jadwal, job, SSE, provider/MCP/skill) |
+| `server/static/`     | Hasil build UI; di image Docker diisi dari `frontend/out/` |
+| `frontend/`          | Sumber UI Next.js (static export ke `frontend/out/`) |
 | `runtime/runtime.json` | Provider, API key, model agent, server MCP (dibuat dari menu, mode 0600) |
-| `agent_runner.py`   | Runtime agent in-process: prompt spec + tool loop |
-| `openai_client.py`  | Klien `/chat/completions` (streaming, tool call, klasifikasi galat) |
-| `agent_tools.py`    | Tool lokal: read/write/edit/glob/grep/webfetch/skill |
-| `mcp_client.py`     | Klien MCP remote (streamable HTTP) |
-| `runtime_config.py` | Baca/tulis `runtime/runtime.json` dan resolusi `provider/model` |
-| `.opencode/agents/` | Spec agent: scrapper, worker, research, vision    |
+| `agents/`            | Spec prompt agent statis: scrapper, worker, research, vision |
+| `skills/`            | Skill Markdown yang dapat dimuat agent |
 | `Dockerfile` + `docker-compose.yml` + `.restart.sh` | Build image dan redeploy container |
 | `runner.bat`        | Shortcut Windows                                  |
+
+## Multi-user
+
+Setiap akun Clerk adalah tenant sendiri:
+
+| Data | Lokasi | Keterangan |
+|------|--------|------------|
+| Cookie Moodle | `user_identities.cookie_moodle` | Per akun; tidak pernah dikirim balik ke klien |
+| Identitas DOCX (nama, NIM, semester, UT-Daerah, prodi) | `user_identities.*` | Per akun |
+| Hasil DOCX | `output/<user_id>/<matkul>/sesi-<N>/` | Terisolasi per akun |
+| Folder kerja & log job | `_kerja/<user_id>/<slug>/sesi-<N>/` | Terisolasi per akun |
+| Cache HTML Moodle | `cache/<user_id>/` | Halaman berisi data akun |
+| Provider/model/MCP | `runtime/runtime.json`, `.env` | Sengaja bersama: API key tidak diduplikasi per user |
+
+Job lama yang masih berjalan saat deploy tetap memakai profil pemiliknya
+(cookie/identitas disimpan di objek job saat dibuat), jadi memperbarui
+pengaturan tidak mengubah job yang sedang berjalan.
+
+### Supabase keepalive
+
+Supabase gratis mem-pause project setelah 7 hari tanpa aktivitas. Server
+menjalankan thread keepalive yang memanggil `GET /rest/v1/tuton_keepalive`
+tiap 6 jam, plus satu sentuhan setiap request terautentikasi. Statusnya
+terlihat di `GET /api/status` (`keepalive`).
+
+### Memindahkan hasil sebelum multi-user
+
+Hasil lama ada di `output/<matkul>/...` dan tidak terlihat oleh akun mana pun
+sekarang. Pindahkan ke akun yang benar:
+
+```powershell
+py tools/migrasi_output.py --daftar
+py tools/migrasi_output.py --user user_XXXXXXXX --dry-run
+py tools/migrasi_output.py --user user_XXXXXXXX
+```
 
 ## Catatan keamanan
 
 - Semua HTTP ke Moodle lewat proxy lokal `reader.py`; tidak ada cookie atau
   token yang ditulis ke berkas yang diserahkan ke tutor.
 - Token Reader (`?k=`) disaring dari log dan peta soal.
-- Cookie sesi web bersifat `HttpOnly` + `SameSite=Lax`; token ditandatangani
-  HMAC (stateless), jadi logout menghapus cookie di browser — token lama
-  tetap kedaluwarsa sendiri sesuai masa berlakunya.
-- `COOKIE_MOODLE` dan `APP_PASSWORD` tidak pernah dikirim mentah ke klien
-  (disensor di menu Pengaturan); login dashboard memakai
-  `APP_USERNAME`/`APP_PASSWORD` dan tidak bergantung pada cookie Moodle.
+- Login memakai Clerk; API memverifikasi token Bearer ke Clerk setiap
+  request (di-cache 60 detik). Tidak ada sesi yang disimpan sendiri di server.
+- Cookie Moodle dan identitas tersimpan per akun di Supabase; RLS tabel
+  `user_identities` ditutup total untuk `anon`/`authenticated`, hanya service
+  key server yang bisa membaca.
+- `COOKIE_MOODLE` tidak pernah dikirim mentah ke klien — halaman Pengaturan
+  hanya menampilkan empat huruf terakhir.
+- Setiap job, daftar hasil, dan unduhan difilter berdasarkan pemilik (id
+  user Clerk); job milik akun lain menjawab 404, bukan 403, agar
+  keberadaannya tidak bocor.
 
 ## Kalau gagal
 

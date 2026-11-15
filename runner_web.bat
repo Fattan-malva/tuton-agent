@@ -10,7 +10,7 @@ if not exist .env (
   exit /b 1
 )
 
-%PY% webui/server.py
+%PY% server/app.py
 set "KODE=%ERRORLEVEL%"
 
 echo.
