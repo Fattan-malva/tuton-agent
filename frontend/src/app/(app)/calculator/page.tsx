@@ -28,6 +28,18 @@ function angka(nilai: string) {
   return Number.isFinite(hasil) ? hasil : null
 }
 
+const AMBANG = {
+  Mudah: { A: 80, 'A-': 75, B: 70, 'B-': 60, C: 55, 'C-': 50, D: 40 },
+  Sedang: { A: 75, 'A-': 70, B: 65, 'B-': 55, C: 50, 'C-': 45, D: 35 },
+  Sulit: { A: 70, 'A-': 65, B: 60, 'B-': 50, C: 45, 'C-': 40, D: 30 },
+} as const
+
+type Grade = keyof typeof AMBANG.Mudah
+function grade(nilai: number, tingkat: keyof typeof AMBANG) {
+  const batas = AMBANG[tingkat]
+  return (Object.keys(batas) as Grade[]).find((x) => nilai >= batas[x]) || 'E'
+}
+
 function hitung(uas: number | null, maksimum: number, tuton: number | null, ttm: number | null) {
   if (uas === null || maksimum <= 0 || uas < 0 || uas > maksimum) return null
   const lolosUas = uas >= maksimum * 0.3
@@ -49,7 +61,11 @@ function hitung(uas: number | null, maksimum: number, tuton: number | null, ttm:
     },
   ]
   const terbaik = kandidat.filter((k) => k.berlaku).reduce((a, b) => (b.nilai > a.nilai ? b : a), kandidat[0])
-  return { kandidat, terbaik, lolosUas }
+  return { kandidat, terbaik, lolosUas, grades: {
+    Mudah: grade(terbaik.nilai, 'Mudah'),
+    Sedang: grade(terbaik.nilai, 'Sedang'),
+    Sulit: grade(terbaik.nilai, 'Sulit'),
+  } }
 }
 
 export default function CalculatorPage() {
@@ -97,7 +113,7 @@ export default function CalculatorPage() {
               <Label>Mata kuliah</Label>
               {isLoading ? <Skeleton className='h-10 w-full' /> : (
                 <Select value={courseId} onValueChange={(v) => { setCourseId(v); setTutonManual(null) }}>
-                  <SelectTrigger className='h-10 w-full'><SelectValue placeholder='— pilih mata kuliah —' /></SelectTrigger>
+                  <SelectTrigger className='h-10 w-full'><span className='truncate'>{courseId ? (courses || []).find((c) => c.id === courseId)?.nama : '— pilih mata kuliah —'}</span></SelectTrigger>
                   <SelectContent>{(courses || []).map((c) => <SelectItem key={c.id} value={c.id}>{c.nama}</SelectItem>)}</SelectContent>
                 </Select>
               )}
@@ -135,6 +151,9 @@ export default function CalculatorPage() {
             {!hasil ? <p className='text-muted-foreground text-sm'>Isi Nilai UAS untuk menghitung estimasi.</p> : (
               <>
                 <p className={cn('text-5xl font-bold tabular-nums', hasil.terbaik.nilai >= 80 && 'text-emerald-600', hasil.terbaik.nilai >= 60 && hasil.terbaik.nilai < 80 && 'text-amber-500', hasil.terbaik.nilai < 60 && 'text-red-600')}>{hasil.terbaik.nilai.toLocaleString('id-ID', { maximumFractionDigits: 2 })}</p>
+                <div className='grid grid-cols-3 gap-2 text-center'>
+                  {(['Mudah', 'Sedang', 'Sulit'] as const).map((tingkat) => <div key={tingkat} className='rounded-md border p-2'><div className='text-muted-foreground text-xs'>{tingkat}</div><strong className='text-lg'>{hasil.grades[tingkat]}</strong></div>)}
+                </div>
                 <Badge variant={hasil.lolosUas ? 'secondary' : 'destructive'}>{hasil.lolosUas ? 'Syarat minimum UAS terpenuhi' : 'UAS belum mencapai 30% nilai maksimum'}</Badge>
                 <p className='border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400 rounded-md border p-2.5 text-xs leading-relaxed'>Estimasi, bukan nilai resmi. Nilai akhir tetap ditetapkan Universitas Terbuka sesuai hasil dan ketentuan penilaian yang berlaku.</p>
                 <p className='text-muted-foreground text-sm'><strong className='text-foreground'>{hasil.terbaik.metode}</strong> dipilih karena menghasilkan kandidat tertinggi yang memenuhi syarat.</p>
