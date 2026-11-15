@@ -44,6 +44,7 @@ from tuton import clerk  # noqa: E402
 from tuton import supabase  # noqa: E402
 from tuton import templates  # noqa: E402
 import docxprev  # noqa: E402
+import pratinjau_pdf  # noqa: E402
 from server.jobs import JobManager  # noqa: E402
 from tuton import courses  # noqa: E402
 from tuton import moodle  # noqa: E402
@@ -1205,6 +1206,8 @@ class Handler(BaseHTTPRequestHandler):
             return _kirim_json(self, _agents())
         if path == "/api/models":
             return _kirim_json(self, _models())
+        if path.startswith("/api/preview/pdf/"):
+            return self._preview_pdf(urllib.parse.unquote(path[len("/api/preview/pdf/"):]))
         if path.startswith("/api/templates/file/"):
             return self._template_berkas(urllib.parse.unquote(path[len("/api/templates/file/"):]))
         if path == "/api/templates":
@@ -1358,6 +1361,23 @@ class Handler(BaseHTTPRequestHandler):
                 return _kirim_json(self, {"error": str(exc)}, 400)
             except Exception as exc:  # noqa: BLE001
                 return _kirim_json(self, {"error": str(exc)}, 500)
+        if path == "/api/preview/create":
+            try:
+                payload = json.loads(self._baca_body().decode("utf-8") or "{}")
+                return _kirim_json(self, {"id": self._preview_buat(payload)})
+            except pratinjau_pdf.PratinjauGagal as exc:
+                return _kirim_json(self, {"error": str(exc)}, 503)
+            except ValueError as exc:
+                return _kirim_json(self, {"error": str(exc)}, 400)
+            except Exception as exc:  # noqa: BLE001
+                return _kirim_json(self, {"error": str(exc)}, 500)
+        if path == "/api/preview/hapus":
+            try:
+                payload = json.loads(self._baca_body().decode("utf-8") or "{}")
+                pratinjau_pdf.hapus(_pengguna_sekarang()["id"], str(payload.get("id") or ""))
+                return _kirim_json(self, {"ok": True})
+            except Exception as exc:  # noqa: BLE001
+                return _kirim_json(self, {"error": str(exc)}, 400)
         if path == "/api/jobs/scrape":
             try:
                 payload = json.loads(self._baca_body().decode("utf-8"))
@@ -1532,6 +1552,36 @@ class Handler(BaseHTTPRequestHandler):
         data = berkas.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _preview_buat(self, payload: dict) -> str:
+        """Ambil DOCX (hasil atau template) lalu konversi ke PDF sementara."""
+        user_id = _pengguna_sekarang()["id"]
+        if payload.get("rel"):
+            diambil = self._hasil_ambil(str(payload["rel"]))
+            if diambil is None:
+                raise ValueError("Berkas hasil tidak ditemukan.")
+            docx_bytes = diambil[0]
+        elif payload.get("template_id"):
+            berkas = templates.docx_path(user_id, str(payload["template_id"]))
+            if berkas is None:
+                raise ValueError("Berkas template tidak ditemukan.")
+            docx_bytes = berkas.read_bytes()
+        else:
+            raise ValueError("Sumber pratinjau kosong.")
+        return pratinjau_pdf.buat(user_id, docx_bytes)
+
+    def _preview_pdf(self, id_: str) -> None:
+        """Kirim PDF pratinjau milik pemanggil; sesi orang lain dijawab 404."""
+        try:
+            data = pratinjau_pdf.ambil_pdf(_pengguna_sekarang()["id"], id_)
+        except KeyError:
+            return self._not_found()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()

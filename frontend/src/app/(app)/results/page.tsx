@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { Download, Eye, FileText, Search, Trash2 } from 'lucide-react'
-import { apiFetch, postJSON, streamUrl } from '@/lib/api'
+import { postJSON, streamUrl } from '@/lib/api'
+import { usePratinjauPdf } from '@/hooks/use-pratinjau-pdf'
 import type { ResultFile } from '@/lib/types'
 import { formatBytes } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -25,7 +26,6 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { renderAsync } from 'docx-preview'
 import {
   Table,
   TableBody,
@@ -286,27 +286,8 @@ function PreviewDialog({
   preview: { rel: string; nama: string } | null
   onClose: () => void
 }) {
-  const enc = preview ? encodeRel(preview.rel) : null
-  // Callback ref berbasis state, bukan `useRef`. Radix Portal baru memasang
-  // isi dialog setelah render pertama, jadi `useRef` masih null saat efek
-  // pertama jalan; efek lalu berhenti diam-diam dan area pratinjau kosong.
-  const [host, setHost] = useState<HTMLDivElement | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<Error | null>(null)
-
-  useEffect(() => {
-    if (!enc || !host) return
-    let cancelled = false
-    setIsLoading(true)
-    setError(null)
-    host.replaceChildren()
-    apiFetch(`/api/download-output/${enc}`)
-      .then((response) => { if (!response.ok) throw new Error('DOCX tidak bisa dimuat.'); return response.arrayBuffer() })
-      .then((buffer) => { if (!cancelled) return renderAsync(buffer, host, undefined, { breakPages: true }) })
-      .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason : new Error(String(reason))) })
-      .finally(() => { if (!cancelled) setIsLoading(false) })
-    return () => { cancelled = true; host.replaceChildren() }
-  }, [enc, host])
+  // PDF pratinjau dibuat server dari DOCX dan dihapus saat pratinjau ditutup.
+  const { url, loading, error } = usePratinjauPdf(preview ? { rel: preview.rel } : null)
 
   return (
     <Dialog open={Boolean(preview)} onOpenChange={(open) => !open && onClose()}>
@@ -315,19 +296,22 @@ function PreviewDialog({
           <DialogTitle className='truncate'>{preview?.nama}</DialogTitle>
           <DialogDescription>Pratinjau dokumen DOCX</DialogDescription>
         </DialogHeader>
-        <div className='min-h-0 flex-1 overflow-auto rounded-md border bg-slate-100 p-6'>
-          {isLoading && (
-            <div className='space-y-2'>
+        <div className='bg-slate-100 min-h-0 flex-1 overflow-hidden rounded-md border'>
+          {loading && (
+            <div className='space-y-2 p-6'>
               {Array.from({ length: 8 }).map((_, i) => (
                 <Skeleton key={i} className='h-4 w-full' />
               ))}
             </div>
           )}
-          {error && <p className='text-destructive text-sm'>{error.message}</p>}
-          <div
-            ref={setHost}
-            className={`docx-preview mx-auto w-[210mm] max-w-full text-black${isLoading || error ? ' hidden' : ''}`}
-          />
+          {error && <p className='text-destructive p-6 text-sm'>{error}</p>}
+          {url && (
+            <iframe
+              title={preview?.nama ?? 'Pratinjau'}
+              src={`${url}#view=FitH`}
+              className='h-full w-full border-0 bg-slate-100'
+            />
+          )}
         </div>
         <div className='flex justify-end gap-2'>
           <Button
