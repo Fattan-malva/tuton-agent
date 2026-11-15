@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { postJSON } from '@/lib/api'
+import { DocxThumb } from '@/components/docx-thumb'
 
 type Template = { id: string; name: string; description: string }
 
@@ -24,7 +25,7 @@ export default function TemplatesPage() {
       <Select value={data?.default_id} onValueChange={select}><SelectTrigger className='w-64'><SelectValue placeholder='Pilih template default' /></SelectTrigger><SelectContent>{data?.templates.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select>
       <Button disabled title='Editor drag-and-drop segera tersedia'><Plus /> Buat template</Button>
     </div>
-    <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>{data?.templates.map(t => <article key={t.id} className='overflow-hidden rounded-lg border bg-card'><div className='flex aspect-[1.414/1] items-center justify-center bg-muted p-8'><div className='flex h-full w-full flex-col gap-3 rounded-sm bg-white p-5 text-black shadow'><div className='h-3 w-3/5 bg-slate-800' /><div className='h-2 w-2/5 bg-slate-300' /><div className='mt-3 h-px bg-slate-300' /><div className='space-y-2'>{Array.from({ length: 5 }).map((_, i) => <div key={i} className='h-2 bg-slate-200' style={{ width: `${95 - i * 8}%` }} />)}</div><div className='mt-auto h-8 rounded border border-slate-300' /></div></div><div className='p-4'><div className='flex items-start gap-2'><FileText className='text-muted-foreground mt-0.5 size-4' /><div><h2 className='font-medium'>{t.name}</h2><p className='text-muted-foreground text-sm'>{t.description}</p></div></div><Button className='mt-4 w-full' variant={t.id === data.default_id ? 'secondary' : 'outline'} onClick={() => select(t.id)}>{t.id === data.default_id ? 'Template default' : 'Jadikan default'}</Button></div></article>)}</div>
+    <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>{data?.templates.map(t => <article key={t.id} className='overflow-hidden rounded-lg border bg-card'><DocxThumb url={`/api/templates/file/${encodeURIComponent(t.id)}`} label={t.name} /><div className='p-4'><div className='flex items-start gap-2'><FileText className='text-muted-foreground mt-0.5 size-4' /><div><h2 className='font-medium'>{t.name}</h2><p className='text-muted-foreground text-sm'>{t.description}</p></div></div><Button className='mt-4 w-full' variant={t.id === data.default_id ? 'secondary' : 'outline'} onClick={() => select(t.id)}>{t.id === data.default_id ? 'Template default' : 'Jadikan default'}</Button></div></article>)}</div>
     {message && <p role='status' className='text-sm'>{message}</p>}
   </div>
 }

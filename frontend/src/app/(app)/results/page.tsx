@@ -307,7 +307,7 @@ function PreviewDialog({
 
   return (
     <Dialog open={Boolean(preview)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className='flex h-[92vh] max-h-[92vh] w-[96vw] max-w-7xl flex-col'>
+      <DialogContent className='flex h-[92vh] max-h-[92vh] w-[96vw] max-w-[calc(210mm+8rem)] flex-col sm:max-w-[calc(210mm+8rem)]'>
         <DialogHeader>
           <DialogTitle className='truncate'>{preview?.nama}</DialogTitle>
           <DialogDescription>Pratinjau dokumen DOCX</DialogDescription>
@@ -322,7 +322,7 @@ function PreviewDialog({
           ) : error ? (
             <p className='text-destructive text-sm'>{error.message}</p>
           ) : (
-            <div ref={containerRef} className='docx-preview min-w-[720px] bg-white p-6 text-black' />
+            <div ref={containerRef} className='docx-preview mx-auto w-[210mm] max-w-full text-black' />
           )}
         </div>
         <div className='flex justify-end gap-2'>

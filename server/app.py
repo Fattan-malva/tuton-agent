@@ -1205,6 +1205,8 @@ class Handler(BaseHTTPRequestHandler):
             return _kirim_json(self, _agents())
         if path == "/api/models":
             return _kirim_json(self, _models())
+        if path.startswith("/api/templates/file/"):
+            return self._template_berkas(urllib.parse.unquote(path[len("/api/templates/file/"):]))
         if path == "/api/templates":
             return _kirim_json(self, {"templates": templates.daftar(_pengguna_sekarang()), "default_id": templates.resolve(_pengguna_sekarang())["id"]})
         if path == "/api/moodle-status":
@@ -1512,6 +1514,26 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Disposition", f'attachment; filename="{nama}"')
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _template_berkas(self, template_id: str) -> None:
+        """Kirim berkas DOCX template bawaan agar pratinjau memakai isi aslinya.
+
+        Hanya template bawaan yang punya berkas (lihat `templates.docx_path`);
+        ID asing atau template kustom tanpa berkas dijawab 404.
+        """
+        try:
+            berkas = templates.docx_path(_pengguna_sekarang(), template_id)
+        except ValueError:
+            return self._not_found()
+        if berkas is None:
+            return self._not_found()
+        data = berkas.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
