@@ -18,6 +18,7 @@ from tuton import crypto
 TABLE = "user_identities"
 PROVIDER_TABLE = "user_providers"
 RESULT_TABLE = "user_results"
+TEMPLATE_TABLE = "user_templates"
 STORAGE_BUCKET = config.SUPABASE_BUCKET_RESULTS
 _IDENTITAS = ("nama", "nim", "semester", "ut_daerah", "prodi")
 
@@ -208,6 +209,34 @@ _PROVIDER_KOSONG = {"providers": [], "agents": {}}
 _PROVIDER_CACHE: dict[str, tuple[float, dict]] = {}
 _PROVIDER_TTL = 20.0
 _PROVIDER_LOCK = threading.Lock()
+
+
+def template_list(user_id: str) -> list[dict]:
+    if not aktif() or not user_id:
+        return []
+    try:
+        r = requests.get(_url(TEMPLATE_TABLE), params={"select": "id,name,description", "user_id": f"eq.{user_id}", "order": "updated_at.desc"}, headers=_headers(), timeout=10)
+        return r.json() if r.ok and isinstance(r.json(), list) else []
+    except requests.RequestException:
+        return []
+
+
+def template_default(user_id: str) -> str:
+    if not aktif() or not user_id:
+        return ""
+    try:
+        r = requests.get(_url(TEMPLATE_TABLE), params={"select": "id", "user_id": f"eq.{user_id}", "is_default": "eq.true", "limit": "1"}, headers=_headers(), timeout=10)
+        rows = r.json() if r.ok else []
+        return str(rows[0].get("id", "")) if rows else ""
+    except requests.RequestException:
+        return ""
+
+
+def template_save(user_id: str, template: dict) -> None:
+    if not aktif() or not user_id:
+        return
+    values = {"user_id": user_id, "id": str(template.get("id", "")), "name": str(template.get("name", "")), "description": str(template.get("description", "")), "schema": template.get("schema", {}), "is_default": bool(template.get("is_default", False))}
+    requests.post(_url(TEMPLATE_TABLE), json=values, headers=_headers("resolution=merge-duplicates"), timeout=10).raise_for_status()
 
 
 def providers_data(user_id: str, wajib: bool = False) -> dict:

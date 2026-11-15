@@ -42,6 +42,7 @@ import requests  # noqa: E402
 from tuton import config  # noqa: E402
 from tuton import clerk  # noqa: E402
 from tuton import supabase  # noqa: E402
+from tuton import templates  # noqa: E402
 import docxprev  # noqa: E402
 from server.jobs import JobManager  # noqa: E402
 from tuton import courses  # noqa: E402
@@ -904,6 +905,17 @@ def _skill_hapus(payload: dict) -> dict:
     return {"ok": True}
 
 
+def _template_simpan(payload: dict) -> dict:
+    template_id = str(payload.get("id") or "").strip()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", template_id):
+        raise ValueError("ID template tidak sah.")
+    schema = payload.get("schema", {})
+    if not isinstance(schema, dict):
+        raise ValueError("Schema template harus berupa objek.")
+    supabase.template_save(_pengguna_sekarang(), {"id": template_id, "name": str(payload.get("name") or template_id).strip()[:120], "description": str(payload.get("description") or "").strip()[:500], "schema": schema, "is_default": bool(payload.get("is_default"))})
+    return {"ok": True}
+
+
 # ----------------------------------------------------------- job submit
 
 
@@ -923,7 +935,7 @@ def _submit_scrape(params: dict) -> dict:
     jenis = str(params.get("jenis") or "").strip()
     if jenis not in {"", "Tugas", "Diskusi", "Kuis"}:
         raise ValueError("Jenis soal tidak dikenal.")
-    params = {**params, "jenis": jenis}
+    params = {**params, "jenis": jenis, "template_id": templates.resolve(_pengguna_sekarang(), params.get("template_id"))["id"]}
     sesi = int(params.get("sesi") or 0)
     if params.get("matkul_id") == "semua":
         if sesi < 1:
@@ -1020,6 +1032,7 @@ def _submit_manual(body: bytes, ctype: str) -> str:
         "tanpa_docx": teks.get("tanpa_docx", "") == "on",
         "model": teks.get("model", ""),
         "model_mata": teks.get("model_mata", ""),
+        "template_id": templates.resolve(_pengguna_sekarang(), teks.get("template_id"))["id"],
     }
     job = MANAGER.submit(
         "manual", params, slug or "manual", sesi,
@@ -1192,6 +1205,8 @@ class Handler(BaseHTTPRequestHandler):
             return _kirim_json(self, _agents())
         if path == "/api/models":
             return _kirim_json(self, _models())
+        if path == "/api/templates":
+            return _kirim_json(self, {"templates": templates.daftar(_pengguna_sekarang()), "default_id": templates.resolve(_pengguna_sekarang())["id"]})
         if path == "/api/moodle-status":
             return _kirim_json(self, _moodle_login())
         if path == "/api/nilai":
@@ -1320,6 +1335,7 @@ class Handler(BaseHTTPRequestHandler):
                 return _kirim_json(self, {"ok": False, "error": str(exc)}, 500)
         if path.startswith("/api/providers/") or path in {
             "/api/agents/models", "/api/skills/save", "/api/skills/delete",
+            "/api/templates/save", "/api/templates/default",
         }:
             try:
                 payload = json.loads(self._baca_body().decode("utf-8") or "{}")
@@ -1330,6 +1346,8 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/agents/models": _agent_model_simpan,
                     "/api/skills/save": _skill_simpan,
                     "/api/skills/delete": _skill_hapus,
+                    "/api/templates/save": _template_simpan,
+                    "/api/templates/default": lambda p: _template_simpan({**p, "is_default": True}),
                 }.get(path)
                 if aksi is None:
                     return _kirim_json(self, {"error": "Aksi tidak dikenal."}, 404)

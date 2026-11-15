@@ -72,6 +72,10 @@ export default function BuatPage() {
     '/api/models',
   )
   const models = modelData?.models || []
+  const { data: templateData } = useSWR<{ templates: { id: string; name: string }[]; default_id: string }>('/api/templates')
+  const [templateId, setTemplateId] = useState('')
+  const [mnTemplateId, setMnTemplateId] = useState('')
+  useEffect(() => { if (templateData?.default_id) { setTemplateId(templateData.default_id); setMnTemplateId(templateData.default_id) } }, [templateData?.default_id])
 
   const daftar = courses || []
 
@@ -163,6 +167,7 @@ export default function BuatPage() {
         tanpa_gambar: tanpaGambar,
         model,
         model_mata: modelMata,
+        template_id: templateId,
       })
       router.push(`/log/?job=${encodeURIComponent(r.jobs[0])}`)
     } catch (e) {
@@ -187,6 +192,7 @@ export default function BuatPage() {
     fd.append('tanpa_docx', mnTanpaDocx ? 'on' : 'off')
     fd.append('model', mnModel)
     fd.append('model_mata', mnModelMata)
+    fd.append('template_id', mnTemplateId)
     if (mnFiles) {
       for (const f of Array.from(mnFiles)) fd.append('file', f, f.name)
     }
@@ -347,6 +353,10 @@ export default function BuatPage() {
                   </div>
                 </div>
 
+                <div className='space-y-2'>
+                  <Label>Template</Label>
+                  <Select value={templateId} onValueChange={setTemplateId}><SelectTrigger className='w-full'><SelectValue /></SelectTrigger><SelectContent>{templateData?.templates.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select>
+                </div>
                 <div className='flex flex-wrap items-center gap-2 border-t pt-4'>
                   <Button onClick={submitScrape} disabled={scrapeBusy}>
                     <Play /> {scrapeBusy ? 'Mengantrekan job...' : 'Mulai dari Moodle'}
@@ -491,6 +501,10 @@ export default function BuatPage() {
                   />
                 </div>
 
+                <div className='space-y-2'>
+                  <Label>Template</Label>
+                  <Select value={mnTemplateId} onValueChange={setMnTemplateId}><SelectTrigger className='w-full'><SelectValue /></SelectTrigger><SelectContent>{templateData?.templates.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select>
+                </div>
                 <div className='flex flex-wrap items-center gap-2 border-t pt-4'>
                   <Button onClick={submitManual} disabled={mnBusy}>
                     <Play /> {mnBusy ? 'Mengantrekan job...' : 'Mulai Manual'}

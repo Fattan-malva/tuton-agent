@@ -466,6 +466,7 @@ class Pipeline:
         manual: "dict | None" = None,
         cancel_event: threading.Event | None = None,
         jenis: str = "",
+        template_id: str = "akademik-standar",
     ) -> None:
         self.matkul = matkul
         self.nomor = nomor_sesi
@@ -502,6 +503,7 @@ class Pipeline:
         # (otomatis, ikuti seluruh soal sesi). Dipakai untuk merapikan
         # `sesi.soal` dan untuk menamai berkas DOCX hasil.
         self.jenis = (jenis or "").strip()
+        self.template_id = template_id
         self._tahap = ""
         self._agent = ""
 

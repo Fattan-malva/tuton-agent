@@ -17,6 +17,7 @@ from tuton import config
 from tuton import courses
 from tuton import moodle
 from tuton import pipeline
+from tuton import templates
 
 
 def _hapus_folder_sesi(slug: str, sesi: int) -> str:
@@ -286,6 +287,7 @@ class JobManager:
         return params.get("model_mata") or None
 
     def _run(self, job: Job) -> None:
+        template = templates.resolve(job.user_id, job.params.get("template_id"))
         if job.kind == "manual":
             mk = courses.MataKuliah(
                 id="manual",
@@ -309,6 +311,7 @@ class JobManager:
                 reporter=job.reporter,
                 manual=manual,
                 cancel_event=job.cancel_event,
+                template_id=template["id"],
             )
             hasil = pipe.jalankan()
         else:
@@ -330,6 +333,7 @@ class JobManager:
                 # Jenis yang dipilih di form run Moodle: "" (otomatis)
                 # berarti kerjakan seluruh soal sesi apa adanya.
                 jenis=job.params.get("jenis", ""),
+                template_id=template["id"],
             )
             hasil = pipe.jalankan()
         job.hasil = self._hasil_dict(hasil)
