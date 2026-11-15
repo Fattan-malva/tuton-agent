@@ -387,15 +387,7 @@ def _pengguna_sekarang() -> dict:
 
 def _scope_args() -> dict:
     """Argumen `config.scope()` dari pengguna yang sedang memanggil."""
-    s = config._SCOPE.get()
-    if s is None:
-        return {}
-    return {
-        "user_id": s.user_id,
-        "cookie_moodle": s.cookie_moodle,
-        "identitas": dict(s.identitas),
-        "provider_data": dict(s.provider_data),
-    }
+    return config.scope_args()
 
 
 def _bearer(handler) -> str:
@@ -632,24 +624,18 @@ def _agents() -> list[dict]:
 # ----------------------------------------------------------- settings
 
 
+# Kolom identitas di tabel Supabase dipetakan ke nama kunci UI; satu sumber
+# tunggal di `tuton.config.IDENTITAS_KEYS` dipakai juga untuk label DOCX.
+_IDENTITAS_KOLOM = {k.upper(): k for k in config.IDENTITAS_KEYS}
+
 _KUNCI_EDIT = [
     "URL_MOODLE", "PRIMARY_MODEL", "VISION_MODEL", "FALLBACK_MODELS",
-    "NAMA", "NIM", "SEMESTER", "UT_DAERAH", "PRODI",
     "WEB_HOST", "WEB_PORT",
-]
+] + list(_IDENTITAS_KOLOM)
 _KUNCI_RAHASIA = {"COOKIE_MOODLE"}
 # Kunci yang memengaruhi koneksi Moodle; kalau salah satunya berubah, semua
 # cache yang isinya hasil scrape lama harus dibersihkan sekaligus.
 _KUNCI_MOODLE = {"COOKIE_MOODLE", "URL_MOODLE"}
-
-# Kolom identitas di tabel Supabase dipetakan ke nama kunci UI.
-_IDENTITAS_KOLOM = {
-    "NAMA": "nama",
-    "NIM": "nim",
-    "SEMESTER": "semester",
-    "UT_DAERAH": "ut_daerah",
-    "PRODI": "prodi",
-}
 
 
 def _reset_cache_moodle() -> int:
@@ -693,14 +679,14 @@ def _settings_get() -> list[dict]:
     out: list[dict] = []
     # Moodle session and DOCX identity are per Clerk user; never expose or
     # persist them in the shared `.env`.
-    for k, value in {
-        "NAMA": ident.get("nama", ""),
-        "NIM": ident.get("nim", ""),
-        "SEMESTER": ident.get("semester", ""),
-        "UT_DAERAH": ident.get("ut_daerah", ""),
-        "PRODI": ident.get("prodi", ""),
-    }.items():
-        out.append({"key": k, "value": value, "rahasia": False})
+    for k in config.IDENTITAS_KEYS:
+        out.append(
+            {
+                "key": k.upper(),
+                "value": str(ident.get(k) or ""),
+                "rahasia": False,
+            }
+        )
     out.append({
         "key": "COOKIE_MOODLE",
         "value": "*" * 16 if profile.get("cookie_ada") else "",
@@ -780,6 +766,9 @@ def _settings_post(payload: dict) -> dict:
         # dashboard, select matkul, nilai, dan jadwal langsung memakai
         # sesi yang baru tanpa perlu restart server.
         dibersihkan = _reset_cache_moodle()
+        # Sumber token cache ikut dibuang, supaya cookie yang baru tidak
+        # tertunda sampai TTL token habis.
+        _lupakan_token(self)
         return {"ok": True, "moodle_disegarkan": True, "cache_dibersihkan": dibersihkan}
     return {"ok": True}
 

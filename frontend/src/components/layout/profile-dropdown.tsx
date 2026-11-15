@@ -3,25 +3,13 @@
 import { useUser } from '@clerk/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { displayName, initials } from '@/lib/user'
 import { AccountDialog } from './account-dialog'
-
-function initials(name: string) {
-  const words = name.trim().split(/\s+/).filter(Boolean)
-  return (
-    words.length > 1
-      ? words[0][0] + words.at(-1)![0]
-      : words[0]?.slice(0, 2) || 'TA'
-  ).toUpperCase()
-}
 
 /** Avatar di header: membuka modal akun, bukan halaman Clerk. */
 export function ProfileDropdown() {
   const { user } = useUser()
-  const name =
-    user?.fullName ||
-    user?.username ||
-    user?.primaryEmailAddress?.emailAddress ||
-    'Akun'
+  const name = displayName(user)
 
   return (
     <AccountDialog

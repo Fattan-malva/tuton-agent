@@ -27,27 +27,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { NilaiChart } from '@/components/nilai-chart'
 import { PageHeader } from '@/components/page-header'
-
-const JOB_LABEL: Record<string, string> = {
-  queued: 'antre',
-  running: 'berjalan',
-  stopping: 'menghentikan',
-  done: 'selesai',
-  error: 'gagal',
-  stopped: 'dihentikan',
-}
-
-const JOB_VARIANT: Record<
-  string,
-  'default' | 'secondary' | 'destructive' | 'outline'
-> = {
-  running: 'default',
-  queued: 'secondary',
-  stopping: 'outline',
-  done: 'secondary',
-  error: 'destructive',
-  stopped: 'outline',
-}
+import { JOB_LABEL, JOB_VARIANT } from '@/lib/job-status'
 
 /** Kartu statistik gaya template: chip ikon, angka besar, judul, keterangan. */
 function StatCard({

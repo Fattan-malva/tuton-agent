@@ -43,7 +43,24 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { data, error, mutate } = useSWR<SessionInfo>(
     isSignedIn ? '/api/session' : null,
   )
+  const { data: moodleStatus } = useSWR<{ masuk: boolean; pesan: string }>(
+    isSignedIn ? '/api/moodle-status' : null,
+  )
   const [panduanClosed, setPanduanClosed] = useState(false)
+
+  const panduanAwal = Boolean(data?.panduan_awal)
+  const butuhCookie =
+    data?.panduan_awal === false &&
+    data?.profile?.cookie_ada === false &&
+    Boolean(moodleStatus) &&
+    moodleStatus?.masuk === false
+  const bukaPanduan = !panduanClosed && (panduanAwal || butuhCookie)
+
+  // Panduan awal hanya dipakai sekali per browser tab untuk akun baru.
+  useEffect(() => {
+    if (panduanAwal) setPanduanClosed(false)
+    if (data && !panduanAwal) setPanduanClosed(true)
+  }, [data, panduanAwal])
 
   useEffect(() => {
     if (isLoaded && !isSignedIn) router.replace('/login/')
@@ -94,7 +111,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           {children}
         </main>
         <Toaster position='top-center' />
-        <OnboardingModal open={Boolean(data?.panduan_awal) && !panduanClosed} onClose={() => setPanduanClosed(true)} />
+        <OnboardingModal
+          open={bukaPanduan}
+          onClose={() => setPanduanClosed(true)}
+          initialStep={panduanAwal ? 0 : 1}
+        />
       </SidebarInset>
     </SidebarProvider>
   )

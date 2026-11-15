@@ -9,6 +9,7 @@ import type { Profil } from '@/lib/types'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { displayName, initials } from '@/lib/user'
 import {
   Dialog,
   DialogContent,
@@ -20,14 +21,6 @@ import {
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
 
-function inisial(nama: string) {
-  const kata = nama.trim().split(/\s+/).filter(Boolean)
-  if (!kata.length) return 'TA'
-  const huruf =
-    kata.length > 1 ? kata[0][0] + kata[kata.length - 1][0] : kata[0].slice(0, 2)
-  return huruf.toUpperCase()
-}
-
 const IDENTITAS: { kunci: string; label: string }[] = [
   { kunci: 'nama', label: 'Nama' },
   { kunci: 'nim', label: 'NIM' },
@@ -36,8 +29,7 @@ const IDENTITAS: { kunci: string; label: string }[] = [
   { kunci: 'ut_daerah', label: 'UT Daerah' },
 ]
 
-/**
- * Modal akun: identitas pemilik akun, tautan ke Pengaturan, dan tombol keluar.
+/** Modal akun: identitas pemilik akun, tautan ke Pengaturan, dan tombol keluar.
  *
  * Sengaja memakai dialog internal, bukan menu Clerk atau tautan keluar milik
  * Clerk, supaya tidak pernah berpindah ke halaman Clerk yang bisa gagal
@@ -50,11 +42,7 @@ export function AccountDialog({ trigger }: { trigger: ReactElement }) {
   const [keluar, setKeluar] = useState(false)
   const profil = useSWR<Profil>(buka ? '/api/profil' : null)
 
-  const nama =
-    user?.fullName ||
-    user?.username ||
-    user?.primaryEmailAddress?.emailAddress ||
-    'Akun'
+  const nama = displayName(user)
   const email = user?.primaryEmailAddress?.emailAddress || ''
   const identitas = profil.data?.identitas || {}
   const nim = String(identitas.nim || '').trim()
@@ -86,7 +74,7 @@ export function AccountDialog({ trigger }: { trigger: ReactElement }) {
         <div className='flex items-center gap-3'>
           <Avatar className='size-11'>
             <AvatarImage src={user?.imageUrl} alt={nama} />
-            <AvatarFallback>{inisial(nama)}</AvatarFallback>
+            <AvatarFallback>{initials(nama)}</AvatarFallback>
           </Avatar>
           <div className='min-w-0'>
             <p className='truncate text-sm font-semibold'>{nama}</p>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Check, ChevronLeft, ChevronRight, Info, Loader2 } from 'lucide-react'
 import useSWR from 'swr'
@@ -37,17 +37,23 @@ const IDENTITAS: { key: string; label: string }[] = [
 export function OnboardingModal({
   open,
   onClose,
+  initialStep = 0,
 }: {
   open: boolean
   onClose: () => void
+  initialStep?: number
 }) {
   const router = useRouter()
-  const [step, setStep] = useState(0)
+  const [step, setStep] = useState(initialStep)
   const [cookie, setCookie] = useState('')
   const [busy, setBusy] = useState(false)
   const [identitas, setIdentitas] = useState<Record<string, string>>({})
   const [panduanOpen, setPanduanOpen] = useState(false)
   const { data: settings } = useSWR<SettingItem[]>('/api/settings')
+
+  useEffect(() => {
+    if (open) setStep(initialStep)
+  }, [open, initialStep])
 
   const nilai = Object.fromEntries((settings || []).map((s) => [s.key, s.value]))
   const identitasAktif: Record<string, string> = {

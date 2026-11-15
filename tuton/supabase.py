@@ -397,7 +397,9 @@ def result_delete(user_id: str, slug: str, sesi: str = "", nama: str = "") -> No
             json={"prefixes": paths},
             timeout=30,
         )
-    requests.delete(_url(RESULT_TABLE), params=params, headers=_headers(), timeout=15)
+    r = requests.delete(_url(RESULT_TABLE), params=params, headers=_headers(), timeout=15)
+    if not r.ok:
+        raise ValueError(f"Supabase menolak hapus metadata ({r.status_code}): {r.text[:200]}")
 
 
 # ------------------------------------------------------------------ keepalive

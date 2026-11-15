@@ -4,18 +4,12 @@ import { useUser } from '@clerk/react'
 import { ChevronsUpDown } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
+import { displayName, initials } from '@/lib/user'
 import { AccountDialog } from './account-dialog'
-
-function inisial(nama: string) {
-  const kata = nama.trim().split(/\s+/).filter(Boolean)
-  if (!kata.length) return 'TA'
-  const huruf = kata.length > 1 ? kata[0][0] + kata[kata.length - 1][0] : kata[0].slice(0, 2)
-  return huruf.toUpperCase()
-}
 
 export function NavUser() {
   const { user } = useUser()
-  const nama = user?.fullName || user?.username || user?.primaryEmailAddress?.emailAddress || 'Akun'
+  const nama = displayName(user)
   const email = user?.primaryEmailAddress?.emailAddress || ''
 
   return (
@@ -29,7 +23,7 @@ export function NavUser() {
             >
               <Avatar className='size-8'>
                 <AvatarImage src={user?.imageUrl} alt={nama} />
-                <AvatarFallback>{inisial(nama)}</AvatarFallback>
+                <AvatarFallback>{initials(nama)}</AvatarFallback>
               </Avatar>
               <div className='grid flex-1 text-start text-sm leading-tight group-data-[collapsible=icon]:hidden'>
                 <span className='truncate font-semibold'>{nama}</span>

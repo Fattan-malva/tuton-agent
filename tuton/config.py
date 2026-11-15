@@ -98,6 +98,19 @@ def current_provider_data() -> dict | None:
     return dict(s.provider_data or {})
 
 
+def scope_args() -> dict:
+    """Argumen `scope()` saat ini, untuk diturunkan ke pemanggil."""
+    s = _SCOPE.get()
+    if s is None:
+        return {}
+    return {
+        "user_id": s.user_id,
+        "cookie_moodle": s.cookie_moodle,
+        "identitas": dict(s.identitas),
+        "provider_data": dict(s.provider_data),
+    }
+
+
 def _root(base: Path) -> Path:
     """Folder dasar milik user aktif, atau folder lama untuk pemakaian CLI."""
     user = current_user()

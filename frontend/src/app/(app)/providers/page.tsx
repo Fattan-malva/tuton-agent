@@ -22,13 +22,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ModelInput } from '@/components/model-input'
 import { ModelList } from '@/components/model-picker'
 import { SaveButton } from '@/components/save-button'
-
-const AGENTS: { name: string; label: string }[] = [
-  { name: 'scrapper', label: 'Scrapper (peta soal)' },
-  { name: 'research', label: 'Research (daftar pustaka)' },
-  { name: 'worker', label: 'Worker (penulis jawaban)' },
-  { name: 'vision', label: 'Vision (transkrip gambar)' },
-]
+import { AGENTS } from '@/lib/agents'
 
 const KOSONG = { id: '', name: '', base_url: '', api_key: '', models: '' }
 

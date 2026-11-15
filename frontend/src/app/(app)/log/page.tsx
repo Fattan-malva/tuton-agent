@@ -12,17 +12,8 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { PageHeader } from '@/components/page-header'
+import { STATUS_LABEL, isLive } from '@/lib/job-status'
 
-const STATUS_LABEL: Record<string, string> = {
-  queued: 'antre',
-  running: 'berjalan',
-  stopping: 'menghentikan',
-  done: 'selesai',
-  error: 'gagal',
-  stopped: 'dihentikan',
-}
-
-const STATUS_HIDUP = new Set(['queued', 'running', 'stopping'])
 
 function LogSkeleton() {
   return (
@@ -46,7 +37,7 @@ function LogContent() {
   const list = jobs || []
   const dipilih = search.get('job') || list[0]?.id || ''
   const selectedJob = list.find((j) => j.id === dipilih)
-  const stoppable = selectedJob ? STATUS_HIDUP.has(selectedJob.status) : false
+  const stoppable = selectedJob ? isLive(selectedJob.status) : false
 
   const [lines, setLines] = useState<LogEvent[]>([])
   const [status, setStatus] = useState('siap')

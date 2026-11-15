@@ -1,7 +1,8 @@
 'use client'
 
 import useSWR from 'swr'
-import { Bot, Eye, Search, Sparkles } from 'lucide-react'
+import { Bot, Eye, Search } from 'lucide-react'
+import { AGENTS, AGENT_BY_NAME } from '@/lib/agents'
 import type { AgentInfo, Job } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -13,15 +14,6 @@ import {
 } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader } from '@/components/page-header'
-
-const ICONS = [Search, Sparkles, Eye, Bot]
-
-const PERAN: Record<string, string> = {
-  scrapper: 'Memetakan soal dan menyusun rencana jawaban.',
-  research: 'Mencari daftar pustaka pendukung.',
-  worker: 'Menulis jawaban akhir per soal.',
-  vision: 'Mentranskripsi gambar soal.',
-}
 
 export default function AgentsPage() {
   const agents = useSWR<AgentInfo[]>('/api/agents')
@@ -56,8 +48,9 @@ export default function AgentsPage() {
                 </CardContent>
               </Card>
             ))
-          : (agents.data || []).map((agent, i) => {
-              const Icon = ICONS[i % ICONS.length]
+          : (agents.data || []).map((agent) => {
+              const info = AGENT_BY_NAME[agent.name] || AGENTS[0]
+              const Icon = info.Icon
               return (
                 <Card key={agent.name} className='gap-3 py-5 transition-shadow hover:shadow-md'>
                   <CardHeader className='px-5'>
@@ -68,7 +61,7 @@ export default function AgentsPage() {
                       {agent.name}
                     </CardTitle>
                     <CardDescription className='line-clamp-2 text-xs'>
-                      {PERAN[agent.name] || 'Agent pipeline.'}
+                      {info.peran}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className='space-y-2 px-5'>
