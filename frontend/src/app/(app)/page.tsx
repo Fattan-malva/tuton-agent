@@ -85,7 +85,7 @@ function StatCard({
 
 export default function DashboardPage() {
   const jobs = useSWR<Job[]>('/api/jobs')
-  const moodle = useSWR<{ masuk: boolean; pesan: string }>('/api/moodle/status')
+  const moodle = useSWR<{ masuk: boolean; pesan: string }>('/api/moodle-status')
   const status = useSWR<StatusInfo>('/api/status')
   const courses = useSWR<Course[]>('/api/courses')
   const nilai = useSWR<NilaiData>('/api/nilai')

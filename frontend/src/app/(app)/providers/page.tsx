@@ -19,8 +19,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { PageHeader } from '@/components/page-header'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Textarea } from '@/components/ui/textarea'
 import { ModelInput } from '@/components/model-input'
+import { ModelList } from '@/components/model-picker'
 import { SaveButton } from '@/components/save-button'
 
 const AGENTS: { name: string; label: string }[] = [
@@ -35,6 +35,7 @@ const KOSONG = { id: '', name: '', base_url: '', api_key: '', models: '' }
 export default function ProvidersPage() {
   const { data, isLoading, mutate } = useSWR<ProviderData>('/api/providers')
   const [form, setForm] = useState(KOSONG)
+  const [modelOptions, setModelOptions] = useState<string[]>([])
   const [agents, setAgents] = useState<Record<string, string>>({})
   const [pesan, setPesan] = useState('')
   const [busy, setBusy] = useState(false)
@@ -86,6 +87,8 @@ export default function ProvidersPage() {
         return
       }
       const daftar = r.models || []
+      const prefix = id || form.id || ''
+      if (prefix) setModelOptions(daftar.map((m) => `${prefix}/${m}`))
       if (!id || form.id === id) setForm((f) => ({ ...f, models: daftar.join('\n') }))
       setPesan(`${daftar.length} model ditemukan dan dimasukkan ke daftar.`)
     } catch (e) {
@@ -124,7 +127,7 @@ export default function ProvidersPage() {
     <div className='flex flex-col gap-4'>
       <PageHeader
         title='Provider'
-        description='Endpoint OpenAI-compatible, API key, daftar model, dan model tiap agent. Disimpan di runtime/runtime.json.'
+        description='Endpoint OpenAI-compatible, API key, daftar model, dan model tiap agent. Disimpan per akun; akun lain tidak bisa melihat API key Anda.'
       />
 
       <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)] xl:items-start'>
@@ -171,16 +174,9 @@ export default function ProvidersPage() {
                   placeholder={form.id ? 'kosongkan = tetap' : 'sk-...'}
                 />
               </div>
-              <div className='space-y-2'>
-                <Label htmlFor='p-models'>Model ID (satu per baris atau pisah koma)</Label>
-                <Textarea
-                  id='p-models'
-                  value={form.models}
-                  onChange={(e) => setForm({ ...form, models: e.target.value })}
-                  placeholder={'cbai/deepseek-v4.1-flash\ngrok'}
-                  className='min-h-24 font-mono text-xs'
-                />
-              </div>
+              <p className='text-muted-foreground text-xs'>
+                Jalankan <strong>Tes &amp; ambil model</strong> untuk mengambil daftar model dari provider, lalu simpan.
+              </p>
               <div className='flex flex-wrap items-center gap-2 border-t pt-4'>
                 <SaveButton onSave={simpan} disabled={!form.name.trim()} label='Simpan provider' />
                 <Button variant='outline' onClick={() => tes()} disabled={busy}>
@@ -220,13 +216,7 @@ export default function ProvidersPage() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className='space-y-3 px-5'>
-                    <div className='flex flex-wrap gap-1'>
-                      {p.models.map((m) => (
-                        <Badge key={m} variant='secondary' className='font-mono'>
-                          {m}
-                        </Badge>
-                      ))}
-                    </div>
+                    <ModelList models={p.models} />
                     <div className='flex flex-wrap gap-2'>
                       <Button size='sm' variant='outline' onClick={() => ubah(p)}>
                         <Pencil /> Ubah
@@ -261,7 +251,7 @@ export default function ProvidersPage() {
                   id={`agent-${a.name}`}
                   value={agents[a.name] || ''}
                   onChange={(v) => setAgents((prev) => ({ ...prev, [a.name]: v }))}
-                  models={data?.models || []}
+                  models={[...new Set([...(data?.models || []), ...modelOptions])]}
                 />
               </div>
             ))}

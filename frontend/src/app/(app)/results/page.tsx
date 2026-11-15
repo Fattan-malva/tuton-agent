@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import useSWR from 'swr'
 import { Download, Eye, FileText, Search, Trash2 } from 'lucide-react'
-import { postJSON } from '@/lib/api'
+import { postJSON, streamUrl } from '@/lib/api'
 import type { ResultFile } from '@/lib/types'
 import { formatBytes } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -38,6 +38,13 @@ import { PageHeader } from '@/components/page-header'
 
 function encodeRel(rel: string) {
   return rel.split('/').map(encodeURIComponent).join('/')
+}
+
+/** Unduhan tidak bisa membawa header Authorization, jadi token ikut di query. */
+function unduh(rel: string) {
+  void streamUrl(`/api/download-output/${encodeRel(rel)}`).then((url) => {
+    window.location.href = url
+  })
 }
 
 function namaMatkul(slug: string) {
@@ -197,13 +204,13 @@ export default function ResultsPage() {
                           >
                             <Eye />
                           </Button>
-                          <Button asChild size='icon-sm' variant='ghost'>
-                            <a
-                              href={`/api/download-output/${encodeRel(rel)}`}
-                              title={`Unduh ${f.nama}`}
-                            >
-                              <Download />
-                            </a>
+                          <Button
+                            size='icon-sm'
+                            variant='ghost'
+                            title={`Unduh ${f.nama}`}
+                            onClick={() => unduh(rel)}
+                          >
+                            <Download />
                           </Button>
                           <Button
                             size='icon-sm'
@@ -212,7 +219,7 @@ export default function ResultsPage() {
                             onClick={() =>
                               setHapus({
                                 title: 'Hapus berkas ini?',
-                                message: `${f.nama} akan dihapus permanen dari disk. Berkas lain di sesi ini tidak ikut terhapus.`,
+                                message: `${f.nama} akan dihapus permanen dari penyimpanan. Berkas lain di sesi ini tidak ikut terhapus.`,
                                 body: { slug: f.slug, sesi: f.sesi, nama: f.nama },
                               })
                             }
@@ -245,7 +252,7 @@ export default function ResultsPage() {
                 onClick={() =>
                   setHapus({
                     title: `Hapus semua hasil ${namaMatkul(slug)}?`,
-                    message: `Seluruh folder output/${namaMatkul(slug)} beserta semua DOCX di dalamnya dihapus permanen. Tidak bisa dibatalkan.`,
+                    message: `Seluruh hasil ${namaMatkul(slug)} beserta semua DOCX di dalamnya dihapus permanen. Tidak bisa dibatalkan.`,
                     body: { slug },
                   })
                 }
@@ -313,10 +320,12 @@ function PreviewDialog({
           )}
         </div>
         <div className='flex justify-end gap-2'>
-          <Button asChild variant='outline'>
-            <a href={`/api/download-output/${enc}`}>
-              <Download /> Unduh
-            </a>
+          <Button
+            variant='outline'
+            disabled={!preview}
+            onClick={() => preview && unduh(preview.rel)}
+          >
+            <Download /> Unduh
           </Button>
           <Button onClick={onClose}>Tutup</Button>
         </div>

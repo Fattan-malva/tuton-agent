@@ -35,6 +35,7 @@ from tuton import html2md
 from tuton import moodle
 from tuton import reader as reader_mod
 from tuton import runtime_config
+from tuton import supabase
 from tuton.courses import Aktivitas, MataKuliah, Sesi
 
 
@@ -1961,6 +1962,34 @@ Struktur jawaban yang diminta dokumen akhir:
         # tidak ada yang bisa bilang itu terjadi di sini, bukan di model.
         for baris in docx_tool.rangkas_dokumen(docx_path):
             self._log(f"        {baris}")
+
+        self._unggah_hasil(docx_path)
+
+    def _unggah_hasil(self, docx_path: Path) -> None:
+        """Salin DOCX ke Supabase Storage milik pemilik job.
+
+        Berkas lokal tetap ditulis lebih dulu (jalur CLI dan pratinjau cepat
+        memakainya), lalu diunggah supaya hasil bisa diunduh dari perangkat
+        mana pun dan tidak menumpuk di disk server. Path objek mengikuti
+        `<user_id>/<matkul>/<sesi>/<berkas>`; kegagalan unggah hanya dicatat
+        sebagai catatan sesi, bukan menggagalkan job yang sudah selesai.
+        """
+        user_id = config.current_user()
+        if not user_id or not supabase.aktif():
+            return
+        try:
+            supabase.result_upload(
+                user_id,
+                self.matkul.slug,
+                f"sesi-{self.nomor}",
+                docx_path.name,
+                docx_path.read_bytes(),
+            )
+        except (OSError, ValueError) as exc:
+            self.hasil.catatan.append(f"Hasil tidak terunggah ke Storage: {exc}")
+            self._log(f"  ! Hasil tidak terunggah ke Storage: {exc}")
+            return
+        self._log(f"  [simpan] Hasil diunggah ke Storage: {self.matkul.slug}/{docx_path.name}")
 
 
 # ---------------------------------------------------------------- pemdongsoal

@@ -23,9 +23,11 @@ import re
 import shutil
 import signal
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -279,56 +281,46 @@ def _parse_multipart(body: bytes, boundary: str) -> list[tuple[str, str | None, 
 
 
 def _results_list() -> list[dict]:
-    """Daftar DOCX yang ada di disk, dari folder kerja.
+    """Daftar DOCX milik akun pemanggil, dari metadata Supabase.
 
-    Sumber kebenaran hasil adalah folder `output/`, bukan state job di
-    memori: setelah server di-restart, job lama hilang dari memori padahal
-    berkasnya tetap ada. Tanpa ini tab Result kosong walau output penuh.
+    Sumber kebenaran hasil sekarang Storage + tabel `user_results`, bukan
+    folder `output/` di disk: job bisa jalan di mesin lain, dan berkas hasil
+    tidak boleh tercampur antar akun. Bentuk item dipertahankan sama dengan
+    versi lama (`slug`, `sesi`, `nama`, `ukuran`, `waktu`) supaya tab Result
+    tidak perlu diubah.
     """
     out: list[dict] = []
-    base = config.output_root()
-    if base.is_dir():
-        for path in sorted(base.glob("*/*/*.docx")):
-            try:
-                st = path.stat()
-            except OSError:
-                continue
-            out.append(
-                {
-                    "slug": path.parent.parent.name,
-                    "sesi": path.parent.name,
-                    "nama": path.name,
-                    "ukuran": st.st_size,
-                    "waktu": st.st_mtime,
-                }
-            )
+    for row in supabase.result_list(config.current_user()):
+        try:
+            waktu = datetime.fromisoformat(
+                str(row.get("updated_at") or "").replace("Z", "+00:00")
+            ).timestamp()
+        except (TypeError, ValueError):
+            waktu = 0.0
+        out.append(
+            {
+                "slug": str(row.get("slug") or ""),
+                "sesi": str(row.get("sesi") or ""),
+                "nama": str(row.get("nama") or ""),
+                "ukuran": int(row.get("ukuran") or 0),
+                "waktu": waktu,
+            }
+        )
     return sorted(out, key=lambda x: x["waktu"], reverse=True)
 
 
-def _hasil_target(rel: str) -> Path | None:
-    """Tentukur satu jalur relatif di dalam `output/`, atau `None` kalau lolos.
+def _hasil_cek_bagian(rel: str) -> list[str]:
+    """Pecah path relatif hasil dan tolak yang tidak masuk akal.
 
-    Semua rute yang menyentuh `output/` (unduh, pratinjau, hapus) melewat
-    jalurnya lewat sini. Tiga lapis pagar: path absolut di-*resolve* dulu
-    (menetralkan `..` dan tautan simbolis), lalu harus benar-benar berada di
-    dalam `output/` -- bukan sekadar berawalan sama, karena `output2/` juga
-    berawalan `output`. Resolusi dilakukan per bagian, bukan sebagai satu
-    potongan dari klien, supaya `../../etc/passwd` langsung ditolak.
+    Rute hasil dulu menyentuh disk, jadi path-nya harus ditenturkan. Sekarang
+    objeknya ada di Storage dengan path `<user_id>/<slug>/<sesi>/<nama>`;
+    pemisahan tetap perlu supaya satu akun tidak bisa menyusun
+    `slug/../user_lain/...`.
     """
-    base = config.output_root().resolve()
     bagian = [b for b in rel.replace("\\", "/").split("/") if b not in ("", ".")]
-    if not bagian or any(b == ".." for b in bagian):
-        return None
-    try:
-        target = base
-        for b in bagian:
-            target = target / b
-        target = target.resolve()
-    except OSError:
-        return None
-    if not str(target).startswith(str(base) + os.sep):
-        return None
-    return target
+    if not bagian or any(b in {".."} or "/" in b for b in bagian):
+        return []
+    return bagian
 
 
 def _hasil_hapus(payload: dict) -> dict:
@@ -336,41 +328,36 @@ def _hasil_hapus(payload: dict) -> dict:
 
     Tingkatnya ditentukan isi body: `nama` berarti berkas, tanpa `nama` tapi
     ada `sesi` berarti folder sesi, tanpa keduanya berarti seluruh folder
-    mata kuliah beserta semua DOCX-nya. Selalu lewat `_hasil_target`.
+    mata kuliah beserta semua DOCX-nya. Semua query dibatasi `user_id` akun
+    pemanggil, jadi tidak ada cara menyentuh hasil akun lain lewat body.
     """
     slug = str(payload.get("slug") or "")
     if not re.fullmatch(r"[A-Za-z0-9_.\-]+", slug) or ".." in slug:
         raise ValueError("Nama mata kuliah tidak sah.")
-    base = config.output_root().resolve()
-    akar = _hasil_target(slug)
-    if akar is None:
-        raise ValueError("Folder mata kuliah tidak ada di output/.")
 
     sesi = str(payload.get("sesi") or "")
     nama = str(payload.get("nama") or "")
+    if sesi and not re.fullmatch(r"sesi-\d+", sesi):
+        raise ValueError("Nomor sesi tidak sah.")
+    if nama and not sesi:
+        raise ValueError("Nomor sesi wajib diisi untuk menghapus satu berkas.")
 
+    user_id = config.current_user()
+    ada = [
+        x for x in supabase.result_list(user_id)
+        if x.get("slug") == slug
+        and (not sesi or x.get("sesi") == sesi)
+        and (not nama or x.get("nama") == nama)
+    ]
+    if not ada:
+        raise ValueError("Hasil tidak ditemukan.")
+
+    supabase.result_delete(user_id, slug, sesi, nama)
     if nama:
-        if not re.fullmatch(r"sesi-\d+", sesi):
-            raise ValueError("Nomor sesi tidak sah.")
-        target = _hasil_target(f"{slug}/{sesi}/{nama}")
-        if target is None or not target.is_file():
-            raise ValueError("Berkas tidak ditemukan.")
-        target.unlink()
-        return {"ok": True, "tingkat": "berkas", "path": str(target.relative_to(base))}
-
+        return {"ok": True, "tingkat": "berkas", "path": f"{user_id}/{slug}/{sesi}/{nama}"}
     if sesi:
-        if not re.fullmatch(r"sesi-\d+", sesi):
-            raise ValueError("Nomor sesi tidak sah.")
-        target = _hasil_target(f"{slug}/{sesi}")
-        if target is None or not target.is_dir():
-            raise ValueError("Folder sesi tidak ditemukan.")
-        shutil.rmtree(target)
-        return {"ok": True, "tingkat": "sesi", "path": str(target.relative_to(base))}
-
-    if not akar.is_dir():
-        raise ValueError("Folder mata kuliah tidak ditemukan.")
-    shutil.rmtree(akar)
-    return {"ok": True, "tingkat": "matkul", "path": slug}
+        return {"ok": True, "tingkat": "sesi", "path": f"{user_id}/{slug}/{sesi}"}
+    return {"ok": True, "tingkat": "matkul", "path": f"{user_id}/{slug}"}
 
 
 def _kirim_json(handler, obj, status: int = 200) -> None:
@@ -407,6 +394,7 @@ def _scope_args() -> dict:
         "user_id": s.user_id,
         "cookie_moodle": s.cookie_moodle,
         "identitas": dict(s.identitas),
+        "provider_data": dict(s.provider_data),
     }
 
 
@@ -418,7 +406,10 @@ def _bearer(handler) -> str:
     # memakai jalur ini; token Clerk berumur pendek (~60 detik) sehingga
     # risikonya kecil, tapi jangan dipakai untuk request biasa.
     query = urllib.parse.parse_qs(urllib.parse.urlparse(handler.path).query)
-    if urllib.parse.urlparse(handler.path).path.endswith("/stream"):
+    path = urllib.parse.urlparse(handler.path).path
+    # Unduhan lewat <a>/navigasi browser juga tidak bisa membawa header;
+    # token di query hanya diterima di sini, sama seperti EventSource.
+    if path.endswith("/stream") or path.startswith("/api/download"):
         return str((query.get("token") or [""])[0]).strip()
     return ""
 
@@ -482,6 +473,12 @@ def _pasang_scope(handler) -> dict | None:
     if not user:
         return None
     args = supabase.scope_dari_row(user.get("_row") or {}, user["id"])
+    # Provider lama di `runtime/runtime.json` dipindahkan ke akun ini saat
+    # pertama kali terlihat belum punya provider, supaya pipeline yang
+    # dijalankan sebelum halaman Provider dibuka tetap punya kredensial.
+    if not (args.get("provider_data") or {}).get("providers"):
+        if runtime_config.migrasi_ke_user(user["id"]):
+            args["provider_data"] = supabase.providers_data(user["id"])
     handler._scope_token = config._SCOPE.set(config.Scope(**args))
     handler._user_token = _PENGGUNA.set(user)
     handler._current_user = user
@@ -546,6 +543,10 @@ def _models() -> dict:
 
 
 def _provider_state() -> dict:
+    # `runtime_config` sudah membaca sumber yang tepat untuk konteks ini:
+    # baris Supabase akun pemanggil untuk web, berkas untuk CLI. Migrasi
+    # berkas lama ke akun terjadi di `_pasang_scope`, jadi di sini data sudah
+    # final dan tidak ada round-trip Supabase tambahan.
     return {
         "providers": [_provider_publik(p) for p in runtime_config.providers()],
         "agents": runtime_config.muat()["agents"],
@@ -690,8 +691,9 @@ def _settings_get() -> list[dict]:
         "rahasia": True,
         "ada": bool(profile.get("cookie_ada")),
     })
-    # Model/provider settings remain machine-wide intentionally: they are not
-    # identity data and one runtime.json avoids duplicating API keys per user.
+    # Provider, model per agent, dan API key milik akun ada di menu Provider
+    # (Supabase `user_providers`). Nilai di bawah adalah default `.env`
+    # bersama: dipakai hanya kalau akun belum memilih model per agent.
     for k in ("PRIMARY_MODEL", "VISION_MODEL", "FALLBACK_MODELS"):
         out.append({"key": k, "value": config.env(k), "rahasia": False})
     return out
@@ -789,7 +791,7 @@ def _provider_simpan(payload: dict) -> dict:
         raise ValueError("Base URL harus diawali http:// atau https://.")
     models = _daftar_model_payload(payload)
     if not models:
-        raise ValueError("Isi minimal satu model ID.")
+        raise ValueError("Jalankan Tes & ambil model dulu supaya daftar model terisi.")
     if pid:
         if not runtime_config.id_valid(pid):
             raise ValueError("ID provider tidak sah.")
@@ -1432,26 +1434,38 @@ class Handler(BaseHTTPRequestHandler):
             return
 
     # ---- download
+    def _hasil_ambil(self, rel: str) -> tuple[bytes, str] | None:
+        """Ambil satu objek hasil milik akun pemanggil dari Storage.
+
+        `rel` berbentuk `<slug>/<sesi>/<nama>` (sama seperti isi `storage_path`
+        tanpa awalan `<user_id>/`), jadi akun tidak bisa meminta path akun
+        lain: awalan user selalu dari konteks login, bukan dari klien.
+        """
+        bagian = _hasil_cek_bagian(rel)
+        if len(bagian) != 3:
+            return None
+        slug, sesi, nama = bagian
+        user_id = config.current_user()
+        if not user_id:
+            return None
+        isi = supabase.result_download(user_id, f"{user_id}/{slug}/{sesi}/{nama}")
+        if isi is None:
+            return None
+        return isi, nama
+
     def _download_output(self, rel: str) -> None:
-        """Unduh DOCX dari folder `output/` tanpa harus lewat job di memori."""
-        path = _hasil_target(rel)
-        if path is None or not path.is_file():
+        """Unduh DOCX hasil dari Storage tanpa lewat job di memori."""
+        diambil = self._hasil_ambil(rel)
+        if diambil is None:
             return self._not_found()
-        try:
-            fh = open(path, "rb")
-        except OSError:
-            return self._not_found()
-        try:
-            size = os.fstat(fh.fileno()).st_size
-            self.send_response(200)
-            self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-            self.send_header("Content-Length", str(size))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
-            self.end_headers()
-            shutil.copyfileobj(fh, self.wfile)
-        finally:
-            fh.close()
+        data, nama = diambil
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Disposition", f'attachment; filename="{nama}"')
+        self.end_headers()
+        self.wfile.write(data)
 
     # ---- pratinjau
     def _hasil_pratinjau(self, rel: str) -> None:
@@ -1462,16 +1476,22 @@ class Handler(BaseHTTPRequestHandler):
         membuang unduhan. HTML-nya HTML polos tanpa gaya apa pun; seluruh
         tampilan datang dari kelas `.prev-*` di `app.css`.
         """
-        path = _hasil_target(rel)
-        if path is None or not path.is_file():
+        diambil = self._hasil_ambil(rel)
+        if diambil is None:
             return self._not_found()
-        if path.suffix.lower() != ".docx":
+        data, nama = diambil
+        if not nama.lower().endswith(".docx"):
             return _kirim_json(self, {"error": "Pratinjau hanya untuk berkas .docx."}, 400)
         try:
-            isi = docxprev.pratinjau(path)
+            # `docxprev.pratinjau` membaca berkas, jadi objek dari Storage
+            # ditulis ke berkas sementara lalu dibuang lagi.
+            with tempfile.TemporaryDirectory(prefix="tuton-prev-") as tmp:
+                path = Path(tmp) / "pratinjau.docx"
+                path.write_bytes(data)
+                isi = docxprev.pratinjau(path)
         except Exception as exc:  # noqa: BLE001 - berkas korup atau bukan DOCX
             return _kirim_json(self, {"error": f"Berkas tidak bisa dipratinjau: {exc}"}, 400)
-        _kirim_json(self, {"html": isi, "nama": path.name})
+        _kirim_json(self, {"html": isi, "nama": nama})
 
     def _download(self, jid: str) -> None:
         job = MANAGER.jobs.get(jid)

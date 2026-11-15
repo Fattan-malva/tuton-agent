@@ -13,8 +13,12 @@ from datetime import datetime, timezone
 import requests
 
 from tuton import config
+from tuton import crypto
 
 TABLE = "user_identities"
+PROVIDER_TABLE = "user_providers"
+RESULT_TABLE = "user_results"
+STORAGE_BUCKET = config.SUPABASE_BUCKET_RESULTS
 _IDENTITAS = ("nama", "nim", "semester", "ut_daerah", "prodi")
 
 # Supabase mem-pause project gratis setelah 7 hari tanpa aktivitas. 6 jam
@@ -23,7 +27,7 @@ INTERVAL_KEEPALIVE = 6 * 60 * 60
 _thread: threading.Thread | None = None
 
 
-def _headers(prefer: str = "") -> dict[str, str]:
+def _headers(prefer: str = "", *, upsert: bool = False) -> dict[str, str]:
     key = config.SUPABASE_KEY
     h = {
         "apikey": key,
@@ -32,6 +36,10 @@ def _headers(prefer: str = "") -> dict[str, str]:
     }
     if prefer:
         h["Prefer"] = prefer
+    if upsert:
+        # Storage menolak unggahan ulang tanpa header ini; dipakai supaya
+        # menjalankan ulang satu sesi menimpa berkas yang sama, bukan gagal.
+        h["x-upsert"] = "true"
     return h
 
 
@@ -39,15 +47,24 @@ def aktif() -> bool:
     return bool(config.SUPABASE_URL and config.SUPABASE_KEY)
 
 
-def _url() -> str:
-    return f"{config.SUPABASE_URL}/rest/v1/{TABLE}"
+def _url(table: str = TABLE) -> str:
+    return f"{config.SUPABASE_URL}/rest/v1/{table}"
+
+
+def _storage_url(path: str = "", *, authenticated: bool = False) -> str:
+    """URL objek Storage. `authenticated` dipakai untuk unduh bucket privat."""
+    bagian = "object/authenticated" if authenticated else "object"
+    dasar = f"{config.SUPABASE_URL}/storage/v1/{bagian}/{STORAGE_BUCKET}"
+    return f"{dasar}/{path}" if path else dasar
 
 
 def _get(user_id: str) -> dict:
     """Baris profil satu user; `{}` kalau belum ada atau Supabase mati.
 
     Kegagalan jaringan tidak boleh menjatuhkan dashboard: pengguna akan
-    melihat pengaturan kosong dan bisa mengisinya ulang.
+    melihat pengaturan kosong dan bisa mengisinya ulang. Cookie pada baris
+    hasil dibuka di sini (di memori saja) dan baris plaintext lama dienkripsi
+    ulang sekali, supaya kredensial tidak pernah tersimpan apa adanya.
     """
     if not aktif() or not user_id:
         return {}
@@ -61,9 +78,38 @@ def _get(user_id: str) -> dict:
         if not r.ok:
             return {}
         rows = r.json()
-        return rows[0] if isinstance(rows, list) and rows else {}
+        row = rows[0] if isinstance(rows, list) and rows else {}
     except (requests.RequestException, ValueError):
         return {}
+    if not row:
+        return {}
+    mentah = str(row.get("cookie_moodle") or "")
+    if mentah and not crypto.terenkripsi(mentah):
+        # Data sebelum enkripsi diaktifkan: pakai sekali ini, lalu simpan
+        # dalam bentuk terenkripsi supaya tidak tertinggal plaintext.
+        if crypto.tersedia():
+            try:
+                _patch(user_id, {"cookie_moodle": crypto.enkripsi(mentah)})
+            except (ValueError, requests.RequestException):
+                pass
+        # Pemanggil selalu menerima nilai siap pakai, bukan ciphertext.
+        row["cookie_moodle"] = mentah
+    else:
+        row["cookie_moodle"] = crypto.dekripsi(mentah)
+    return row
+
+
+def _patch(user_id: str, values: dict) -> None:
+    """Ubah sebagian kolom satu baris profil (tanpa upsert)."""
+    r = requests.patch(
+        _url(),
+        params={"user_id": f"eq.{user_id}"},
+        headers=_headers("return=minimal"),
+        json=values,
+        timeout=15,
+    )
+    if not r.ok:
+        raise ValueError(f"Supabase menolak pembaruan ({r.status_code}): {r.text[:200]}")
 
 
 def profil_dari_row(row: dict, user_id: str) -> dict:
@@ -90,6 +136,9 @@ def scope_dari_row(row: dict, user_id: str) -> dict:
         "user_id": user_id,
         "cookie_moodle": str(row.get("cookie_moodle") or ""),
         "identitas": {k: str(row.get(k) or "") for k in _IDENTITAS},
+        # Provider ikut di-scope supaya pipeline/agent runner di thread job
+        # memakai kredensial pemilik job, bukan berkas bersama atau akun lain.
+        "provider_data": providers_data(user_id),
     }
 
 
@@ -118,7 +167,10 @@ def simpan(user_id: str, user: dict, payload: dict) -> None:
                 row[k] = str(ident.get(k) or "").strip()
 
     if "cookie_moodle" in payload:
-        row["cookie_moodle"] = _bersih_cookie(str(payload.get("cookie_moodle") or ""))
+        # Kosong berarti "hapus". Nilai disimpan terenkripsi, jadi database
+        # tidak pernah memuat kredensial Moodle yang bisa langsung dipakai.
+        bersih = _bersih_cookie(str(payload.get("cookie_moodle") or ""))
+        row["cookie_moodle"] = crypto.enkripsi(bersih) if bersih else ""
 
     r = requests.post(
         _url(),
@@ -134,6 +186,208 @@ def simpan(user_id: str, user: dict, payload: dict) -> None:
 def _bersih_cookie(nilai: str) -> str:
     """Buang spasi/newline; terima bentuk `Nama=Nilai` maupun nilai saja."""
     return nilai.replace("\r", "").replace("\n", "").strip()
+
+
+# ------------------------------------------------------------------ providers
+#
+# Provider (base URL + API key + daftar model) dan pilihan model per agent
+# adalah milik tiap akun, bukan mesin: satu akun bisa memakai kredensialnya
+# sendiri tanpa melihat atau memakai API key akun lain. Semuanya di tabel
+# `user_providers` (satu baris per user, JSONB), sehingga tidak ada lagi
+# berkas `runtime/runtime.json` bersama untuk request web.
+#
+# Jalur CLI tetap memakai `runtime_config` (berkas) supaya `python main.py`
+# bisa jalan tanpa login. Migrasi awal dari berkas ke akun yang sedang login
+# dikerjakan `runtime_config.migrasi_ke_user()`, dipanggil endpoint provider.
+
+_PROVIDER_KOSONG = {"providers": [], "agents": {}}
+# Profil/provider dibaca pada setiap request (identitas pemanggil harus
+# segar), tetapi satu halaman memanggil 4-6 endpoint sekaligus. Cache pendek
+# ini mencegah 6 round-trip ke Supabase untuk data yang sama; penyimpanan
+# provider selalu membuang entrinya sehingga perubahan langsung terlihat.
+_PROVIDER_CACHE: dict[str, tuple[float, dict]] = {}
+_PROVIDER_TTL = 20.0
+_PROVIDER_LOCK = threading.Lock()
+
+
+def providers_data(user_id: str) -> dict:
+    """Provider + model agent milik satu user, bentuknya sama dengan runtime lama."""
+    if not aktif() or not user_id:
+        return dict(_PROVIDER_KOSONG)
+    with _PROVIDER_LOCK:
+        entri = _PROVIDER_CACHE.get(user_id)
+        if entri and time.monotonic() - entri[0] < _PROVIDER_TTL:
+            return entri[1]
+    data = dict(_PROVIDER_KOSONG)
+    try:
+        r = requests.get(
+            _url(PROVIDER_TABLE),
+            params={"select": "providers,agents", "user_id": f"eq.{user_id}", "limit": "1"},
+            headers=_headers(),
+            timeout=10,
+        )
+        if r.ok:
+            rows = r.json()
+            row = rows[0] if isinstance(rows, list) and rows else {}
+            providers = row.get("providers")
+            agents = row.get("agents")
+            if isinstance(providers, list):
+                data["providers"] = [p for p in providers if isinstance(p, dict)]
+            if isinstance(agents, dict):
+                data["agents"] = agents
+    except (requests.RequestException, ValueError):
+        # Jaringan bermasalah: kembalikan kosong, jangan simpan di cache
+        # supaya percobaan berikutnya tetap menembak Supabase.
+        return data
+    with _PROVIDER_LOCK:
+        _PROVIDER_CACHE[user_id] = (time.monotonic(), data)
+    return data
+
+
+def providers_lupakan(user_id: str) -> None:
+    with _PROVIDER_LOCK:
+        _PROVIDER_CACHE.pop(user_id, None)
+
+
+def providers_simpan(user_id: str, data: dict) -> None:
+    """Tulis seluruh daftar provider + model agent milik satu user."""
+    if not aktif() or not user_id:
+        raise ValueError("Supabase belum dikonfigurasi, provider tidak bisa disimpan.")
+    row = {
+        "user_id": user_id,
+        "providers": [p for p in (data.get("providers") or []) if isinstance(p, dict)],
+        "agents": dict(data.get("agents") or {}),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    r = requests.post(
+        _url(PROVIDER_TABLE),
+        params={"on_conflict": "user_id"},
+        headers=_headers("resolution=merge-duplicates,return=minimal"),
+        json=row,
+        timeout=15,
+    )
+    if not r.ok:
+        raise ValueError(
+            f"Supabase menolak penyimpanan provider ({r.status_code}): {r.text[:200]}"
+        )
+    providers_lupakan(user_id)
+
+
+# ------------------------------------------------------------------ results
+
+
+def _result_path(user_id: str, slug: str, sesi: str, nama: str) -> str:
+    parts = [str(user_id), str(slug), str(sesi), str(nama)]
+    if any(not p or p in {".", ".."} or "/" in p or "\\" in p for p in parts):
+        raise ValueError("Path hasil tidak sah.")
+    return "/".join(parts)
+
+
+def result_upload(user_id: str, slug: str, sesi: str, nama: str, content: bytes) -> dict:
+    """Unggah DOCX ke bucket privat, lalu simpan metadata.
+
+    Metadata (`user_results`) adalah sumber kebenaran daftar hasil: objek di
+    Storage tidak bisa di-query berdasarkan prefix tanpa kunci service, jadi
+    baris inilah yang dibaca tab Result dan yang menentukan unduhan sah.
+    """
+    if not aktif() or not user_id:
+        raise ValueError("Supabase belum dikonfigurasi.")
+    path = _result_path(user_id, slug, sesi, nama)
+    r = requests.post(
+        _storage_url(path),
+        headers={
+            **_headers(upsert=True),
+            "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+        data=content,
+        timeout=60,
+    )
+    if not r.ok:
+        raise ValueError(f"Unggah hasil gagal ({r.status_code}): {r.text[:200]}")
+    row = {
+        "user_id": user_id,
+        "slug": slug,
+        "sesi": sesi,
+        "nama": nama,
+        "storage_path": path,
+        "ukuran": len(content),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    r = requests.post(
+        _url(RESULT_TABLE),
+        params={"on_conflict": "user_id,storage_path"},
+        headers=_headers("resolution=merge-duplicates,return=minimal"),
+        json=row,
+        timeout=15,
+    )
+    if not r.ok:
+        raise ValueError(f"Metadata hasil gagal ({r.status_code}): {r.text[:200]}")
+    return row
+
+
+def result_list(user_id: str) -> list[dict]:
+    """Metadata hasil satu akun, terbaru dulu; `[]` kalau tabel belum ada."""
+    if not aktif() or not user_id:
+        return []
+    try:
+        r = requests.get(
+            _url(RESULT_TABLE),
+            params={
+                "select": "slug,sesi,nama,ukuran,updated_at,storage_path",
+                "user_id": f"eq.{user_id}",
+                "order": "updated_at.desc",
+            },
+            headers=_headers(),
+            timeout=15,
+        )
+        if not r.ok:
+            return []
+        rows = r.json()
+        return rows if isinstance(rows, list) else []
+    except (requests.RequestException, ValueError):
+        return []
+
+
+def result_download(user_id: str, storage_path: str) -> bytes | None:
+    """Unduh objek bucket privat. Path harus milik `user_id` yang meminta."""
+    if not storage_path.startswith(str(user_id) + "/"):
+        return None
+    try:
+        r = requests.get(
+            _storage_url(storage_path, authenticated=True),
+            headers=_headers(),
+            timeout=60,
+        )
+        return r.content if r.ok else None
+    except requests.RequestException:
+        return None
+
+
+def result_delete(user_id: str, slug: str, sesi: str = "", nama: str = "") -> None:
+    """Hapus metadata + objek; scope user dijamin di query/path."""
+    if not aktif() or not user_id:
+        return
+    params = {"user_id": f"eq.{user_id}", "slug": f"eq.{slug}"}
+    if sesi:
+        params["sesi"] = f"eq.{sesi}"
+    if nama:
+        params["nama"] = f"eq.{nama}"
+    rows = result_list(user_id)
+    target = [
+        x for x in rows
+        if x.get("slug") == slug
+        and (not sesi or x.get("sesi") == sesi)
+        and (not nama or x.get("nama") == nama)
+    ]
+    paths = [x.get("storage_path") for x in target if x.get("storage_path")]
+    if paths:
+        requests.delete(
+            f"{config.SUPABASE_URL}/storage/v1/object/{STORAGE_BUCKET}",
+            headers=_headers(),
+            json={"prefixes": paths},
+            timeout=30,
+        )
+    requests.delete(_url(RESULT_TABLE), params=params, headers=_headers(), timeout=15)
 
 
 # ------------------------------------------------------------------ keepalive

@@ -125,7 +125,7 @@ export default function SettingsPage() {
     <div className='flex flex-col gap-4'>
       <PageHeader
         title='Pengaturan'
-        description='Identitas dan cookie Moodle tersimpan per akun Clerk di Supabase. Model dan provider berlaku untuk server ini.'
+        description='Identitas dan cookie Moodle tersimpan per akun. Provider dan model per agent diatur di menu Provider; PRIMARY/VISION di sini hanya default bersama.'
       />
 
       <Tabs defaultValue='konfigurasi' className='gap-4'>

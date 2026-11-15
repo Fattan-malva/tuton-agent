@@ -49,6 +49,7 @@ class Scope:
     user_id: str = ""
     cookie_moodle: str = ""
     identitas: dict[str, str] = field(default_factory=dict)
+    provider_data: dict = field(default_factory=dict)
 
 
 _SCOPE: contextvars.ContextVar[Scope | None] = contextvars.ContextVar(
@@ -61,6 +62,7 @@ def scope(
     user_id: str = "",
     cookie_moodle: str = "",
     identitas: dict[str, str] | None = None,
+    provider_data: dict | None = None,
 ):
     """Pasang data per akun selama satu blok; kembalikan nilai sebelumnya."""
     token = _SCOPE.set(
@@ -68,6 +70,7 @@ def scope(
             user_id=str(user_id or ""),
             cookie_moodle=str(cookie_moodle or ""),
             identitas={k: str(v or "") for k, v in (identitas or {}).items()},
+            provider_data=dict(provider_data or {}),
         )
     )
     try:
@@ -80,6 +83,19 @@ def current_user() -> str:
     """Id pemilik data saat ini; string kosong berarti pemakaian lokal/CLI."""
     s = _SCOPE.get()
     return s.user_id if s else ""
+
+
+def current_provider_data() -> dict | None:
+    """Provider+model agent milik akun aktif; `None` untuk pemakaian CLI.
+
+    `None` (bukan `{}`) penting: CLI harus tetap memakai berkas
+    `runtime/runtime.json`, sedangkan akun web dengan provider kosong memang
+    belum punya provider sama sekali.
+    """
+    s = _SCOPE.get()
+    if s is None or not s.user_id:
+        return None
+    return dict(s.provider_data or {})
 
 
 def _root(base: Path) -> Path:
@@ -190,6 +206,16 @@ def env(name: str, default: str = "") -> str:
 
 SUPABASE_URL = env("SUPABASE_URL").rstrip("/")
 SUPABASE_KEY = env("SUPABASE_SERVICE_KEY")
+
+# Kunci enkripsi kredensial di Supabase (cookie Moodle). Dibaca ulang lewat
+# `env()` di `tuton/crypto.py`, jadi menggantinya tidak butuh restart;
+# konstanta ini hanya untuk status/dokumentasi.
+COOKIE_ENCRYPTION_KEY = env("COOKIE_ENCRYPTION_KEY")
+
+# Nama bucket Storage privat untuk DOCX hasil pipeline. Objek disimpan dengan
+# path `<user_id>/<matkul>/<sesi>/<berkas>`; metadata (slug, sesi, nama) ada di
+# tabel `user_results`. Path ikut aturan bucket: hanya huruf/angka/.-_ dan "/".
+SUPABASE_BUCKET_RESULTS = env("SUPABASE_BUCKET_RESULTS", "results")
 
 # ---------------------------------------------------------------- clerk
 
