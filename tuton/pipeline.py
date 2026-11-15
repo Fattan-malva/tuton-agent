@@ -1985,7 +1985,7 @@ Struktur jawaban yang diminta dokumen akhir:
                 docx_path.name,
                 docx_path.read_bytes(),
             )
-        except (OSError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 - unggah gagal tidak boleh membatalkan job
             self.hasil.catatan.append(f"Hasil tidak terunggah ke Storage: {exc}")
             self._log(f"  ! Hasil tidak terunggah ke Storage: {exc}")
             return

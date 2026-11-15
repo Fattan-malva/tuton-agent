@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import useSWR from 'swr'
-import { Loader2, Monitor, Moon, Sun, Unplug } from 'lucide-react'
+import { Info, Loader2, Monitor, Moon, Sun, Unplug } from 'lucide-react'
 import { postJSON } from '@/lib/api'
 import type { Profil as ProfileInfo, SettingItem } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -24,6 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ModelInput } from '@/components/model-input'
 import { PageHeader } from '@/components/page-header'
 import { SaveButton } from '@/components/save-button'
+import { CookiePanduan } from '@/components/cookie-panduan'
 
 const TEMA: { value: Theme; label: string; icon: typeof Sun }[] = [
   { value: 'light', label: 'Terang', icon: Sun },
@@ -97,6 +98,7 @@ export default function SettingsPage() {
   const { data: modelData } = useSWR<{ models: string[] }>('/api/models')
   const { theme, setTheme } = useTheme()
   const [values, setValues] = useState<Record<string, string>>({})
+  const [panduanOpen, setPanduanOpen] = useState(false)
 
   useEffect(() => {
     if (!data) return
@@ -183,6 +185,16 @@ export default function SettingsPage() {
                             rahasia
                           </span>
                         ) : null}
+                        {item.key === 'COOKIE_MOODLE' ? (
+                          <button
+                            type='button'
+                            onClick={() => setPanduanOpen(true)}
+                            className='text-muted-foreground hover:text-foreground -mt-0.5 transition-colors'
+                            aria-label='Cara ambil cookie Moodle'
+                          >
+                            <Info className='size-3.5' />
+                          </button>
+                        ) : null}
                       </Label>
                       {item.key === 'PRIMARY_MODEL' || item.key === 'VISION_MODEL' ? (
                         <ModelInput
@@ -222,6 +234,7 @@ export default function SettingsPage() {
               )}
             </CardContent>
           </Card>
+          <CookiePanduan open={panduanOpen} onOpenChange={setPanduanOpen} />
 
           <Card className='gap-4 py-5'>
             <CardHeader className='px-5'>

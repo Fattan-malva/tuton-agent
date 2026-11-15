@@ -210,9 +210,16 @@ _PROVIDER_TTL = 20.0
 _PROVIDER_LOCK = threading.Lock()
 
 
-def providers_data(user_id: str) -> dict:
-    """Provider + model agent milik satu user, bentuknya sama dengan runtime lama."""
+def providers_data(user_id: str, wajib: bool = False) -> dict:
+    """Provider + model agent milik satu user, bentuknya sama dengan runtime lama.
+
+    `wajib=True` melempar `ValueError` kalau sumbernya tidak terbaca. Itu
+    dipakai endpoint yang menulis ulang seluruh dokumen: menyimpan hasil
+    pembacaan kosong karena gangguan jaringan akan menghapus provider.
+    """
     if not aktif() or not user_id:
+        if wajib:
+            raise ValueError("Supabase belum dikonfigurasi.")
         return dict(_PROVIDER_KOSONG)
     with _PROVIDER_LOCK:
         entri = _PROVIDER_CACHE.get(user_id)
@@ -226,19 +233,22 @@ def providers_data(user_id: str) -> dict:
             headers=_headers(),
             timeout=10,
         )
-        if r.ok:
-            rows = r.json()
-            row = rows[0] if isinstance(rows, list) and rows else {}
-            providers = row.get("providers")
-            agents = row.get("agents")
-            if isinstance(providers, list):
-                data["providers"] = [p for p in providers if isinstance(p, dict)]
-            if isinstance(agents, dict):
-                data["agents"] = agents
-    except (requests.RequestException, ValueError):
-        # Jaringan bermasalah: kembalikan kosong, jangan simpan di cache
-        # supaya percobaan berikutnya tetap menembak Supabase.
-        return data
+        if not r.ok:
+            raise ValueError(f"Supabase menolak pembacaan provider ({r.status_code}).")
+        rows = r.json()
+        row = rows[0] if isinstance(rows, list) and rows else {}
+        providers = row.get("providers")
+        agents = row.get("agents")
+        if isinstance(providers, list):
+            data["providers"] = [p for p in providers if isinstance(p, dict)]
+        if isinstance(agents, dict):
+            data["agents"] = agents
+    except (requests.RequestException, ValueError) as exc:
+        # Jaringan bermasalah: jangan simpan di cache supaya percobaan
+        # berikutnya tetap menembak Supabase.
+        if wajib:
+            raise ValueError(f"Provider tidak bisa dibaca dari Supabase: {exc}") from exc
+        return dict(_PROVIDER_KOSONG)
     with _PROVIDER_LOCK:
         _PROVIDER_CACHE[user_id] = (time.monotonic(), data)
     return data

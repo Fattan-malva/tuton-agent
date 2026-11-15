@@ -223,7 +223,7 @@ export default function BuatPage() {
                 <CardTitle className='text-base'>Pilih sesi Moodle</CardTitle>
                 <CardDescription>
                   Mata kuliah &amp; sesi yang sudah di-scrape dari akun Moodle
-                  (memakai cookie di .env).
+                  (memakai cookie akun ini).
                 </CardDescription>
               </CardHeader>
               <CardContent className='space-y-4 px-5'>

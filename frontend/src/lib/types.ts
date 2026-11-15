@@ -2,6 +2,8 @@ export type SessionInfo = {
   authenticated: boolean
   user?: { id: string; email: string; name: string }
   profile?: Profil
+  /** True untuk akun baru yang belum punya identitas/cookie Moodle. */
+  panduan_awal?: boolean
 }
 
 export type Profil = {

@@ -588,6 +588,17 @@ def _skill_nama(nilai: str) -> str:
     return nama
 
 
+def _panduan_awal(profil: dict) -> bool:
+    """True untuk akun baru: identitas dan cookie Moodle belum ada apa apa."""
+    ident = profil.get("identitas") or {}
+    if profil.get("cookie_ada"):
+        return False
+    return all(
+        not str(ident.get(k) or "").strip()
+        for k in ("nama", "nim", "semester", "ut_daerah", "prodi")
+    )
+
+
 def _status() -> dict:
     provider = runtime_config.providers()
     model = runtime_config.semua_model()
@@ -786,7 +797,7 @@ def _daftar_model_payload(payload: dict) -> list[str]:
 
 
 def _provider_simpan(payload: dict) -> dict:
-    data = runtime_config.muat()
+    data = runtime_config.muat_ubah()
     pid = str(payload.get("id") or "").strip()
     nama = str(payload.get("name") or "").strip()
     base_url = str(payload.get("base_url") or "").strip().rstrip("/")
@@ -828,7 +839,7 @@ def _provider_simpan(payload: dict) -> dict:
 
 def _provider_hapus(payload: dict) -> dict:
     pid = str(payload.get("id") or "").strip()
-    data = runtime_config.muat()
+    data = runtime_config.muat_ubah()
     data["providers"] = [p for p in data["providers"] if p.get("id") != pid]
     data["agents"] = {
         k: v for k, v in data["agents"].items()
@@ -855,7 +866,7 @@ def _agent_model_simpan(payload: dict) -> dict:
     models = payload.get("models")
     if not isinstance(models, dict):
         raise ValueError("Format model agent tidak dikenal.")
-    data = runtime_config.muat()
+    data = runtime_config.muat_ubah()
     agents = dict(data["agents"])
     for nama, ref in models.items():
         if nama not in runtime_config.AGENTS:
@@ -980,9 +991,14 @@ def _submit_manual(body: bytes, ctype: str) -> str:
     sesi = int(teks.get("sesi") or 1)
     for nama, nama_berkas, data in bagian:
         if nama_berkas is not None:
+            # Nama dari klien adalah path, bukan nama: ambil komponen
+            # terakhirnya saja supaya `../` tidak bisa keluar dari folder soal.
+            nama_aman = Path(nama_berkas.replace("\\", "/")).name
+            if not nama_aman or nama_aman in {".", ".."}:
+                raise ValueError("Nama berkas soal tidak sah.")
             folder = config.work_dirs(slug, sesi)["berkas"] / "soal"
             folder.mkdir(parents=True, exist_ok=True)
-            tujuan = folder / nama_berkas
+            tujuan = folder / nama_aman
             if tujuan.exists():
                 tujuan = folder / f"{tujuan.stem}-{int(os.getpid())}{tujuan.suffix}"
             tujuan.write_bytes(data)
@@ -996,7 +1012,8 @@ def _submit_manual(body: bytes, ctype: str) -> str:
         "jenis": teks.get("jenis", "Tugas"),
         "question": teks.get("question", ""),
         "files": file_akhir,
-        "dengan_gambar": teks.get("dengan_gambar", "on") == "on",
+        # Satu kunci untuk web dan CLI: `jobs._run` membaca `tanpa_gambar`.
+        "tanpa_gambar": teks.get("dengan_gambar", "on") != "on",
         "dengan_referensi": teks.get("dengan_referensi", "on") == "on",
         "tanpa_docx": teks.get("tanpa_docx", "") == "on",
         "model": teks.get("model", ""),
@@ -1154,6 +1171,10 @@ class Handler(BaseHTTPRequestHandler):
                         "name": user.get("name", ""),
                     },
                     "profile": prof,
+                    # Panduan awal hanya untuk akun yang belum punya identitas
+                    # maupun cookie Moodle. Dihitung di server supaya modal
+                    # tidak berkedip untuk akun lama yang datanya lengkap.
+                    "panduan_awal": _panduan_awal(prof),
                 },
             )
         if path == "/api/profil":

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@clerk/react'
 import useSWR from 'swr'
@@ -9,6 +9,7 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { Header } from '@/components/layout/header'
 import { Skeleton } from '@/components/ui/skeleton'
+import { OnboardingModal } from '@/components/onboarding-modal'
 import { Toaster } from '@/components/ui/sonner'
 
 function ShellSkeleton() {
@@ -42,10 +43,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { data, error, mutate } = useSWR<SessionInfo>(
     isSignedIn ? '/api/session' : null,
   )
+  const [panduanClosed, setPanduanClosed] = useState(false)
 
   useEffect(() => {
     if (isLoaded && !isSignedIn) router.replace('/login/')
   }, [isLoaded, isSignedIn, router])
+
+  // Panduan awal hanya dipakai sekali per browser tab untuk akun baru.
+  useEffect(() => {
+    if (data?.panduan_awal) setPanduanClosed(false)
+    if (data && !data.panduan_awal) setPanduanClosed(true)
+  }, [data])
 
   // Clerk sudah bilang masuk tapi server belum melihat tokennya (bridge
   // terpasang setelah render ini). Coba lagi, jangan diam di skeleton.
@@ -86,6 +94,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           {children}
         </main>
         <Toaster position='top-center' />
+        <OnboardingModal open={Boolean(data?.panduan_awal) && !panduanClosed} onClose={() => setPanduanClosed(true)} />
       </SidebarInset>
     </SidebarProvider>
   )

@@ -7,7 +7,7 @@ export class ApiError extends Error {
   }
 }
 
-// Clerk menaruh token di sini lewat <AuthTokenBridge /> supaya `fetch` di
+// Clerk menaruh token di sini lewat <TokenBridge /> supaya `fetch` di
 // seluruh aplikasi tidak perlu tahu apa pun soal Clerk. Modul (bukan React
 // context) dipakai karena `api()` juga dipanggil dari EventSource, SWR, dan
 // handler non-komponen.
@@ -15,7 +15,7 @@ let tokenGetter: (() => Promise<string | null>) | null = null
 let tokenReady: Promise<void> | null = null
 let markTokenReady: (() => void) | null = null
 
-function waitForTokenBridge() {
+function waitForToken() {
   if (!tokenReady) {
     tokenReady = new Promise<void>((resolve) => {
       markTokenReady = resolve
@@ -41,7 +41,7 @@ export function setTokenGetter(fn: (() => Promise<string | null>) | null) {
 }
 
 async function authHeaders(): Promise<Record<string, string>> {
-  await waitForTokenBridge()
+  await waitForToken()
   if (!tokenGetter) return {}
   try {
     const token = await tokenGetter()

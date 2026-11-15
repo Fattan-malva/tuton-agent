@@ -108,6 +108,19 @@ def muat() -> dict:
     return _bersih(data)
 
 
+def muat_ubah() -> dict:
+    """Seperti `muat()`, tetapi gagal kalau sumbernya tidak terbaca.
+
+    Dipakai endpoint yang menulis ulang seluruh dokumen provider. Tanpa
+    kegagalan keras, gangguan jaringan sesaat membuat `muat()` kosong lalu
+    penyimpanan menghapus semua provider akun.
+    """
+    user_id = config.current_user()
+    if not user_id:
+        return _bersih(_muat_berkas())
+    return _bersih(supabase.providers_data(user_id, wajib=True))
+
+
 def simpan(data: dict) -> None:
     """Tulis data provider ke sumber yang sesuai konteks."""
     bersih = _bersih(data)
@@ -142,7 +155,6 @@ def migrasi_ke_user(user_id: str | None = None) -> bool:
     with _MIGRASI_LOCK:
         if user_id in _MIGRASI_DICOBA:
             return False
-        _MIGRASI_DICOBA.add(user_id)
     berkas = _muat_berkas()
     if not berkas.get("providers") or _MIGRASI_KUNCI in berkas:
         return False
@@ -150,6 +162,8 @@ def migrasi_ke_user(user_id: str | None = None) -> bool:
         supabase.providers_simpan(user_id, _bersih(berkas))
     except (ValueError, OSError):
         return False
+    with _MIGRASI_LOCK:
+        _MIGRASI_DICOBA.add(user_id)
     berkas[_MIGRASI_KUNCI] = user_id
     try:
         simpan_berkas(berkas)
