@@ -235,7 +235,7 @@ export default function BuatPage() {
                     ) : (
                       <Select value={matkul} onValueChange={setMatkul}>
                         <SelectTrigger className='w-full'>
-                          <SelectValue placeholder='— pilih —' />
+                          <span className='truncate'>{matkul === 'semua' ? 'Semua mata kuliah' : matkul ? daftar.find((c) => c.id === matkul)?.nama || '— pilih —' : '— pilih —'}</span>
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value='semua'>Semua mata kuliah</SelectItem>
@@ -409,7 +409,7 @@ export default function BuatPage() {
                     ) : (
                       <Select value={mnMatkul} onValueChange={setMnMatkul}>
                         <SelectTrigger className='h-10 w-full'>
-                          <SelectValue placeholder='— pilih —' />
+                          <span className='truncate'>{mnMatkul ? daftar.find((c) => c.id === mnMatkul)?.nama || '— pilih —' : '— pilih —'}</span>
                         </SelectTrigger>
                         <SelectContent>
                           {daftar.map((c) => (
