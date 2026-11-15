@@ -252,16 +252,7 @@
   @apply bg-muted/30;
 }
 .jad-bar {
-  @apply absolute z-10 flex h-5 items-center gap-1 overflow-hidden rounded-md px-1.5 text-[10px] font-medium ring-1 transition-opacity;
-}
-.jad-bar:hover {
-  @apply opacity-90;
-}
-.jad-bar.diskusi {
-  @apply bg-diskusi-soft text-diskusi ring-diskusi/30;
-}
-.jad-bar.tugas {
-  @apply bg-tugas-soft text-tugas ring-tugas/30;
+  @apply absolute z-10 flex h-5 cursor-pointer items-center gap-1 overflow-hidden rounded-md px-1.5 text-[10px] leading-none font-semibold shadow-sm transition-[filter] hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-1;
 }
 
 /* Animasi kilau untuk skeleton pratinjau DOCX (lihat docx-preview-frame.tsx). */
