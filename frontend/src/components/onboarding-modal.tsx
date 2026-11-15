@@ -65,12 +65,6 @@ export function OnboardingModal({
   }
 
   function tutup() {
-    // Langkah sudah dikerjakan (atau dilewati): jangan membuka modal lagi.
-    try {
-      sessionStorage.setItem('tuton:panduan', '1')
-    } catch {
-      // Private mode: dianggap boleh dibuka ulang, tidak fatal.
-    }
     setStep(0)
     setPanduanOpen(false)
     onClose()
@@ -182,6 +176,9 @@ export function OnboardingModal({
                     placeholder='MoodleSession=... atau nilai token-nya'
                     autoComplete='off'
                   />
+                  <p className='text-muted-foreground text-xs leading-relaxed'>
+                    Cookie diambil dari browser setelah login ke elearning UT.
+                  </p>
                   <button
                     type='button'
                     className='text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline'
@@ -190,19 +187,6 @@ export function OnboardingModal({
                     <Info className='size-3.5' /> Cara ambil cookie Moodle
                   </button>
                 </div>
-                <ol className='flex flex-col gap-2'>
-                  {COOKIE_LANGKAH.map((n, i) => (
-                    <li
-                      key={i}
-                      className='text-muted-foreground flex items-start gap-2.5 rounded-md border bg-muted/40 p-2.5 text-sm leading-relaxed'
-                    >
-                      <span className='bg-primary text-primary-foreground mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold'>
-                        {i + 1}
-                      </span>
-                      {n}
-                    </li>
-                  ))}
-                </ol>
               </>
             ) : null}
 

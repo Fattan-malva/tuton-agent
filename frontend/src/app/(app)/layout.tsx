@@ -66,12 +66,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     if (isLoaded && !isSignedIn) router.replace('/login/')
   }, [isLoaded, isSignedIn, router])
 
-  // Panduan awal hanya dipakai sekali per browser tab untuk akun baru.
-  useEffect(() => {
-    if (data?.panduan_awal) setPanduanClosed(false)
-    if (data && !data.panduan_awal) setPanduanClosed(true)
-  }, [data])
-
   // Clerk sudah bilang masuk tapi server belum melihat tokennya (bridge
   // terpasang setelah render ini). Coba lagi, jangan diam di skeleton.
   useEffect(() => {
