@@ -92,7 +92,7 @@ export default function CalculatorPage() {
               {isLoading ? <Skeleton className='h-10 w-full' /> : (
                 <Select value={courseId} onValueChange={(v) => { setCourseId(v); setTutonManual(null) }}>
                   <SelectTrigger className='h-10 w-full'><SelectValue placeholder='— pilih mata kuliah —' /></SelectTrigger>
-                  <SelectContent>{(courses || []).map((c) => <SelectItem key={c.id} value={c.id}>{c.nama}{c.kode ? ` (${c.kode})` : ''}</SelectItem>)}</SelectContent>
+                  <SelectContent>{(courses || []).map((c) => <SelectItem key={c.id} value={c.id}>{c.nama}</SelectItem>)}</SelectContent>
                 </Select>
               )}
             </div>
