@@ -1,6 +1,7 @@
 import {
   BookOpen,
   Bot,
+  Calculator,
   FileText,
   LayoutDashboard,
   ListTodo,
@@ -20,7 +21,8 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { title: 'Dashboard', url: '/', icon: LayoutDashboard },
       { title: 'Courses', url: '/courses', icon: BookOpen },
       { title: 'Kerjakan Tugas', url: '/buat', icon: ListTodo },
-      { title: 'Agent Worker', url: '/agents', icon: Bot },
+      { title: 'Kalkulator Nilai', url: '/calculator', icon: Calculator },
+      { title: 'Agent Worker', url: '/agents', icon: Bot }
     ],
   },
   {
