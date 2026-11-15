@@ -142,24 +142,25 @@ export default function CoursesPage() {
                       <Badge variant='secondary'>Kelas {course.kelas}</Badge>
                     ) : null}
                     <Badge variant='outline'>{items.length} aktivitas</Badge>
-                    {nilaiTotal.isLoading ? (
-                      <Skeleton className='h-5 w-28' />
-                    ) : nilaiTotal.data?.nilai_total != null ? (
-                      <Badge
-                        className={cn(
-                          nilaiTotal.data.nilai_total >= 80 && 'bg-emerald-600 text-white',
-                          nilaiTotal.data.nilai_total >= 60 && nilaiTotal.data.nilai_total < 80 && 'bg-amber-500 text-white',
-                          nilaiTotal.data.nilai_total < 60 && 'bg-red-600 text-white',
-                        )}
-                      >
-                        Nilai Total: {nilaiTotal.data.nilai_total.toLocaleString('id-ID')}
-                      </Badge>
-                    ) : null}
                   </div>
-                  <CardAction>
+                  <CardAction className='flex flex-col items-end gap-1.5'>
                     <Button size='sm' variant='ghost' onClick={() => setSelected(null)}>
                       <X /> Tutup
                     </Button>
+                    {nilaiTotal.isLoading ? (
+                      <Skeleton className='h-7 w-12' />
+                    ) : nilaiTotal.data?.nilai_total != null ? (
+                      <span
+                        className={cn(
+                          'text-lg font-bold tabular-nums',
+                          nilaiTotal.data.nilai_total >= 80 && 'text-emerald-600',
+                          nilaiTotal.data.nilai_total >= 60 && nilaiTotal.data.nilai_total < 80 && 'text-amber-500',
+                          nilaiTotal.data.nilai_total < 60 && 'text-red-600',
+                        )}
+                      >
+                        {nilaiTotal.data.nilai_total.toLocaleString('id-ID')}
+                      </span>
+                    ) : null}
                   </CardAction>
                 </CardHeader>
                 <CardContent className='px-5'>
