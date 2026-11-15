@@ -299,7 +299,7 @@ function PreviewDialog({
     containerRef.current.replaceChildren()
     fetch(`/api/download-output/${enc}`)
       .then((response) => { if (!response.ok) throw new Error('DOCX tidak bisa dimuat.'); return response.arrayBuffer() })
-      .then((buffer) => { if (!cancelled && containerRef.current) return renderAsync(buffer, containerRef.current) })
+      .then((buffer) => { if (!cancelled && containerRef.current) return renderAsync(buffer, containerRef.current, undefined, { breakPages: true }) })
       .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason : new Error(String(reason))) })
       .finally(() => { if (!cancelled) setIsLoading(false) })
     return () => { cancelled = true; containerRef.current?.replaceChildren() }
