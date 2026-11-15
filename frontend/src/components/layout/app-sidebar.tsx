@@ -1,7 +1,6 @@
 'use client'
 
 import Link from 'next/link'
-import { BookOpen } from 'lucide-react'
 import { NAV_GROUPS } from '@/config/nav'
 import {
   Sidebar,
@@ -24,9 +23,8 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton size='lg' asChild>
               <Link href='/'>
-                <div className='flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground'>
-                  <BookOpen className='size-4' />
-                </div>
+                {/* Ikon yang sama dengan ikon tab browser (/icon.png). */}
+                <img src='/icon.png' alt='' className='aspect-square size-8 rounded-lg' />
                 <div className='grid flex-1 text-start text-sm leading-tight'>
                   <span className='truncate font-bold'>Tuton.agent</span>
                   <span className='truncate text-xs text-muted-foreground'>

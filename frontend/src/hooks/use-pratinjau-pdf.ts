@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { apiFetch, postJSON } from '@/lib/api'
 
-export type SumberPratinjau = { rel: string } | { template_id: string }
+export type SumberPratinjau = { rel: string } | { template_id: string } | { schema: object }
 
 // Pratinjau DOCX: server mengonversi berkas ke PDF sementara dengan
 // LibreOffice. PDF itu dihapus di server begitu sumbernya berganti atau

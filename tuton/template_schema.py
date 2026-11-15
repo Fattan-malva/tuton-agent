@@ -31,10 +31,14 @@ from tools.docx import MARKA_TEMPLATE
 FONTS = ("Times New Roman", "Arial", "Calibri", "Cambria")
 ALIGN = {"left": WD_ALIGN_PARAGRAPH.LEFT, "center": WD_ALIGN_PARAGRAPH.CENTER,
          "right": WD_ALIGN_PARAGRAPH.RIGHT, "justify": WD_ALIGN_PARAGRAPH.JUSTIFY}
-TIPE_BLOK = ("title", "identity", "heading", "text", "numbered", "bullets",
-             "table", "box", "rule", "answer")
+TIPE_BLOK = ("title", "identity", "soal", "heading", "text", "numbered", "bullets",
+             "table", "box", "rule", "answer", "kesimpulan", "references")
 # Blok yang hanya berupa sampel. Di mode pekerjaan dibuang kecuali `keep`.
 TIPE_SAMPEL = ("text", "numbered", "bullets", "table", "box", "heading")
+# Blok yang isinya ditulis pipeline (soal dari Moodle, jawaban dari agent,
+# daftar pustaka dari markdown jawaban). Di mode pekerjaan selalu dibuang,
+# supaya tidak dobel dengan yang ditulis pipeline.
+TIPE_PIPELINE = ("soal", "kesimpulan", "references")
 MAKS_BLOK = 60
 MAKS_TEKS = 500
 MAKS_ITEM = 30
@@ -66,7 +70,12 @@ def _normalisasi_blok(b: dict) -> dict:
     out: dict = {"type": tipe, "keep": keep}
     if tipe == "title":
         out.update(text=_teks(b.get("text"), "Judul"), align=b.get("align", "center") if b.get("align") in ALIGN else "center",
-                   size_pt=_angka(b.get("size_pt"), 8, 24, 16), bold=bool(b.get("bold", True)))
+                   size_pt=_angka(b.get("size_pt"), 8, 24, 16), bold=bool(b.get("bold", True)),
+                   frame=bool(b.get("frame", False)))
+    elif tipe == "soal":
+        out.update(min_lines=int(_angka(b.get("min_lines"), 2, 30, 5)))
+    elif tipe in ("kesimpulan", "references"):
+        out.update()
     elif tipe == "identity":
         out.update(bordered=bool(b.get("bordered", True)))
     elif tipe == "heading":
@@ -102,12 +111,18 @@ def normalisasi(skema: dict) -> dict:
     tipe = [b["type"] for b in blok]
     if tipe[:1] != ["title"] or tipe.count("title") != 1:
         raise SkemaSalah("Blok pertama harus judul, dan judul hanya boleh satu.")
-    if tipe.count("identity") != 1:
-        raise SkemaSalah("Template harus punya tepat satu blok identitas.")
-    if tipe.count("answer") != 1:
-        raise SkemaSalah("Template harus punya tepat satu blok jawaban.")
-    if tipe.index("identity") > tipe.index("answer"):
-        raise SkemaSalah("Blok identitas harus sebelum blok jawaban.")
+    for wajib in ("identity", "soal", "answer", "references"):
+        if tipe.count(wajib) != 1:
+            raise SkemaSalah(f"Template harus punya tepat satu blok {wajib}.")
+    if tipe.count("kesimpulan") > 1:
+        raise SkemaSalah("Blok kesimpulan hanya boleh satu.")
+    urut = [tipe.index(t) for t in ("identity", "soal", "answer")]
+    if urut != sorted(urut):
+        raise SkemaSalah("Urutannya harus identitas, soal, lalu jawaban.")
+    if "kesimpulan" in tipe and tipe.index("kesimpulan") < tipe.index("answer"):
+        raise SkemaSalah("Kesimpulan harus sesudah blok jawaban.")
+    if tipe[-1] != "references":
+        raise SkemaSalah("Daftar pustaka harus blok terakhir.")
     return {
         "font": font,
         "size_pt": _angka(skema.get("size_pt"), 8, 14, 12),
@@ -121,74 +136,96 @@ def normalisasi(skema: dict) -> dict:
 # --------------------------------------------------------------- presets
 # Lima template dengan layout berbeda. Semua memakai lorem ipsum dan teks hitam.
 PRESET: dict[str, dict] = {
+    # Mengikuti panduan APA 7 untuk makalah mahasiswa: Times New Roman 12,
+    # margin 2,54 cm, spasi ganda, judul tebal di tengah, daftar pustaka dengan
+    # hanging indent.
     "akademik-standar": {
-        "name": "Akademik standar",
-        "description": "Judul di tengah, tabel identitas berbingkai, heading bernomor, daftar bernomor.",
-        "font": "Times New Roman", "size_pt": 12, "line": 1.5, "after_pt": 6, "margin_cm": 2.5,
+        "name": "Akademik standar (APA 7)",
+        "description": "Times New Roman 12, spasi ganda, judul di tengah, identitas di bawah judul, daftar pustaka hanging indent.",
+        "font": "Times New Roman", "size_pt": 12, "line": 2.0, "after_pt": 0, "margin_cm": 2.54,
         "blocks": [
-            {"type": "title", "text": "Lorem ipsum dolor sit amet", "align": "center", "size_pt": 16, "bold": True},
-            {"type": "identity", "bordered": True},
+            {"type": "title", "text": "Lorem ipsum dolor sit amet", "align": "center", "size_pt": 12, "bold": True},
+            {"type": "identity", "bordered": False},
+            {"type": "soal", "min_lines": 4},
+            {"type": "heading", "level": 1, "text": "Pembahasan"},
             {"type": "heading", "level": 2, "text": "Lorem ipsum dolor"},
             {"type": "text", "text": LOREM, "align": "justify"},
-            {"type": "numbered", "items": [LOREM, "Consectetur adipiscing elit.", "Sed do eiusmod tempor."]},
-            {"type": "heading", "level": 3, "text": "Sed do eiusmod"},
             {"type": "answer", "placeholder": "Jawaban"},
+            {"type": "kesimpulan"},
+            {"type": "references"},
         ],
     },
+    # Gaya laporan ringkas: judul rata kiri dengan garis bawah, identitas tanpa
+    # bingkai, poin-poin pendek di bagian jawaban.
     "ringkas": {
         "name": "Ringkas",
-        "description": "Judul rata kiri, identitas tanpa bingkai, garis pemisah, poin ringkas.",
+        "description": "Arial 11, judul rata kiri dengan garis, poin-poin pendek, cocok untuk tugas tanya-jawab.",
         "font": "Arial", "size_pt": 11, "line": 1.15, "after_pt": 4, "margin_cm": 2.0,
         "blocks": [
             {"type": "title", "text": "Lorem ipsum", "align": "left", "size_pt": 15, "bold": True},
-            {"type": "identity", "bordered": False},
             {"type": "rule"},
-            {"type": "heading", "level": 3, "text": "Lorem ipsum dolor"},
+            {"type": "identity", "bordered": False},
+            {"type": "soal", "min_lines": 3},
+            {"type": "heading", "level": 3, "text": "Poin utama"},
             {"type": "bullets", "items": [LOREM, "Ut enim ad minim veniam.", "Quis nostrud exercitation."]},
             {"type": "answer", "placeholder": "Jawaban"},
+            {"type": "kesimpulan"},
+            {"type": "references"},
         ],
     },
+    # Gaya analisis: judul berbingkai, tabel identitas berbingkai, tabel data
+    # sebagai pendukung analisis.
     "analitis": {
         "name": "Analitis",
-        "description": "Judul dengan garis bawah, tabel data sampel, kotak catatan analisis.",
+        "description": "Calibri 11, judul berbingkai, identitas berbingkai, kotak analisis dan tabel data.",
         "font": "Calibri", "size_pt": 11, "line": 1.15, "after_pt": 8, "margin_cm": 2.2,
         "blocks": [
-            {"type": "title", "text": "Lorem ipsum analysis", "align": "center", "size_pt": 16, "bold": True},
-            {"type": "rule"},
+            {"type": "title", "text": "Lorem ipsum analysis", "align": "center", "size_pt": 15, "bold": True, "frame": True},
             {"type": "identity", "bordered": True},
-            {"type": "heading", "level": 2, "text": "Data lorem"},
+            {"type": "soal", "min_lines": 5},
+            {"type": "heading", "level": 2, "text": "Data pendukung"},
             {"type": "table", "columns": ["Lorem", "Ipsum", "Dolor"], "rows": 3, "bordered": True},
-            {"type": "heading", "level": 2, "text": "Catatan analisis"},
-            {"type": "box", "text": LOREM, "min_lines": 4},
+            {"type": "heading", "level": 2, "text": "Analisis"},
+            {"type": "text", "text": LOREM, "align": "justify"},
             {"type": "answer", "placeholder": "Analisis"},
+            {"type": "kesimpulan"},
+            {"type": "references"},
         ],
     },
+    # Gaya tanggapan forum: identitas tanpa bingkai, tiap tanggapan dalam
+    # paragraf terpisah, tanpa kesimpulan formal.
     "diskusi": {
         "name": "Diskusi",
-        "description": "Judul kiri, identitas tanpa bingkai, tiap tanggapan dalam paragraf terpisah.",
+        "description": "Arial 11, paragraf tanggapan terpisah, cocok untuk tugas diskusi dan refleksi.",
         "font": "Arial", "size_pt": 11, "line": 1.15, "after_pt": 8, "margin_cm": 2.0,
         "blocks": [
             {"type": "title", "text": "Lorem ipsum diskusi", "align": "left", "size_pt": 14, "bold": True},
             {"type": "identity", "bordered": False},
+            {"type": "soal", "min_lines": 3},
             {"type": "heading", "level": 3, "text": "Tanggapan"},
             {"type": "text", "text": LOREM, "align": "left"},
             {"type": "text", "text": LOREM, "align": "left"},
             {"type": "answer", "placeholder": "Tanggapan"},
+            {"type": "references"},
         ],
     },
+    # Gaya tugas terstruktur: judul berbingkai, bagian bernomor, kotak jawaban
+    # per bagian, dan kesimpulan.
     "tugas-terstruktur": {
         "name": "Tugas terstruktur",
-        "description": "Judul berbingkai garis, dua bagian bernomor, kotak jawaban per bagian.",
+        "description": "Cambria 11, bagian bernomor, kotak kerja per bagian, cocok untuk tugas bertahap.",
         "font": "Cambria", "size_pt": 11, "line": 1.25, "after_pt": 6, "margin_cm": 2.3,
         "blocks": [
-            {"type": "title", "text": "Lorem ipsum tugas", "align": "center", "size_pt": 14, "bold": True},
-            {"type": "rule"},
+            {"type": "title", "text": "Lorem ipsum tugas", "align": "center", "size_pt": 14, "bold": True, "frame": True},
             {"type": "identity", "bordered": True},
-            {"type": "heading", "level": 2, "text": "Bagian 1 - Lorem"},
+            {"type": "soal", "min_lines": 4},
+            {"type": "heading", "level": 2, "text": "Bagian 1"},
             {"type": "numbered", "items": [LOREM, "Ut enim ad minim."]},
             {"type": "box", "text": LOREM, "min_lines": 3},
-            {"type": "heading", "level": 2, "text": "Bagian 2 - Ipsum"},
+            {"type": "heading", "level": 2, "text": "Bagian 2"},
             {"type": "answer", "placeholder": "Jawaban bagian 2"},
+            {"type": "kesimpulan"},
+            {"type": "references"},
         ],
     },
 }
@@ -266,6 +303,20 @@ def _bingkai_tabel(tbl) -> None:
     tbl_pr.append(borders)
 
 
+def _bingkai_paragraf(par) -> None:
+    """Bingkai empat sisi di sekeliling satu paragraf (judul berbingkai)."""
+    ppr = par._p.get_or_add_pPr()
+    bdr = OxmlElement("w:pBdr")
+    for edge in ("top", "left", "bottom", "right"):
+        el = OxmlElement(f"w:{edge}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), "8")
+        el.set(qn("w:space"), "4")
+        el.set(qn("w:color"), "000000")
+        bdr.append(el)
+    ppr.append(bdr)
+
+
 def _tanpa_bingkai(tbl) -> None:
     tbl_pr = tbl._tbl.tblPr
     borders = OxmlElement("w:tblBorders")
@@ -291,10 +342,42 @@ def _paragraf_rata(doc: Document, teks: str, align: str = "left", *, bold: bool 
 
 def _render_blok(doc: Document, b: dict, s: dict, mode: str) -> None:
     t = b["type"]
+    if t in TIPE_PIPELINE and mode == "pekerjaan":
+        return
     if t == "title":
         par = _paragraf_rata(doc, "[Judul]" if mode == "pekerjaan" else b["text"], b["align"],
                              bold=b["bold"], size_pt=b["size_pt"], style="Judul Tugas")
         par.alignment = ALIGN[b["align"]]
+        if b.get("frame"):
+            _bingkai_paragraf(par)
+    elif t == "soal":
+        doc.add_paragraph("Soal", style="Heading 2")
+        _paragraf_rata(doc, LOREM, "justify")
+        tbl = doc.add_table(rows=1, cols=1)
+        _bingkai_tabel(tbl)
+        row = tbl.rows[0]
+        row.height = Cm(0.6 * b["min_lines"])
+        row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+        _hitam(row.cells[0].paragraphs[0].add_run("[Gambar atau teks soal]"))
+        doc.add_paragraph()
+    elif t == "kesimpulan":
+        doc.add_paragraph("Kesimpulan", style="Heading 2")
+        for item in (LOREM, "Ut enim ad minim veniam."):
+            doc.add_paragraph(item, style="List Bullet")
+    elif t == "references":
+        doc.add_paragraph("Daftar Pustaka", style="Heading 2")
+        for bagian in (
+            [("Lorem, I. A. (2024). ", False), ("Ipsum dolor sit amet", True), (". Penerbit Dolor.", False)],
+            [("Sit, A. B., & Amet, C. (2023). Consectetur adipiscing elit. ", False), ("Jurnal Lorem, 12", True), ("(2), 45–67. https://doi.org/10.0000/lorem", False)],
+        ):
+            par = doc.add_paragraph()
+            pf = par.paragraph_format
+            pf.left_indent = Cm(1.27)
+            pf.first_line_indent = Cm(-1.27)
+            for teks, miring in bagian:
+                run = par.add_run(teks)
+                run.italic = miring or None
+                _hitam(run)
     elif t == "identity":
         tbl = doc.add_table(rows=0, cols=2)
         _bingkai_tabel(tbl) if b["bordered"] else _tanpa_bingkai(tbl)

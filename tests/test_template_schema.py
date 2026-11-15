@@ -112,3 +112,35 @@ class TestRender(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPipelineOwnedBlocks(unittest.TestCase):
+    def test_pekerjaan_tanpa_soal_kesimpulan_dan_pustaka_sampel(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out = ts.render(ts.preset_skema("analitis"), Path(tmp.name) / "k.docx", "pekerjaan")
+        teks = _teks_dokumen(out)
+        for kata in ("Soal", "Kesimpulan", "Daftar Pustaka", "Data pendukung"):
+            self.assertNotIn(kata, teks)
+
+    def test_pratinjau_menampilkan_soal_kesimpulan_dan_pustaka(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out = ts.render(ts.preset_skema("analitis"), Path(tmp.name) / "p.docx", "pratinjau")
+        teks = _teks_dokumen(out)
+        for kata in ("Soal", "Kesimpulan", "Daftar Pustaka"):
+            self.assertIn(kata, teks)
+
+    def test_semua_preset_punya_daftar_pustaka_di_akhir(self):
+        for tid in ts.PRESET:
+            with self.subTest(tid=tid):
+                s = ts.normalisasi(ts.preset_skema(tid))
+                self.assertEqual(s["blocks"][-1]["type"], "references")
+
+    def test_daftar_pustaka_harus_terakhir(self):
+        bad = ts.preset_skema("ringkas")
+        bad["blocks"] = [*bad["blocks"][:-1], {"type": "text", "text": "x"}, {"type": "references"}]
+        bad["blocks"] = [b for b in bad["blocks"] if b["type"] != "references"]
+        bad["blocks"].insert(0, {"type": "references"})
+        with self.assertRaises(ts.SkemaSalah):
+            ts.normalisasi(bad)

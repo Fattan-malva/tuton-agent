@@ -11,7 +11,9 @@ DEFAULT_ID = "akademik-standar"
 
 
 def daftar(user_id: str) -> list[dict]:
-    return [*skema_mod.preset_daftar(), *supabase.template_list(user_id)]
+    bawaan = [{**t, "bawaan": True} for t in skema_mod.preset_daftar()]
+    milik = [{**t, "bawaan": False} for t in supabase.template_list(user_id)]
+    return [*bawaan, *milik]
 
 
 def resolve(user_id: str, template_id: object = "") -> dict:
@@ -33,6 +35,12 @@ def skema(user_id: str, template_id: object = "") -> dict:
     if baris is None:
         raise ValueError("Template tidak ditemukan.")
     return skema_mod.normalisasi(baris.get("schema") or {})
+
+
+def detail(user_id: str, template_id: object) -> dict:
+    """Info template beserta skemanya, untuk dibuka di editor."""
+    info = resolve(user_id, template_id)
+    return {**info, "schema": skema(user_id, info["id"])}
 
 
 def render_base(user_id: str, template_id: object, out_dir: Path) -> Path:

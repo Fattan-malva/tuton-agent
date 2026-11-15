@@ -913,6 +913,8 @@ def _template_simpan(payload: dict) -> dict:
     template_id = str(payload.get("id") or "").strip()
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", template_id):
         raise ValueError("ID template tidak sah.")
+    if template_id in template_schema.PRESET:
+        raise ValueError("ID ini dipakai template bawaan. Pilih nama lain.")
     schema = template_schema.normalisasi(payload.get("schema", {}))
     supabase.template_save(_id_pengguna(), {"id": template_id, "name": str(payload.get("name") or template_id).strip()[:120], "description": str(payload.get("description") or "").strip()[:500], "schema": schema, "is_default": bool(payload.get("is_default"))})
     return {"ok": True}
@@ -1209,6 +1211,8 @@ class Handler(BaseHTTPRequestHandler):
             return _kirim_json(self, _models())
         if path.startswith("/api/preview/pdf/"):
             return self._preview_pdf(urllib.parse.unquote(path[len("/api/preview/pdf/"):]))
+        if path.startswith("/api/templates/") and path.count("/") == 3:
+            return _kirim_json(self, {"template": templates.detail(_id_pengguna(), urllib.parse.unquote(path[len("/api/templates/"):]))})
         if path == "/api/templates":
             return _kirim_json(self, {"templates": templates.daftar(_id_pengguna()), "default_id": templates.resolve(_id_pengguna())["id"]})
         if path == "/api/moodle-status":
