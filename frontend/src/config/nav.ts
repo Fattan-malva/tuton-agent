@@ -18,6 +18,7 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     title: 'Utama',
     items: [
       { title: 'Dashboard', url: '/', icon: LayoutDashboard },
+      { title: 'Courses', url: '/courses', icon: BookOpen },
       { title: 'Kerjakan Tugas', url: '/buat', icon: ListTodo },
       { title: 'Agent Worker', url: '/agents', icon: Bot },
     ],
@@ -27,7 +28,6 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { title: 'Result', url: '/results', icon: FileText },
       { title: 'Log Live', url: '/log', icon: Terminal },
-      { title: 'Courses', url: '/courses', icon: BookOpen },
     ],
   },
   {
