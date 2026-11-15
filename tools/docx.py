@@ -1644,8 +1644,7 @@ def _clear_body(doc: Document) -> None:
 def _siapkan_lembar(doc: Document) -> bool:
     """Bersihkan template jadi lembar jawaban kosong. True kalau berhasil.
 
-    Template `ContohFormatJawaban.docx` bukan sekadar kerangka format; isinya
-    adalah satu contoh jawaban yang sudah jadi lengkap dengan Daftar Pustaka.
+    Template DOCX lama dapat berisi contoh jawaban lengkap dengan Daftar Pustaka.
     Versi lama membuang seluruh isi (`_clear_body`) lalu membangun ulang dari
     nol, sehingga detail yang paling menentukan tampilan -- tinggi baris, jarak
     antarparagraf, ukuran heading, definisi tabel -- ikut hilang, dan hasilnya
@@ -1801,7 +1800,7 @@ def _isi_tabel_identitas(doc: Document, meta: dict) -> bool:
     yang dipakai pengguna, jadi dia yang menang atas isi template.
 
     Baris tanpa nilai dari `meta` DIHAPUS, bukan dibiarkan. Alasannya bukan
-    soal tampilan: template `ContohFormatJawaban.docx` diisi dengan identitas
+    soal tampilan: template DOCX diisi dengan identitas
     mahasiswa yang menjadi contoh -- nama dan NIM orang sungguhan. Membiarkannya
     berarti berkas yang diserahkan ke tutor memuat identitas orang lain, dan
     dan itu baru ketahuan setelah berkas diserahkan. Baris yang dihapus
@@ -1812,7 +1811,7 @@ def _isi_tabel_identitas(doc: Document, meta: dict) -> bool:
         return False
     table = doc.tables[0]
 
-    # Template `ContohFormatJawaban.docx` hanya punya baris Nama, NIM,
+    # Template standar biasanya punya baris Nama, NIM,
     # Semester, dan UT Daerah. `PRODI` tetap ada di `.env` tapi tidak punya
     # baris untuk ditulis, jadi nilainya diam-diam hilang dari dokumen.
     # Baris disalin dari baris identitas terakhir supaya format, lebar kolom,
@@ -1942,8 +1941,7 @@ def build_docx(
     jawaban_md = _strip_control_chars(jawaban_md)
     meta = {k: _strip_control_chars(str(v)) for k, v in meta.items()}
 
-    if template is None:
-        template = _default_template_path()
+    # Template dipilih dan divalidasi oleh caller; None berarti dokumen standar.
     doc, from_template, font_name, font_size = _load_base_document(
         Path(template) if template else None
     )
@@ -2042,15 +2040,6 @@ def _simpan_aman(doc: Document, out_docx: Path) -> Path:
         "dan tidak ada nama alternatif yang bisa ditulis."
     )
 
-
-def _default_template_path() -> Path | None:
-    """Template standar; `None` kalau folder template tidak ada."""
-    from tuton.config import TEMPLATE_DIR
-
-    if not TEMPLATE_DIR.is_dir():
-        return None
-    docx = sorted(TEMPLATE_DIR.glob("*.docx"))
-    return docx[0] if docx else None
 
 
 def _heading_style(doc: Document, level: int) -> str:

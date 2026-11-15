@@ -34,5 +34,4 @@ def docx_path(user_id: str, template_id: object = "") -> Path | None:
     path = config.TEMPLATE_DIR / f"{identitas}.docx"
     if path.is_file():
         return path
-    kandidat = sorted(config.TEMPLATE_DIR.glob("*.docx"))
-    return kandidat[0] if identitas == DEFAULT_ID and kandidat else None
+    return None

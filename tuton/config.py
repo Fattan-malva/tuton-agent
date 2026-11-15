@@ -21,9 +21,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 TOOLS_DIR = BASE_DIR / "tools"
 TEMPLATE_DIR = BASE_DIR / "template"
 
-# `tools/docx.py` mengimpor `from tuton.config import TEMPLATE_DIR`, jadi nama di sini
-# dipakai langsung oleh sana dan tidak boleh diubah.
-
 OUTPUT_DIR = BASE_DIR / "output"
 CACHE_DIR = BASE_DIR / "cache"
 KERJA_DIR = BASE_DIR / "_kerja"
