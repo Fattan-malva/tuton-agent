@@ -292,7 +292,7 @@ function PreviewDialog({
 
   return (
     <Dialog open={Boolean(preview)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className='flex max-h-[85vh] max-w-3xl flex-col'>
+      <DialogContent className='flex h-[92vh] max-h-[92vh] w-[96vw] max-w-7xl flex-col'>
         <DialogHeader>
           <DialogTitle className='truncate'>{preview?.nama}</DialogTitle>
           <DialogDescription>Pratinjau dokumen DOCX</DialogDescription>

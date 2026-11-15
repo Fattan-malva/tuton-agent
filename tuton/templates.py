@@ -32,6 +32,4 @@ def docx_path(user_id: str, template_id: object = "") -> Path | None:
     """Resolve hanya file bawaan yang ada; template kustom belum punya DOCX."""
     identitas = resolve(user_id, template_id)["id"]
     path = config.TEMPLATE_DIR / f"{identitas}.docx"
-    if path.is_file():
-        return path
-    return None
+    return path if path.is_file() else None

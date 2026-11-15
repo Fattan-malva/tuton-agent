@@ -22,7 +22,6 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { title: 'Dashboard', url: '/', icon: LayoutDashboard },
       { title: 'Courses', url: '/courses', icon: BookOpen },
       { title: 'Kerjakan Tugas', url: '/buat', icon: ListTodo },
-      { title: 'Template', url: '/templates', icon: PanelsTopLeft },
       { title: 'Kalkulator Nilai', url: '/calculator', icon: Calculator },
       { title: 'Agent Worker', url: '/agents', icon: Bot }
     ],
@@ -31,6 +30,7 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     title: 'Hasil',
     items: [
       { title: 'Result', url: '/results', icon: FileText },
+      { title: 'Template', url: '/templates', icon: PanelsTopLeft },
       { title: 'Log Live', url: '/log', icon: Terminal },
     ],
   },

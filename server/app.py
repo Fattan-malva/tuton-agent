@@ -1539,7 +1539,7 @@ class Handler(BaseHTTPRequestHandler):
                 isi = docxprev.pratinjau(path)
         except Exception as exc:  # noqa: BLE001 - berkas korup atau bukan DOCX
             return _kirim_json(self, {"error": f"Berkas tidak bisa dipratinjau: {exc}"}, 400)
-        _kirim_json(self, {"html": isi, "nama": nama})
+        _kirim_json(self, {"html": isi, "nama": nama, "renderer": "docx-preview"})
 
     def _download(self, jid: str) -> None:
         job = MANAGER.jobs.get(jid)
