@@ -102,7 +102,7 @@ _PETA_IZIN = {
 }
 
 
-def tools_untuk(izin: set[str], mcp: list[dict] | None = None) -> list[dict]:
+def tools_untuk(izin: set[str]) -> list[dict]:
     nama = set()
     for aksi in izin:
         nama |= _PETA_IZIN.get(aksi, set())
@@ -111,7 +111,6 @@ def tools_untuk(izin: set[str], mcp: list[dict] | None = None) -> list[dict]:
         for n in _DEFINISI
         if n in nama
     ]
-    out.extend(mcp or [])
     return out
 
 

@@ -750,8 +750,16 @@ def _nilai_aktivitas(
     return nilai.get(sesi, {}).get(jenis)
 
 
-def jadwal_mata_kuliah(klien: moodle.Moodle, matkul: MataKuliah) -> list[dict]:
+def jadwal_mata_kuliah(
+    klien: moodle.Moodle, matkul: MataKuliah, nim: str = ""
+) -> list[dict]:
     """Jadwal Diskusi & Tugas satu course: dari kapan sampai tenggat.
+
+    `nim` adalah NIM pemilik akun (dari profil Supabase), dipakai untuk
+    memastikan status Diskusi dihitung dari post forum miliknya sendiri.
+    Kalau kosong, status Diskusi tidak ditebak: item diberi
+    `status_pengumpulan="nim_required"` supaya UI meminta pengisian NIM
+    di Pengaturan lebih dulu.
 
     Sumber tanggalnya halaman masing-masing activity, tempat Moodle
     menampilkan `Opened:` (kapan dibuka) dan `Due:` (tenggat). Forum di UT
@@ -762,7 +770,7 @@ def jadwal_mata_kuliah(klien: moodle.Moodle, matkul: MataKuliah) -> list[dict]:
     """
     sections = daftar_section(klien, matkul)
     nilai = nilai_mata_kuliah(klien, matkul.id)
-    nim = config.env("NIM")
+    nim = str(nim or "").strip()
     items: list[dict] = []
     for s in sections:
         for a in daftar_aktivitas(klien, matkul, s):
@@ -782,7 +790,9 @@ def jadwal_mata_kuliah(klien: moodle.Moodle, matkul: MataKuliah) -> list[dict]:
             sesi = a.section if a.section >= 1 else (
                 a.nomor if a.modtype == "forum" else 2 * a.nomor + 1
             )
-            forum = _forum_balasan(html, nim) if jenis == "Diskusi" else None
+            forum = (
+                _forum_balasan(html, nim) if jenis == "Diskusi" and nim else None
+            )
             if forum:
                 status = forum["status"]
                 feedback = forum["feedback"]
@@ -795,6 +805,10 @@ def jadwal_mata_kuliah(klien: moodle.Moodle, matkul: MataKuliah) -> list[dict]:
                 status = _status_pengumpulan(html, jenis)
                 feedback = _feedback_tugas(html) if jenis == "Tugas" else None
                 nilai_aktivitas = _nilai_aktivitas(nilai, jenis, a.nomor)
+                if jenis == "Diskusi" and not nim:
+                    # Tanpa NIM, "sudah/belum mengumpulkan" tidak bisa
+                    # ditentukan; jangan tampilkan status yang menyesatkan.
+                    status = "nim_required"
             items.append(
                 {
                     "jenis": jenis,

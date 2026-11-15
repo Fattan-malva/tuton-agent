@@ -93,7 +93,7 @@ Runtime agent berjalan di dalam aplikasi (Python), memakai API
    gambar). Biarkan kosong untuk memakai `PRIMARY_MODEL`/`VISION_MODEL` dari
    `.env`.
 
-Provider, API key, model agent, dan server MCP disimpan di `runtime/runtime.json`
+Provider, API key, dan model agent disimpan di `runtime/runtime.json`
 (mode `0600`, masuk `.gitignore`). API key tidak pernah dikirim balik ke
 browser; saat mengubah provider, kosongkan kolom API key untuk mempertahankan
 nilai lama.
@@ -204,7 +204,6 @@ Urutan menu sesuai tampilan aplikasi:
 | **Kerjakan Tugas** | Dari Moodle (pilih course, sesi, dan **jenis: Otomatis/Tugas/Diskusi**) atau **Input Manual** (teks soal + unggah berkas; output rapi per `output/<slug>/sesi-<N>/`) |
 | **Agent Worker** | Keempat agent (scrapper, research, vision, worker) beserta model yang dipakai |
 | **Provider**     | CRUD provider OpenAI-compatible, tes koneksi, ambil `/v1/models`, dan model per agent |
-| **MCP**          | Server MCP remote (streamable HTTP): URL, header, tes + daftar tool, pilih agent yang boleh memakainya |
 | **Skill**        | Unggah, sunting, dan hapus `SKILL.md` di `skills/<nama>/` |
 | **Result**       | Daftar dokumen hasil dari disk `output/` — **klik untuk pratinjau**, unduh, hapus berkas, atau hapus seluruh mata kuliah |
 | **Log Live**     | Konsol log real-time per job (Server-Sent Events; bisa disegarkan karena event tersimpan di `<job>/events.jsonl`), bersihkan log atau **hapus job** |
@@ -320,12 +319,12 @@ Log tiap tahap ada di `_kerja/.../_log/`. Kalau satu course gagal di mode
 | Folder/berkas       | Fungsi                                            |
 |---------------------|---------------------------------------------------|
 | `main.py`           | Antarmuka baris perintah                          |
-| `tuton/`            | Paket inti: pipeline, klien Moodle, agent runner, provider, tools, MCP, konfigurasi |
+| `tuton/`            | Paket inti: pipeline, klien Moodle, agent runner, provider, tools, konfigurasi |
 | `tools/docx.py`     | Renderer DOCX: equation Word, daftar pustaka, template |
-| `server/app.py`     | Server HTTP + API (login, nilai, jadwal, job, SSE, provider/MCP/skill) |
+| `server/app.py`     | Server HTTP + API (login, nilai, jadwal, job, SSE, provider/skill) |
 | `server/static/`     | Hasil build UI; di image Docker diisi dari `frontend/out/` |
 | `frontend/`          | Sumber UI Next.js (static export ke `frontend/out/`) |
-| `runtime/runtime.json` | Provider, API key, model agent, server MCP (dibuat dari menu, mode 0600) |
+| `runtime/runtime.json` | Provider, API key, model agent (dibuat dari menu, mode 0600) |
 | `agents/`            | Spec prompt agent statis: scrapper, worker, research, vision |
 | `skills/`            | Skill Markdown yang dapat dimuat agent |
 | `Dockerfile` + `docker-compose.yml` + `.restart.sh` | Build image dan redeploy container |
@@ -342,7 +341,7 @@ Setiap akun Clerk adalah tenant sendiri:
 | Hasil DOCX | `output/<user_id>/<matkul>/sesi-<N>/` | Terisolasi per akun |
 | Folder kerja & log job | `_kerja/<user_id>/<slug>/sesi-<N>/` | Terisolasi per akun |
 | Cache HTML Moodle | `cache/<user_id>/` | Halaman berisi data akun |
-| Provider/model/MCP | `runtime/runtime.json`, `.env` | Sengaja bersama: API key tidak diduplikasi per user |
+| Provider/model | `runtime/runtime.json`, `.env` | Sengaja bersama: API key tidak diduplikasi per user |
 
 Job lama yang masih berjalan saat deploy tetap memakai profil pemiliknya
 (cookie/identitas disimpan di objek job saat dibuat), jadi memperbarui

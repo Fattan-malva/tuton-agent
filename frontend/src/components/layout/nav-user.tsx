@@ -1,22 +1,9 @@
 'use client'
 
-import { useState } from 'react'
-import { useUser, useClerk } from '@clerk/react'
-import { LogOut, ChevronsUpDown } from 'lucide-react'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import {
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from '@/components/ui/sidebar'
+import { useUser } from '@clerk/react'
+import { ChevronsUpDown } from 'lucide-react'
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
+import { AccountDialog } from './account-dialog'
 
 function inisial(nama: string) {
   const kata = nama.trim().split(/\s+/).filter(Boolean)
@@ -26,27 +13,15 @@ function inisial(nama: string) {
 }
 
 export function NavUser() {
-  const { isMobile } = useSidebar()
   const { user } = useUser()
-  const { signOut } = useClerk()
-  const [keluar, setKeluar] = useState(false)
-
   const nama = user?.fullName || user?.username || user?.primaryEmailAddress?.emailAddress || 'Akun'
   const email = user?.primaryEmailAddress?.emailAddress || ''
-
-  async function logout() {
-    setKeluar(true)
-    // signOut() juga menghapus cache SWR yang menyimpan data akun ini.
-    await signOut({ redirectUrl: '/login/' }).catch(() => {
-      window.location.href = '/login/'
-    })
-  }
 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+        <AccountDialog
+          trigger={
             <SidebarMenuButton
               size='lg'
               className='data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground'
@@ -62,27 +37,8 @@ export function NavUser() {
               </div>
               <ChevronsUpDown className='ms-auto size-4' />
             </SidebarMenuButton>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            className='min-w-56 rounded-lg'
-            side={isMobile ? 'bottom' : 'right'}
-            align='end'
-            sideOffset={4}
-          >
-            <DropdownMenuLabel className='font-normal'>
-              Dashboard pipeline tutor
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              variant='destructive'
-              disabled={keluar}
-              onClick={logout}
-            >
-              <LogOut />
-              {keluar ? 'Keluar...' : 'Keluar'}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          }
+        />
       </SidebarMenuItem>
     </SidebarMenu>
   )

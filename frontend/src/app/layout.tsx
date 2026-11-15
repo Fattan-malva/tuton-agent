@@ -1,8 +1,21 @@
 import type { Metadata, Viewport } from 'next'
+import { Inter, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import { SWRProvider } from '@/components/swr-provider'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppAuthProvider } from '@/components/clerk-provider'
+
+const inter = Inter({
+  variable: '--font-inter',
+  subsets: ['latin'],
+  display: 'swap',
+})
+
+const jetBrains = JetBrains_Mono({
+  variable: '--font-jetbrains',
+  subsets: ['latin'],
+  display: 'swap',
+})
 
 export const metadata: Metadata = {
   title: 'Tuton — Dashboard Pipeline',
@@ -32,11 +45,15 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang='id' suppressHydrationWarning>
+    <html
+      lang='id'
+      suppressHydrationWarning
+      className={`${inter.variable} ${jetBrains.variable}`}
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body className='min-h-svh bg-background text-foreground antialiased'>
+      <body className='bg-background text-foreground min-h-svh font-sans antialiased'>
         <ThemeProvider>
           <AppAuthProvider>
             <SWRProvider>{children}</SWRProvider>

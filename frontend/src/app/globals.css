@@ -136,6 +136,10 @@
   --color-diskusi-soft: var(--diskusi-soft);
   --color-tugas: var(--tugas);
   --color-tugas-soft: var(--tugas-soft);
+  /* next/font menaruh variabelnya di <html>; `inline` membuat utilitas
+     font-sans/font-mono mewarisi nilainya tanpa request runtime. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SFMono-Regular", monospace;
   --font-heading: var(--font-sans);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -166,6 +170,14 @@
   }
   body {
     @apply min-h-svh w-full bg-background text-foreground;
+    /* Huruf UI: kerning dan ligatur nyala, angka rata lebar untuk tabel
+       nilai/tanggal supaya kolom tidak bergoyang. */
+    font-feature-settings: "cv11", "ss01";
+    font-variant-numeric: tabular-nums;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3, h4 {
+    @apply font-heading tracking-tight;
   }
   button:not(:disabled),
   [role='button']:not(:disabled) {

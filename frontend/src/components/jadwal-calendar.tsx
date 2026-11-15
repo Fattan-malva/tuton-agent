@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { JadwalItem } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -32,7 +32,12 @@ const NAMA_BULAN = [
 ]
 const LANE_H = 20
 
-type Rentang = JadwalItem & { s: Date; e: Date; lane?: number }
+type Rentang = JadwalItem & {
+  s: Date
+  e: Date
+  lane?: number
+  warna: { soft: string; ink: string }
+}
 
 function awalBulan(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1)
@@ -46,18 +51,65 @@ function jenisKelas(jenis: string) {
   return jenis.toLowerCase() === 'tugas' ? 'tugas' : 'diskusi'
 }
 
+/**
+ * Kunci identitas satu aktivitas: jenis + nomor. Dipakai untuk memberi warna
+ * yang sama pada bilah, garis tenggat, dan legenda, tetapi berbeda antar
+ * aktivitas -- Diskusi 1 tidak lagi berwarna sama dengan Diskusi 2.
+ */
+function kunciAktivitas(jenis: string, nomor: string) {
+  return `${jenisKelas(jenis)}-${String(nomor).trim()}`
+}
+
+/**
+ * Warna deterministik per aktivitas. Indeks dikali sudut emas (137.5°) supaya
+ * aktivitas yang berurutan selalu berjauhan warnanya, bukan sekadar bergeser
+ * sedikit. `light-dark()` membuat satu nilai tetap terbaca di tema terang dan
+ * gelap tanpa perlu JavaScript.
+ */
+function warnaAktivitas(indeks: number) {
+  const hue = (18 + indeks * 137.508) % 360
+  return {
+    soft: `light-dark(oklch(0.96 0.035 ${hue}), oklch(0.31 0.055 ${hue}))`,
+    ink: `light-dark(oklch(0.44 0.12 ${hue}), oklch(0.86 0.1 ${hue}))`,
+  }
+}
+
 export function JadwalCalendar({ items }: { items: JadwalItem[] }) {
-  const rentang = useMemo<Rentang[]>(
-    () =>
-      items
-        .filter((it) => it.tenggat)
-        .map((it) => ({
-          ...it,
-          s: new Date(`${it.mulai}T00:00:00`),
-          e: new Date(`${it.tenggat}T00:00:00`),
-        })),
-    [items],
-  )
+  const { rentang, legenda } = useMemo(() => {
+    const dipakai = items.filter((it) => it.tenggat)
+    // Urutan kunci menentukan indeks warna: jenis lebih dulu, lalu nomor
+    // secara numerik supaya Diskusi 2 tidak mendahului Diskusi 10.
+    const kunci = Array.from(
+      new Set(dipakai.map((it) => kunciAktivitas(it.jenis, it.nomor))),
+    ).sort((a, b) => {
+      const [ja, na] = a.split('-')
+      const [jb, nb] = b.split('-')
+      if (ja !== jb) return ja.localeCompare(jb)
+      return Number(na) - Number(nb)
+    })
+    const petaWarna = new Map(
+      kunci.map((k, i) => [k, warnaAktivitas(i)] as const),
+    )
+    const daftar: Rentang[] = dipakai.map((it) => ({
+      ...it,
+      s: new Date(`${it.mulai}T00:00:00`),
+      e: new Date(`${it.tenggat}T00:00:00`),
+      warna:
+        petaWarna.get(kunciAktivitas(it.jenis, it.nomor)) ||
+        warnaAktivitas(0),
+    }))
+    return {
+      rentang: daftar,
+      legenda: kunci.map((k) => {
+        const [jenis, nomor] = k.split('-')
+        return {
+          kunci: k,
+          label: `${jenis === 'tugas' ? 'Tugas' : 'Diskusi'} ${nomor}`,
+          warna: petaWarna.get(k)!,
+        }
+      }),
+    }
+  }, [items])
 
   const hariIni = useMemo(() => new Date(), [])
   const [tampil, setTampil] = useState<Date>(() => {
@@ -108,10 +160,12 @@ export function JadwalCalendar({ items }: { items: JadwalItem[] }) {
     const akhir = new Date(awal)
     akhir.setDate(awal.getDate() + 6)
 
-    const tenggatMinggu = new Map<string, string>()
+    // Satu hari bisa punya beberapa tenggat; warnanya memakai aktivitas
+    // pertama hari itu, sisanya tetap terlihat dari bilah masing-masing.
+    const tenggatMinggu = new Map<string, Rentang['warna']>()
     for (const r of nampak) {
       if (r.e >= awal && r.e <= akhir && !tenggatMinggu.has(kunci(r.e))) {
-        tenggatMinggu.set(kunci(r.e), jenisKelas(r.jenis))
+        tenggatMinggu.set(kunci(r.e), r.warna)
       }
     }
 
@@ -146,21 +200,24 @@ export function JadwalCalendar({ items }: { items: JadwalItem[] }) {
     return { hari, bars }
   })
 
-  const jumlahTugas = rentang.filter((r) => jenisKelas(r.jenis) === 'tugas').length
-  const jumlahDiskusi = rentang.length - jumlahTugas
-
   return (
     <Card className='gap-4 py-5'>
       <CardHeader className='gap-3 px-5'>
         <div className='flex flex-wrap items-center gap-2'>
-          <Badge variant='secondary' className='gap-1.5 font-normal'>
-            <span className='bg-diskusi size-2 rounded-full' />
-            Diskusi {jumlahDiskusi}
-          </Badge>
-          <Badge variant='secondary' className='gap-1.5 font-normal'>
-            <span className='bg-tugas size-2 rounded-full' />
-            Tugas {jumlahTugas}
-          </Badge>
+          {legenda.map((item) => (
+            <Badge
+              key={item.kunci}
+              variant='secondary'
+              className='gap-1.5 font-normal'
+              style={{ color: item.warna.ink }}
+            >
+              <span
+                className='size-2 rounded-full'
+                style={{ backgroundColor: item.warna.ink }}
+              />
+              {item.label}
+            </Badge>
+          ))}
           <span className='text-muted-foreground flex items-center gap-1.5 text-xs'>
             <i className='bg-muted-foreground/60 h-0.5 w-4 rounded-full' />
             Garis tenggat
@@ -223,16 +280,21 @@ export function JadwalCalendar({ items }: { items: JadwalItem[] }) {
               {row.bars.map(({ r, left, width, awalSeg, ket }) => (
                 <a
                   key={`${r.url}-${r.sesi}-${r.nomor}`}
-                  className={cn('jad-bar', jenisKelas(r.jenis))}
+                  className='jad-bar'
                   href={r.url}
                   target='_blank'
                   rel='noopener noreferrer'
                   title={ket}
-                  style={{
-                    left: `calc(${left}% + 3px)`,
-                    width: `calc(${width}% - 3px)`,
-                    top: 26 + (r.lane || 0) * LANE_H,
-                  }}
+                  style={
+                    {
+                      left: `calc(${left}% + 3px)`,
+                      width: `calc(${width}% - 3px)`,
+                      top: 26 + (r.lane || 0) * LANE_H,
+                      backgroundColor: r.warna.soft,
+                      color: r.warna.ink,
+                      '--tw-ring-color': r.warna.ink,
+                    } as CSSProperties
+                  }
                 >
                   {awalSeg ? (
                     <>
@@ -247,11 +309,11 @@ export function JadwalCalendar({ items }: { items: JadwalItem[] }) {
                   h.tenggat && (
                     <i
                       key={`t-${d}`}
-                      className={cn(
-                        'pointer-events-none absolute top-0 h-full w-0.5 rounded-full',
-                        h.tenggat === 'tugas' ? 'bg-tugas/70' : 'bg-diskusi/70',
-                      )}
-                      style={{ left: `calc(${((d + 1) / 7) * 100}% - 1px)` }}
+                      className='pointer-events-none absolute top-0 h-full w-0.5 rounded-full opacity-70'
+                      style={{
+                        left: `calc(${((d + 1) / 7) * 100}% - 1px)`,
+                        backgroundColor: h.tenggat.ink,
+                      }}
                     />
                   ),
               )}

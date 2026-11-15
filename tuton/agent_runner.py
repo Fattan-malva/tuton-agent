@@ -17,7 +17,6 @@ from pathlib import Path
 from tuton import agent_tools
 from tuton import attachments
 from tuton import config
-from tuton import mcp_client
 from tuton import openai_client
 from tuton import runtime_config
 
@@ -105,17 +104,6 @@ def _pesan(nama_agent: str, prompt: str, cwd: Path, berkas: list[Path]) -> tuple
     return [{"role": "system", "content": sistem}, pesan_user], izin
 
 
-def _mcp(nama_agent: str) -> tuple[list[dict], dict[str, dict]]:
-    definisi: list[dict] = []
-    peta: dict[str, dict] = {}
-    for server in runtime_config.mcp_untuk(nama_agent):
-        tools = mcp_client.tools_untuk(server)
-        for t in tools:
-            peta[t["function"]["name"]] = server
-        definisi.extend(tools)
-    return definisi, peta
-
-
 def _teks_tool(hasil: str, maks: int = 16000) -> str:
     hasil = str(hasil or "")
     if len(hasil) > maks:
@@ -160,8 +148,7 @@ def jalankan(
                     "\n\nSkill yang bisa dimuat dengan tool `skill`: "
                     + ", ".join(tersedia)
                 )
-        mcp_tools, peta_mcp = _mcp(nama)
-        tools = agent_tools.tools_untuk(izin, mcp_tools)
+        tools = agent_tools.tools_untuk(izin)
 
         for langkah in range(1, MAKS_LANGKAH + 1):
             if cancel_event is not None and cancel_event.is_set():
@@ -207,17 +194,7 @@ def jalankan(
                 except ValueError:
                     args = {}
                 kabar("tool", f"{nama_tool} {_ringkas(args)}".rstrip())
-                if nama_tool.startswith("mcp_"):
-                    server = peta_mcp.get(nama_tool)
-                    if server is None:
-                        keluaran = "GALAT: server MCP untuk tool ini tidak aktif."
-                    else:
-                        try:
-                            keluaran = mcp_client.panggil(server, nama_tool, args)
-                        except mcp_client.GalatMcp as exc:
-                            keluaran = f"GALAT MCP: {exc}"
-                else:
-                    keluaran = agent_tools.jalankan(nama_tool, args, cwd)
+                keluaran = agent_tools.jalankan(nama_tool, args, cwd)
                 messages.append(
                     {
                         "role": "tool",

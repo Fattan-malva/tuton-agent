@@ -195,7 +195,7 @@ function LogContent() {
         description='Pantau job berjalan lewat streaming log. Hentikan atau hapus job dari sini.'
       />
       <div className='grid gap-4 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] lg:items-start'>
-        <aside className='bg-card ring-foreground/10 space-y-2 rounded-xl p-3 shadow-xs ring-1 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-[calc(100svh-var(--header-h)-2rem)] lg:overflow-y-auto'>
+        <aside className='bg-card ring-foreground/10 space-y-2 rounded-xl p-3 shadow-xs ring-1 lg:sticky lg:top-[calc(var(--header-h)+var(--page-header-h,0px)+1rem)] lg:max-h-[calc(100svh-var(--header-h)-var(--page-header-h,0px)-2rem)] lg:overflow-y-auto'>
           <div className='flex items-center justify-between'>
             <strong className='text-sm'>Daftar job</strong>
             <div className='flex items-center gap-1'>

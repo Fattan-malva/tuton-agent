@@ -92,6 +92,6 @@ frontend/.next/
 frontend/out/
 frontend/tsconfig.tsbuildinfo
 
-# State runtime (provider/API key/server MCP) ditulis saat aplikasi jalan.
+# State runtime (provider/API key/model agent) ditulis saat aplikasi jalan.
 runtime/
 runtime.json

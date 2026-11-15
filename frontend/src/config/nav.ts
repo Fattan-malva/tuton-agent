@@ -4,7 +4,6 @@ import {
   FileText,
   LayoutDashboard,
   ListTodo,
-  Plug,
   Server,
   Settings,
   Sparkles,
@@ -35,7 +34,6 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     title: 'Lainnya',
     items: [
       { title: 'Provider', url: '/providers', icon: Server },
-      { title: 'MCP', url: '/mcp', icon: Plug },
       { title: 'Skill', url: '/skills', icon: Sparkles },
       { title: 'Pengaturan', url: '/settings', icon: Settings },
     ],

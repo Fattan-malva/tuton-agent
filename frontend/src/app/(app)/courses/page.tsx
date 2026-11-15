@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import useSWR from 'swr'
-import { BookOpen, CalendarDays, X } from 'lucide-react'
+import { BookOpen, CalendarDays, Settings, TriangleAlert, X } from 'lucide-react'
 import type { Course, CourseSession, JadwalItem } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,6 +28,8 @@ import { PageHeader } from '@/components/page-header'
 import { cn } from '@/lib/utils'
 
 function statusBadge(item: JadwalItem) {
+  if (item.status_pengumpulan === 'nim_required')
+    return <Badge variant='outline'>butuh NIM</Badge>
   if (item.status_pengumpulan === 'submitted')
     return <Badge variant='secondary'>sudah dikumpulkan</Badge>
   if (item.status_pengumpulan === 'not_submitted')
@@ -42,7 +44,7 @@ export default function CoursesPage() {
   const sesi = useSWR<CourseSession[]>(
     selected ? `/api/courses/${encodeURIComponent(selected)}/sessions` : null,
   )
-  const jadwal = useSWR<{ items: JadwalItem[]; error?: string }>(
+  const jadwal = useSWR<{ items: JadwalItem[]; error?: string; nim_ada?: boolean }>(
     selected ? `/api/jadwal/${encodeURIComponent(selected)}` : null,
   )
 
@@ -65,7 +67,7 @@ export default function CoursesPage() {
       ) : null}
 
       <div className='grid gap-4 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)] lg:items-start'>
-        <Card className='gap-2 py-4 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-[calc(100svh-var(--header-h)-2rem)] lg:overflow-y-auto'>
+        <Card className='gap-2 py-4 lg:sticky lg:top-[calc(var(--header-h)+var(--page-header-h,0px)+1rem)] lg:max-h-[calc(100svh-var(--header-h)-var(--page-header-h,0px)-2rem)] lg:overflow-y-auto'>
           <CardHeader className='px-4'>
             <CardTitle className='text-sm'>Mata kuliah</CardTitle>
             <CardDescription className='text-xs'>
@@ -196,10 +198,29 @@ export default function CoursesPage() {
                 <CardHeader className='px-5'>
                   <CardTitle className='text-base'>Status Tugas &amp; Diskusi</CardTitle>
                   <CardDescription>
+                    Status Diskusi dicocokkan dengan NIM akun Anda di Pengaturan.
                     Klik nama aktivitas untuk membuka tautannya di Moodle.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className='px-5'>
+                  {jadwal.data?.nim_ada === false ? (
+                    <div className='border-tugas/40 bg-tugas-soft/60 text-foreground mb-4 flex items-start gap-2.5 rounded-lg border p-3'>
+                      <TriangleAlert className='text-tugas mt-0.5 size-4 shrink-0' />
+                      <div className='min-w-0 space-y-1 text-sm'>
+                        <p className='font-medium'>NIM belum diisi</p>
+                        <p className='text-muted-foreground text-xs leading-relaxed'>
+                          Status Diskusi baru bisa ditentukan setelah NIM akun
+                          tersimpan. Isi NIM di Pengaturan, lalu muat ulang
+                          jadwal.
+                        </p>
+                        <Button asChild size='sm' variant='outline' className='mt-1'>
+                          <a href='/settings/'>
+                            <Settings /> Isi NIM di Pengaturan
+                          </a>
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
                   {jadwal.isLoading ? (
                     <div className='space-y-2'>
                       {Array.from({ length: 5 }).map((_, i) => (

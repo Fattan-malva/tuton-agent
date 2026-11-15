@@ -38,7 +38,7 @@ export type JadwalItem = {
   tenggat: string
   mulai_turunan?: boolean
   url: string
-  status_pengumpulan?: 'submitted' | 'not_submitted' | string
+  status_pengumpulan?: 'submitted' | 'not_submitted' | 'nim_required' | string
   nilai?: number | string | null
   feedback?: string | null
 }
@@ -105,14 +105,5 @@ export type ProviderData = {
   error?: string
 }
 
-export type McpServer = {
-  id: string
-  name: string
-  url: string
-  headers: string[]
-  agents: string[]
-  tools: string[]
-  enabled: boolean
-}
 
 export type SkillInfo = { name: string; ukuran: number; waktu: number }

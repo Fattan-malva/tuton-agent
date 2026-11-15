@@ -1,4 +1,4 @@
-"""Konfigurasi runtime: provider OpenAI-compatible, model per agent, MCP.
+"""Konfigurasi runtime: provider OpenAI-compatible dan model per agent.
 
 Disimpan di `runtime/runtime.json` (mode 0600) dan dibaca setiap kali dipakai supaya
 perubahan dari menu UI langsung berlaku tanpa restart. API key tidak pernah
@@ -19,7 +19,7 @@ _RE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 def _kosong() -> dict:
-    return {"providers": [], "agents": {}, "mcp": []}
+    return {"providers": [], "agents": {}}
 
 
 def muat() -> dict:
@@ -110,24 +110,6 @@ def resolve(ref: str) -> tuple[dict, str]:
 def model_agent(agent: str, bawaan: str = "") -> str:
     nilai = str(muat()["agents"].get(agent) or "").strip()
     return nilai or bawaan
-
-
-# --------------------------------------------------------------------- MCP
-
-
-def mcp_untuk(agent: str) -> list[dict]:
-    """Server MCP aktif yang boleh dipakai satu agent."""
-    out: list[dict] = []
-    for s in muat()["mcp"]:
-        if not isinstance(s, dict) or not s.get("id") or not s.get("url"):
-            continue
-        if s.get("enabled") is False:
-            continue
-        agents = s.get("agents") or []
-        if agent not in agents:
-            continue
-        out.append(s)
-    return out
 
 
 def id_valid(nilai: str) -> bool:

@@ -77,11 +77,11 @@ function DropdownMenuLabel({
   inset?: boolean
 }) {
   return (
-    <MenuPrimitive.GroupLabel
+    <div
       data-slot='dropdown-menu-label'
       data-inset={inset}
       className={cn('text-muted-foreground px-2 py-1.5 text-xs font-medium data-inset:pl-8', className)}
-      {...props}
+      {...(props as React.ComponentProps<'div'>)}
     />
   )
 }

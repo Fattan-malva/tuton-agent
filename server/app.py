@@ -44,7 +44,6 @@ import docxprev  # noqa: E402
 from server.jobs import JobManager  # noqa: E402
 from tuton import courses  # noqa: E402
 from tuton import moodle  # noqa: E402
-from tuton import mcp_client  # noqa: E402
 from tuton import openai_client  # noqa: E402
 from tuton import runtime_config  # noqa: E402
 
@@ -209,6 +208,10 @@ def _jadwal(cid: str) -> dict:
     Mengambil tanggal `Opened:`/`Due:` dari tiap halaman activity -- bisa
     belasan request saat pertama kali, jadi hasilnya disimpan di memori
     dan halamannya sendiri sudah ikut tercache oleh klien Moodle.
+
+    NIM diambil dari profil Supabase akun yang login (bukan `.env`), karena
+    status Diskusi hanya sah bila dicocokkan dengan post forum milik NIM
+    pemilik akun. Bila belum diisi, item Diskusi ditandai `nim_required`.
     """
     kunci = (config.current_user(), cid)
     with _JADWAL_LOCK:
@@ -218,11 +221,16 @@ def _jadwal(cid: str) -> dict:
             return entri[2]
         try:
             klien = moodle.Moodle()
+            profil = supabase.profil(config.current_user())
+            nim = str((profil.get("identitas") or {}).get("nim") or "").strip()
             # Langsung ke course yang diminta: mencari lewat daftar seluruh
             # course berarti membuka /my/ lalu setiap halaman course hanya
             # untuk menemukan satu id, dan itu yang membuat kartu ini lambat.
             matkul = courses.mata_kuliah_dari_id(klien, cid)
-            hasil = {"items": courses.jadwal_mata_kuliah(klien, matkul)}
+            hasil = {
+                "items": courses.jadwal_mata_kuliah(klien, matkul, nim=nim),
+                "nim_ada": bool(nim),
+            }
         except Exception as exc:  # noqa: BLE001
             hasil = {"items": [], "error": str(exc)}
         ttl = _TTL_OK if not hasil.get("error") else _TTL_GAGAL
@@ -546,18 +554,6 @@ def _provider_state() -> dict:
     }
 
 
-def _mcp_publik(server: dict) -> dict:
-    return {
-        "id": server.get("id") or "",
-        "name": server.get("name") or server.get("id") or "",
-        "url": server.get("url") or "",
-        "headers": sorted((server.get("headers") or {}).keys()),
-        "agents": server.get("agents") or [],
-        "tools": server.get("tools") or [],
-        "enabled": server.get("enabled") is not False,
-    }
-
-
 def _skills_dir() -> Path:
     return config.SKILLS_DIR
 
@@ -770,7 +766,7 @@ def _settings_post(payload: dict) -> dict:
     return {"ok": True}
 
 
-# ------------------------------------------------- provider / mcp / skill
+# ----------------------------------------------------- provider / skill
 
 
 def _daftar_model_payload(payload: dict) -> list[str]:
@@ -866,81 +862,6 @@ def _agent_model_simpan(payload: dict) -> dict:
     data["agents"] = agents
     runtime_config.simpan(data)
     return {"ok": True}
-
-
-def _mcp_simpan(payload: dict) -> dict:
-    data = runtime_config.muat()
-    sid = str(payload.get("id") or "").strip()
-    nama = str(payload.get("name") or "").strip()
-    url = str(payload.get("url") or "").strip()
-    if not nama:
-        raise ValueError("Nama server MCP wajib diisi.")
-    if not re.match(r"^https?://", url):
-        raise ValueError("URL MCP harus diawali http:// atau https://.")
-    if not sid:
-        sid = runtime_config.slug(nama)
-        if not runtime_config.id_valid(sid):
-            raise ValueError("Nama server tidak bisa dijadikan ID.")
-        dasar, n = sid, 2
-        while any(m.get("id") == sid for m in data["mcp"]):
-            sid = f"{dasar}-{n}"
-            n += 1
-    lama = next((m for m in data["mcp"] if m.get("id") == sid), {})
-    headers = payload.get("headers")
-    if not isinstance(headers, dict) or not headers:
-        headers = lama.get("headers") or {}
-    headers = {
-        str(k).strip(): str(v).strip()
-        for k, v in headers.items()
-        if str(k).strip() and str(v).strip()
-    }
-    agents = payload.get("agents")
-    if not isinstance(agents, list):
-        agents = lama.get("agents") or []
-    agents = [a for a in agents if a in runtime_config.AGENTS]
-    entri = {
-        "id": sid,
-        "name": nama,
-        "url": url,
-        "headers": headers,
-        "agents": agents,
-        "tools": [str(t) for t in (payload.get("tools") or []) if str(t).strip()],
-        "enabled": payload.get("enabled") is not False,
-    }
-    data["mcp"] = [entri if m.get("id") == sid else m for m in data["mcp"]]
-    if not any(m.get("id") == sid for m in data["mcp"]):
-        data["mcp"].append(entri)
-    runtime_config.simpan(data)
-    return {"ok": True, "id": sid}
-
-
-def _mcp_hapus(payload: dict) -> dict:
-    sid = str(payload.get("id") or "").strip()
-    data = runtime_config.muat()
-    data["mcp"] = [m for m in data["mcp"] if m.get("id") != sid]
-    runtime_config.simpan(data)
-    return {"ok": True}
-
-
-def _mcp_tes(payload: dict) -> dict:
-    sid = str(payload.get("id") or "").strip()
-    lama = next((m for m in runtime_config.muat()["mcp"] if m.get("id") == sid), {})
-    server = {
-        "id": sid or "uji",
-        "url": str(payload.get("url") or lama.get("url") or "").strip(),
-        "headers": payload.get("headers") or (lama.get("headers") or {}),
-    }
-    try:
-        tools = mcp_client.daftar_tool(server)
-        return {
-            "ok": True,
-            "tools": [
-                {"name": t.get("name"), "description": t.get("description") or ""}
-                for t in tools
-            ],
-        }
-    except mcp_client.GalatMcp as exc:
-        return {"ok": False, "error": str(exc)}
 
 
 def _skill_simpan(payload: dict) -> dict:
@@ -1285,10 +1206,6 @@ class Handler(BaseHTTPRequestHandler):
             return _kirim_json(self, _settings_get())
         if path == "/api/providers":
             return _kirim_json(self, _provider_state())
-        if path == "/api/mcp":
-            return _kirim_json(
-                self, {"servers": [_mcp_publik(m) for m in runtime_config.muat()["mcp"]]}
-            )
         if path == "/api/skills":
             return _kirim_json(self, {"skills": _skills_list()})
         if path.startswith("/api/skills/"):
@@ -1370,8 +1287,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 return _kirim_json(self, {"ok": False, "error": str(exc)}, 500)
         if path.startswith("/api/providers/") or path in {
-            "/api/agents/models", "/api/mcp/save", "/api/mcp/delete",
-            "/api/mcp/test", "/api/skills/save", "/api/skills/delete",
+            "/api/agents/models", "/api/skills/save", "/api/skills/delete",
         }:
             try:
                 payload = json.loads(self._baca_body().decode("utf-8") or "{}")
@@ -1380,9 +1296,6 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/providers/delete": _provider_hapus,
                     "/api/providers/test": _provider_tes,
                     "/api/agents/models": _agent_model_simpan,
-                    "/api/mcp/save": _mcp_simpan,
-                    "/api/mcp/delete": _mcp_hapus,
-                    "/api/mcp/test": _mcp_tes,
                     "/api/skills/save": _skill_simpan,
                     "/api/skills/delete": _skill_hapus,
                 }.get(path)

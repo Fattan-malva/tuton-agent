@@ -87,7 +87,7 @@ export default function SkillsPage() {
       />
 
       <div className='grid gap-4 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] lg:items-start'>
-        <Card className='gap-3 py-5 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-[calc(100svh-var(--header-h)-2rem)] lg:overflow-y-auto'>
+        <Card className='gap-3 py-5 lg:sticky lg:top-[calc(var(--header-h)+var(--page-header-h,0px)+1rem)] lg:max-h-[calc(100svh-var(--header-h)-var(--page-header-h,0px)-2rem)] lg:overflow-y-auto'>
           <CardHeader className='px-4'>
             <CardTitle className='text-sm'>Daftar skill</CardTitle>
             <CardDescription className='text-xs'>
