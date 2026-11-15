@@ -58,19 +58,25 @@ export default function CalculatorPage() {
   const total = useSWR<NilaiTotal>(
     courseId ? `/api/courses/${encodeURIComponent(courseId)}/nilai-total` : null,
   )
-  const [uas, setUas] = useState('')
+  const [jumlahSoal, setJumlahSoal] = useState('')
+  const [jawabanBenar, setJawabanBenar] = useState('')
   const [maksimum, setMaksimum] = useState('100')
   const [tutonManual, setTutonManual] = useState<string | null>(null)
   const [ttm, setTtm] = useState('')
 
   const max = angka(maksimum)
+  const soal = angka(jumlahSoal)
+  const benar = angka(jawabanBenar)
+  const uasOtomatis = soal && benar !== null && benar >= 0 && benar <= soal ? (benar / soal) * (max ?? 0) : null
+  const uasNilai = uasOtomatis
   const tuton = tutonManual === null ? total.data?.nilai_total ?? null : angka(tutonManual)
-  const hasil = useMemo(() => hitung(angka(uas), max ?? 0, tuton, angka(ttm)), [uas, max, tuton, ttm])
-  const invalid = [angka(uas), tuton, angka(ttm)].some((n) => n !== null && (n < 0 || n > (max ?? 0)))
+  const hasil = useMemo(() => hitung(uasNilai, max ?? 0, tuton, angka(ttm)), [uasNilai, max, tuton, ttm])
+  const invalid = [uasNilai, tuton, angka(ttm)].some((n) => n !== null && (n < 0 || n > (max ?? 0))) || (soal !== null && soal <= 0) || (soal !== null && benar !== null && benar > soal)
 
   function reset() {
     setCourseId('')
-    setUas('')
+    setJumlahSoal('')
+    setJawabanBenar('')
     setMaksimum('100')
     setTutonManual(null)
     setTtm('')
@@ -96,14 +102,25 @@ export default function CalculatorPage() {
                 </Select>
               )}
             </div>
-            <Field label='Nilai UAS' value={uas} onChange={setUas} wajib />
+            <div className='space-y-2'>
+              <Label htmlFor='jumlah-soal'>Jumlah soal UAS</Label>
+              <Select value={jumlahSoal} onValueChange={setJumlahSoal}>
+                <SelectTrigger id='jumlah-soal' className='h-10 w-full'><SelectValue placeholder='Pilih jumlah soal' /></SelectTrigger>
+                <SelectContent>{[30, 35, 39, 40, 45, 50].map((n) => <SelectItem key={n} value={String(n)}>{n} soal</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <Field label='Jumlah jawaban benar UAS' value={jawabanBenar} onChange={setJawabanBenar} wajib />
             <Field label='Nilai maksimum UAS' value={maksimum} onChange={setMaksimum} />
+            <p className='text-muted-foreground text-xs sm:col-span-2'>Nilai UAS dihitung proporsional dari jumlah jawaban benar. Perhitungan menganggap bobot soal sama.</p>
             <div className='space-y-2'>
               <Label htmlFor='tuton'>Nilai Tuton</Label>
               <Input id='tuton' type='number' min='0' max={maksimum} value={tutonManual ?? (total.data?.nilai_total?.toString() || '')} placeholder={courseId ? 'Memuat Nilai Total Moodle...' : 'Pilih mata kuliah dulu'} onChange={(e) => setTutonManual(e.target.value)} />
               <p className='text-muted-foreground text-xs'>{total.isLoading ? 'Mengambil Nilai Total Moodle...' : total.data?.nilai_total != null ? 'Terisi dari Nilai Total Moodle. Bisa dikoreksi manual.' : 'Opsional.'}</p>
             </div>
-            <Field label='Nilai TTM/Tuweb' value={ttm} onChange={setTtm} />
+            <div className='space-y-2'>
+              <Field label='Nilai TTM/Tuweb' value={ttm} onChange={setTtm} />
+              <p className='text-muted-foreground text-xs'>Kosongkan kalau tidak ikut TTM/Tuweb.</p>
+            </div>
             {invalid ? <p className='text-destructive text-sm sm:col-span-2'>Nilai harus berada antara 0 dan nilai maksimum UAS.</p> : null}
             <div className='flex gap-2 border-t pt-4 sm:col-span-2'>
               <Button disabled={!hasil || invalid}><Calculator /> Hitung</Button>
