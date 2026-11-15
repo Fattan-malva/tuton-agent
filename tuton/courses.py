@@ -389,6 +389,33 @@ def nilai_mata_kuliah(klien: moodle.Moodle, course_id: str) -> dict[int, dict[st
     return hasil
 
 
+def nilai_total_mata_kuliah(klien: moodle.Moodle, course_id: str) -> float | None:
+    """Ambil baris `Nilai Total (Tugas+Diskusi+Kehadiran)` dari grade report."""
+    try:
+        halaman = klien.ambil(
+            f"{klien.base_url}/grade/report/user/index.php?id={course_id}"
+        )
+    except Exception:  # noqa: BLE001 - nilai total tidak boleh memutus daftar course
+        return None
+    soup = BeautifulSoup(halaman.html, "lxml")
+    for tr in soup.find_all("tr"):
+        header = tr.find("th")
+        td = tr.find("td", class_=re.compile(r"column-grade", re.I))
+        if header is None or td is None:
+            continue
+        nama = re.sub(r"\s+", " ", header.get_text(" ", strip=True)).lower()
+        if "nilai total" not in nama:
+            continue
+        angka = re.search(r"(\d+(?:[.,]\d+)?)", td.get_text(" ", strip=True))
+        if not angka:
+            return None
+        try:
+            return float(angka.group(1).replace(",", "."))
+        except ValueError:
+            return None
+    return None
+
+
 def daftar_section(klien: moodle.Moodle, matkul: MataKuliah) -> list[int]:
     """Daftar nomor section milik satu course."""
     halaman = klien.ambil(f"{klien.base_url}/course/view.php?id={matkul.id}")

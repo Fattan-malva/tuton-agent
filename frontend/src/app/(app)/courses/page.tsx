@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import useSWR from 'swr'
 import { BookOpen, CalendarDays, Settings, TriangleAlert, X } from 'lucide-react'
-import type { Course, CourseSession, JadwalItem } from '@/lib/types'
+import type { Course, CourseSession, JadwalItem, NilaiTotal } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -46,6 +46,9 @@ export default function CoursesPage() {
   )
   const jadwal = useSWR<{ items: JadwalItem[]; error?: string; nim_ada?: boolean }>(
     selected ? `/api/jadwal/${encodeURIComponent(selected)}` : null,
+  )
+  const nilaiTotal = useSWR<NilaiTotal>(
+    selected ? `/api/courses/${encodeURIComponent(selected)}/nilai-total` : null,
   )
 
   const course = (courses || []).find((c) => c.id === selected)
@@ -139,6 +142,19 @@ export default function CoursesPage() {
                       <Badge variant='secondary'>Kelas {course.kelas}</Badge>
                     ) : null}
                     <Badge variant='outline'>{items.length} aktivitas</Badge>
+                    {nilaiTotal.isLoading ? (
+                      <Skeleton className='h-5 w-28' />
+                    ) : nilaiTotal.data?.nilai_total != null ? (
+                      <Badge
+                        className={cn(
+                          nilaiTotal.data.nilai_total >= 80 && 'bg-emerald-600 text-white',
+                          nilaiTotal.data.nilai_total >= 60 && nilaiTotal.data.nilai_total < 80 && 'bg-amber-500 text-white',
+                          nilaiTotal.data.nilai_total < 60 && 'bg-red-600 text-white',
+                        )}
+                      >
+                        Nilai Total: {nilaiTotal.data.nilai_total.toLocaleString('id-ID')}
+                      </Badge>
+                    ) : null}
                   </div>
                   <CardAction>
                     <Button size='sm' variant='ghost' onClick={() => setSelected(null)}>

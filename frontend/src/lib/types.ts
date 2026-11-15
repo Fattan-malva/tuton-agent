@@ -31,6 +31,8 @@ export type Course = { id: string; nama: string; kode: string; kelas: string }
 
 export type CourseSession = { sesi: number; jumlah?: number }
 
+export type NilaiTotal = { nilai_total: number | null; error?: string }
+
 export type JadwalItem = {
   nama: string
   jenis: string

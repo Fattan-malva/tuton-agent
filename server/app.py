@@ -192,6 +192,7 @@ def _nilai_semua() -> dict:
                         {
                             "id": mk.id,
                             "nama": mk.nama,
+                            "nilai_total": courses.nilai_total_mata_kuliah(klien, mk.id),
                             "titik": [
                                 {"sesi": s, **per_sesi[s]} for s in sorted(per_sesi)
                             ],
@@ -202,6 +203,18 @@ def _nilai_semua() -> dict:
                 hasil = {"courses": [], "sesi": [], "error": str(exc)}
         _NILAI_CACHE[user_id] = (now, _TTL_OK if not hasil.get("error") else _TTL_GAGAL, hasil)
         return hasil
+
+
+def _nilai_total(cid: str) -> dict:
+    """Nilai total satu course untuk kartu detail Courses."""
+    galat = _moodle_masuk()
+    if galat:
+        return {"nilai_total": None, "error": galat}
+    try:
+        klien = moodle.Moodle()
+        return {"nilai_total": courses.nilai_total_mata_kuliah(klien, cid)}
+    except Exception as exc:  # noqa: BLE001
+        return {"nilai_total": None, "error": str(exc)}
 
 
 def _jadwal(cid: str) -> dict:
@@ -1183,6 +1196,8 @@ class Handler(BaseHTTPRequestHandler):
             return _kirim_json(self, _moodle_login())
         if path == "/api/nilai":
             return _kirim_json(self, _nilai_semua())
+        if path.startswith("/api/courses/") and path.endswith("/nilai-total"):
+            return _kirim_json(self, _nilai_total(path.split("/")[3]))
         if path == "/api/courses":
             # Tidak ada `_moodle_masuk()` di sini: pengecekan itu memanggil
             # `/my/` lagi, padahal `MANAGER.courses()` juga membuka `/my/`
