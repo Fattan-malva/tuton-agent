@@ -26,7 +26,7 @@ const STATUS_HIDUP = new Set(['queued', 'running', 'stopping'])
 
 function LogSkeleton() {
   return (
-    <div className='grid gap-4 lg:grid-cols-[280px_1fr]'>
+    <div className='grid gap-4 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)]'>
       <div className='space-y-2'>
         {Array.from({ length: 6 }).map((_, i) => (
           <Skeleton key={i} className='h-14 w-full' />
@@ -194,8 +194,8 @@ function LogContent() {
         title='Log Live'
         description='Pantau job berjalan lewat streaming log. Hentikan atau hapus job dari sini.'
       />
-      <div className='grid gap-4 lg:grid-cols-[300px_1fr]'>
-        <aside className='space-y-2 rounded-xl border bg-card p-3'>
+      <div className='grid gap-4 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] lg:items-start'>
+        <aside className='bg-card ring-foreground/10 space-y-2 rounded-xl p-3 shadow-xs ring-1 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-[calc(100svh-var(--header-h)-2rem)] lg:overflow-y-auto'>
           <div className='flex items-center justify-between'>
             <strong className='text-sm'>Daftar job</strong>
             <div className='flex items-center gap-1'>
@@ -211,7 +211,7 @@ function LogContent() {
               </Button>
             </div>
           </div>
-          <div className='max-h-[62vh] space-y-1 overflow-auto rounded-lg border p-1'>
+          <div className='max-h-[54svh] space-y-1 overflow-y-auto rounded-lg border p-1'>
             {!list.length ? (
               <p className='p-3 text-xs text-muted-foreground'>
                 Belum ada job. Jalankan dari menu Kerjakan Tugas.
@@ -258,7 +258,7 @@ function LogContent() {
           </div>
         </aside>
 
-        <section className='min-w-0 space-y-2 rounded-xl border bg-card p-3'>
+        <section className='bg-card ring-foreground/10 min-w-0 space-y-2 rounded-xl p-3 shadow-xs ring-1'>
           <div className='flex flex-wrap items-center gap-2'>
             {stoppable ? (
               <Button

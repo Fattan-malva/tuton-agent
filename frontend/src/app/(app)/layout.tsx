@@ -9,6 +9,7 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { Header } from '@/components/layout/header'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Toaster } from '@/components/ui/sonner'
 
 function ShellSkeleton() {
   return (
@@ -79,11 +80,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <SidebarProvider>
       <AppSidebar />
-      <SidebarInset className='@container/content'>
+      <SidebarInset className='@container/content min-h-svh'>
         <Header />
-        <main className='mx-auto w-full max-w-[1600px] flex-1 p-4 md:p-6'>
+        <main className='mx-auto w-full max-w-[1600px] flex-1 px-4 py-6 sm:px-6'>
           {children}
         </main>
+        <Toaster position='top-center' />
       </SidebarInset>
     </SidebarProvider>
   )

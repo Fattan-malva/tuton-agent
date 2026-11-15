@@ -1,42 +1,24 @@
 'use client'
 
-import { Moon, Sun } from 'lucide-react'
-import { useTheme, type Theme } from '@/components/theme-provider'
+import { MoonStarIcon, SunIcon } from 'lucide-react'
+import { useTheme } from '@/components/theme-provider'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 
-const LABEL: Record<Theme, string> = {
-  light: 'Terang',
-  dark: 'Gelap',
-  system: 'Ikut sistem',
-}
+/** Tombol tema gaya template: dua ikon bertumpuk, berganti tanpa reload. */
+export function ModeToggle() {
+  const { resolvedTheme, setTheme } = useTheme()
 
-export function ThemeToggle() {
-  const { theme, resolvedTheme, setTheme } = useTheme()
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant='ghost' size='icon' title='Ubah tema'>
-          {resolvedTheme === 'dark' ? <Moon /> : <Sun />}
-          <span className='sr-only'>Ubah tema</span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align='end'>
-        {(Object.keys(LABEL) as Theme[]).map((value) => (
-          <DropdownMenuItem
-            key={value}
-            onClick={() => setTheme(value)}
-            className={value === theme ? 'bg-accent' : ''}
-          >
-            {LABEL[value]}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <Button
+      variant='ghost'
+      size='icon'
+      className='relative'
+      onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+      title='Ubah tema'
+    >
+      <MoonStarIcon className='scale-100 transition-transform dark:scale-0' />
+      <SunIcon className='absolute scale-0 transition-transform dark:scale-100' />
+      <span className='sr-only'>Ubah tema</span>
+    </Button>
   )
 }

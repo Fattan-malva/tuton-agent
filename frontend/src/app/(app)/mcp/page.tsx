@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import useSWR from 'swr'
-import { Pencil, Plug, Save, Trash2, Zap } from 'lucide-react'
+import { Pencil, Plug, Trash2, Zap } from 'lucide-react'
 import { postJSON } from '@/lib/api'
 import type { McpServer } from '@/lib/types'
+import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -21,6 +22,7 @@ import { Label } from '@/components/ui/label'
 import { PageHeader } from '@/components/page-header'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
+import { SaveButton } from '@/components/save-button'
 
 const AGENTS = ['scrapper', 'research', 'worker', 'vision']
 const KOSONG = {
@@ -74,25 +76,17 @@ export default function McpPage() {
   }
 
   async function simpan() {
-    setBusy(true)
-    setPesan('')
-    try {
-      await postJSON('/api/mcp/save', {
-        ...form,
-        headers: teksKeHeader(form.headers),
-        tools: form.tools
-          .split(',')
-          .map((t) => t.trim())
-          .filter(Boolean),
-      })
-      setForm(KOSONG)
-      setPesan('Server MCP tersimpan.')
-      mutate()
-    } catch (e) {
-      setPesan((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
+    await postJSON('/api/mcp/save', {
+      ...form,
+      headers: teksKeHeader(form.headers),
+      tools: form.tools
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean),
+    })
+    setForm(KOSONG)
+    void mutate()
+    return 'Server MCP tersimpan.'
   }
 
   async function tes(id = form.id) {
@@ -138,161 +132,184 @@ export default function McpPage() {
   }
 
   return (
-    <div className='space-y-6'>
+    <div className='flex flex-col gap-4'>
       <PageHeader
         title='MCP'
         description='Server MCP remote (streamable HTTP) yang boleh dipakai agent. InstaBox contohnya: URL https://api.instabox.sh/mcp dengan header X-API-Key.'
       />
 
-      <Card className='max-w-3xl'>
-        <CardHeader>
-          <CardTitle className='text-base'>
-            {form.id ? `Ubah ${form.id}` : 'Tambah server MCP'}
-          </CardTitle>
-          <CardDescription>
-            Header ditulis satu per baris, mis. <code>X-API-Key: ibk_...</code>.
-            Saat mengubah, nilai header yang dikosongkan tetap memakai nilai lama.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className='space-y-4'>
-          <div className='grid gap-4 sm:grid-cols-2'>
-            <div className='space-y-2'>
-              <Label htmlFor='m-name'>Nama</Label>
-              <Input
-                id='m-name'
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder='InstaBox'
-              />
+      <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)] xl:items-start'>
+        <Card className='gap-4 py-5'>
+          <CardHeader className='px-5'>
+            <CardTitle className='text-base'>
+              {form.id ? `Ubah ${form.id}` : 'Tambah server MCP'}
+            </CardTitle>
+            <CardDescription>
+              Header ditulis satu per baris, mis. <code>X-API-Key: ibk_...</code>.
+              Saat mengubah, nilai header yang dikosongkan tetap memakai nilai lama.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className='space-y-4 px-5'>
+            <div className='grid gap-4 sm:grid-cols-2'>
+              <div className='space-y-2'>
+                <Label htmlFor='m-name'>Nama</Label>
+                <Input
+                  id='m-name'
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder='InstaBox'
+                />
+              </div>
+              <div className='space-y-2'>
+                <Label htmlFor='m-url'>URL MCP</Label>
+                <Input
+                  id='m-url'
+                  value={form.url}
+                  onChange={(e) => setForm({ ...form, url: e.target.value })}
+                  placeholder='https://api.instabox.sh/mcp'
+                />
+              </div>
             </div>
             <div className='space-y-2'>
-              <Label htmlFor='m-url'>URL MCP</Label>
-              <Input
-                id='m-url'
-                value={form.url}
-                onChange={(e) => setForm({ ...form, url: e.target.value })}
-                placeholder='https://api.instabox.sh/mcp'
+              <Label htmlFor='m-headers'>Header</Label>
+              <Textarea
+                id='m-headers'
+                value={form.headers}
+                onChange={(e) => setForm({ ...form, headers: e.target.value })}
+                placeholder='X-API-Key: ibk_...'
+                className='min-h-20 font-mono text-xs'
               />
             </div>
-          </div>
-          <div className='space-y-2'>
-            <Label htmlFor='m-headers'>Header</Label>
-            <Textarea
-              id='m-headers'
-              value={form.headers}
-              onChange={(e) => setForm({ ...form, headers: e.target.value })}
-              placeholder='X-API-Key: ibk_...'
-              className='min-h-20 font-mono text-xs'
-            />
-          </div>
-          <div className='space-y-2'>
-            <Label htmlFor='m-tools'>Batasi tool (opsional, pisah koma)</Label>
-            <Input
-              id='m-tools'
-              value={form.tools}
-              onChange={(e) => setForm({ ...form, tools: e.target.value })}
-              placeholder='kosong = semua tool'
-            />
-          </div>
-          <div className='space-y-2'>
-            <Label>Dipakai oleh agent</Label>
-            <div className='flex flex-wrap gap-4'>
-              {AGENTS.map((a) => (
-                <label key={a} className='flex items-center gap-2 text-sm'>
+            <div className='grid gap-4 sm:grid-cols-2'>
+              <div className='space-y-2'>
+                <Label htmlFor='m-tools'>Batasi tool (opsional)</Label>
+                <Input
+                  id='m-tools'
+                  value={form.tools}
+                  onChange={(e) => setForm({ ...form, tools: e.target.value })}
+                  placeholder='kosong = semua tool'
+                />
+              </div>
+              <div className='space-y-2'>
+                <Label>Status</Label>
+                <label className='flex h-9 items-center gap-2 rounded-md border px-3 text-sm'>
                   <Checkbox
-                    checked={form.agents.includes(a)}
-                    onCheckedChange={(v) =>
-                      setForm((f) => ({
-                        ...f,
-                        agents: v
-                          ? [...f.agents, a]
-                          : f.agents.filter((x) => x !== a),
-                      }))
-                    }
+                    checked={form.enabled}
+                    onCheckedChange={(v) => setForm({ ...form, enabled: Boolean(v) })}
                   />
-                  {a}
+                  Aktif
                 </label>
-              ))}
+              </div>
             </div>
-          </div>
-          <label className='flex items-center gap-2 text-sm'>
-            <Checkbox
-              checked={form.enabled}
-              onCheckedChange={(v) => setForm({ ...form, enabled: Boolean(v) })}
-            />
-            Aktif
-          </label>
-          <div className='flex flex-wrap items-center gap-3 border-t pt-4'>
-            <Button onClick={simpan} disabled={busy}>
-              <Save /> Simpan
-            </Button>
-            <Button variant='outline' onClick={() => tes()} disabled={busy}>
-              <Zap /> Tes &amp; daftar tool
-            </Button>
-            {form.id ? (
-              <Button variant='ghost' onClick={() => setForm(KOSONG)}>
-                Batal
+            <div className='space-y-2'>
+              <Label>Dipakai oleh agent</Label>
+              <div className='flex flex-wrap gap-2'>
+                {AGENTS.map((a) => {
+                  const aktif = form.agents.includes(a)
+                  return (
+                    <label
+                      key={a}
+                      className={cn(
+                        'flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors',
+                        aktif ? 'border-primary/40 bg-accent font-medium' : 'hover:bg-accent/60',
+                      )}
+                    >
+                      <Checkbox
+                        checked={aktif}
+                        onCheckedChange={(v) =>
+                          setForm((f) => ({
+                            ...f,
+                            agents: v
+                              ? [...f.agents, a]
+                              : f.agents.filter((x) => x !== a),
+                          }))
+                        }
+                      />
+                      {a}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+            <div className='flex flex-wrap items-center gap-2 border-t pt-4'>
+              <SaveButton
+                onSave={simpan}
+                disabled={!form.name.trim() || !form.url.trim()}
+                label='Simpan server'
+              />
+              <Button variant='outline' onClick={() => tes()} disabled={busy}>
+                <Zap /> Tes &amp; daftar tool
               </Button>
-            ) : null}
-            {pesan ? <p className='text-sm text-muted-foreground'>{pesan}</p> : null}
-          </div>
-        </CardContent>
-      </Card>
+              {form.id ? (
+                <Button variant='ghost' onClick={() => setForm(KOSONG)}>
+                  Batal
+                </Button>
+              ) : null}
+              {pesan ? <p className='text-muted-foreground text-sm'>{pesan}</p> : null}
+            </div>
+          </CardContent>
+        </Card>
 
-      <div className='grid gap-4 lg:grid-cols-2'>
-        {isLoading ? (
-          Array.from({ length: 2 }).map((_, i) => (
-            <Skeleton key={i} className='h-36 w-full' />
-          ))
-        ) : (data?.servers || []).length === 0 ? (
-          <p className='text-sm text-muted-foreground'>Belum ada server MCP.</p>
-        ) : (
-          (data?.servers || []).map((s) => (
-            <Card key={s.id}>
-              <CardHeader>
-                <CardTitle className='flex items-center justify-between gap-2 text-base'>
-                  <span className='flex items-center gap-2'>
-                    <Plug className='size-4' /> {s.name}
-                  </span>
-                  <Badge variant={s.enabled ? 'secondary' : 'outline'}>
-                    {s.enabled ? 'aktif' : 'nonaktif'}
-                  </Badge>
-                </CardTitle>
-                <CardDescription className='break-all font-mono text-[11px]'>
-                  {s.url}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className='space-y-3'>
-                <p className='text-xs text-muted-foreground'>
-                  Agent: {s.agents.join(', ') || '—'}
-                </p>
-                <div className='flex flex-wrap gap-1'>
-                  {(tools[s.id] || s.tools).map((t) => (
-                    <Badge key={t} variant='outline' className='font-mono'>
-                      {t}
-                    </Badge>
-                  ))}
-                  {!s.tools.length && !(tools[s.id] || []).length ? (
-                    <span className='text-xs text-muted-foreground'>
-                      Tekan Tes untuk melihat daftar tool.
-                    </span>
-                  ) : null}
-                </div>
-                <div className='flex gap-2'>
-                  <Button size='sm' variant='outline' onClick={() => ubah(s)}>
-                    <Pencil /> Ubah
-                  </Button>
-                  <Button size='sm' variant='outline' onClick={() => tes(s.id)} disabled={busy}>
-                    <Zap /> Tes
-                  </Button>
-                  <Button size='sm' variant='ghost' onClick={() => setHapus(s)}>
-                    <Trash2 /> Hapus
-                  </Button>
-                </div>
+        <div className='grid gap-4'>
+          {isLoading ? (
+            Array.from({ length: 2 }).map((_, i) => (
+              <Skeleton key={i} className='h-36 w-full' />
+            ))
+          ) : (data?.servers || []).length === 0 ? (
+            <Card>
+              <CardContent className='text-muted-foreground py-8 text-center text-sm'>
+                Belum ada server MCP.
               </CardContent>
             </Card>
-          ))
-        )}
+          ) : (
+            (data?.servers || []).map((s) => (
+              <Card key={s.id} className='gap-3 py-5'>
+                <CardHeader className='px-5'>
+                  <CardTitle className='flex items-center justify-between gap-2 text-base'>
+                    <span className='flex min-w-0 items-center gap-2'>
+                      <Plug className='size-4 shrink-0' />
+                      <span className='truncate'>{s.name}</span>
+                    </span>
+                    <Badge variant={s.enabled ? 'secondary' : 'outline'}>
+                      {s.enabled ? 'aktif' : 'nonaktif'}
+                    </Badge>
+                  </CardTitle>
+                  <CardDescription className='truncate font-mono text-[11px]'>
+                    {s.url}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className='space-y-3 px-5'>
+                  <p className='text-muted-foreground text-xs'>
+                    Agent: {s.agents.join(', ') || '—'}
+                  </p>
+                  <div className='flex flex-wrap gap-1'>
+                    {(tools[s.id] || s.tools).map((t) => (
+                      <Badge key={t} variant='outline' className='font-mono'>
+                        {t}
+                      </Badge>
+                    ))}
+                    {!s.tools.length && !(tools[s.id] || []).length ? (
+                      <span className='text-muted-foreground text-xs'>
+                        Tekan Tes untuk melihat daftar tool.
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className='flex flex-wrap gap-2'>
+                    <Button size='sm' variant='outline' onClick={() => ubah(s)}>
+                      <Pencil /> Ubah
+                    </Button>
+                    <Button size='sm' variant='outline' onClick={() => tes(s.id)} disabled={busy}>
+                      <Zap /> Tes
+                    </Button>
+                    <Button size='sm' variant='ghost' onClick={() => setHapus(s)}>
+                      <Trash2 /> Hapus
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </div>
       </div>
 
       <ConfirmDialog

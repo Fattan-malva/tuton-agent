@@ -1,10 +1,19 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { JadwalItem } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 
 const NAMA_HARI = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min']
 const NAMA_BULAN = [
@@ -33,6 +42,10 @@ function kunci(d: Date) {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
 }
 
+function jenisKelas(jenis: string) {
+  return jenis.toLowerCase() === 'tugas' ? 'tugas' : 'diskusi'
+}
+
 export function JadwalCalendar({ items }: { items: JadwalItem[] }) {
   const rentang = useMemo<Rentang[]>(
     () =>
@@ -46,18 +59,10 @@ export function JadwalCalendar({ items }: { items: JadwalItem[] }) {
     [items],
   )
 
-  const hariIni = useMemo(() => {
-    const d = new Date()
-    d.setHours(0, 0, 0, 0)
-    return d
-  }, [])
-
+  const hariIni = useMemo(() => new Date(), [])
   const [tampil, setTampil] = useState<Date>(() => {
-    const akhirBulan = new Date(
-      hariIni.getFullYear(),
-      hariIni.getMonth() + 1,
-      0,
-    )
+    if (!rentang.length) return awalBulan(hariIni)
+    const akhirBulan = new Date(hariIni.getFullYear(), hariIni.getMonth() + 1, 0)
     const diBulanIni = rentang.some(
       (r) => r.s <= akhirBulan && r.e >= awalBulan(hariIni),
     )
@@ -106,7 +111,7 @@ export function JadwalCalendar({ items }: { items: JadwalItem[] }) {
     const tenggatMinggu = new Map<string, string>()
     for (const r of nampak) {
       if (r.e >= awal && r.e <= akhir && !tenggatMinggu.has(kunci(r.e))) {
-        tenggatMinggu.set(kunci(r.e), r.jenis.toLowerCase())
+        tenggatMinggu.set(kunci(r.e), jenisKelas(r.jenis))
       }
     }
 
@@ -117,6 +122,7 @@ export function JadwalCalendar({ items }: { items: JadwalItem[] }) {
         tgl,
         luar: tgl.getMonth() !== m,
         ini: kunci(tgl) === kunci(hariIni),
+        akhirPekan: d > 4,
         tenggat: tenggatMinggu.get(kunci(tgl)),
       }
     })
@@ -140,108 +146,119 @@ export function JadwalCalendar({ items }: { items: JadwalItem[] }) {
     return { hari, bars }
   })
 
+  const jumlahTugas = rentang.filter((r) => jenisKelas(r.jenis) === 'tugas').length
+  const jumlahDiskusi = rentang.length - jumlahTugas
+
   return (
-    <div>
-      <div className='mb-3 flex flex-wrap items-center justify-between gap-2'>
-        <div className='flex items-center gap-2'>
+    <Card className='gap-4 py-5'>
+      <CardHeader className='gap-3 px-5'>
+        <div className='flex flex-wrap items-center gap-2'>
+          <Badge variant='secondary' className='gap-1.5 font-normal'>
+            <span className='bg-diskusi size-2 rounded-full' />
+            Diskusi {jumlahDiskusi}
+          </Badge>
+          <Badge variant='secondary' className='gap-1.5 font-normal'>
+            <span className='bg-tugas size-2 rounded-full' />
+            Tugas {jumlahTugas}
+          </Badge>
+          <span className='text-muted-foreground flex items-center gap-1.5 text-xs'>
+            <i className='bg-muted-foreground/60 h-0.5 w-4 rounded-full' />
+            Garis tenggat
+          </span>
+          <span className='text-muted-foreground flex items-center gap-1.5 text-xs'>
+            <i className='bg-primary size-2 rounded-full' /> Hari ini
+          </span>
+        </div>
+        <CardTitle className='flex items-center gap-2 text-base'>
+          <CalendarDays className='text-muted-foreground size-4' />
+          Jadwal Diskusi &amp; Tugas
+        </CardTitle>
+        <CardDescription>
+          Bilah menunjukkan rentang pengerjaan; garis tegak menandai tenggat.
+        </CardDescription>
+        <CardAction className='flex items-center gap-1.5'>
           <Button
-            size='icon'
+            size='icon-sm'
             variant='outline'
-            className='size-7'
             aria-label='Bulan sebelumnya'
             onClick={() => setTampil(new Date(y, m - 1, 1))}
           >
             <ChevronLeft />
           </Button>
-          <strong className='text-sm'>
+          <span className='min-w-32 text-center text-sm font-medium'>
             {NAMA_BULAN[m]} {y}
-          </strong>
+          </span>
           <Button
-            size='icon'
+            size='icon-sm'
             variant='outline'
-            className='size-7'
             aria-label='Bulan berikutnya'
             onClick={() => setTampil(new Date(y, m + 1, 1))}
           >
             <ChevronRight />
           </Button>
-        </div>
-        <div className='flex flex-wrap gap-3 text-[11px] text-muted-foreground'>
-          <span className='flex items-center gap-1'>
-            <i className='size-2 rounded-full bg-blue-600' /> Diskusi
-          </span>
-          <span className='flex items-center gap-1'>
-            <i className='size-2 rounded-full bg-amber-600' /> Tugas
-          </span>
-          <span className='flex items-center gap-1'>
-            <i className='h-0.5 w-4 bg-muted-foreground' /> Garis tenggat
-          </span>
-          <span className='flex items-center gap-1'>
-            <i className='size-2 rounded-sm bg-accent ring-1 ring-border' /> Hari
-            ini
-          </span>
-        </div>
-      </div>
+        </CardAction>
+      </CardHeader>
 
-      <div className='overflow-hidden rounded-lg border'>
-        <div className='jad-row bg-muted/40'>
-          {NAMA_HARI.map((h) => (
-            <div
-              key={h}
-              className='border-e border-border px-1.5 py-1 text-center text-[11px] font-medium text-muted-foreground last:border-e-0'
-            >
-              {h}
+      <CardContent className='px-5'>
+        <div className='jad-bulan'>
+          <div className='jad-kepala'>
+            {NAMA_HARI.map((h) => (
+              <div key={h}>{h}</div>
+            ))}
+          </div>
+          {minggu.map((row, w) => (
+            <div key={w} className='jad-row' style={{ height: tinggiBaris }}>
+              {row.hari.map((h) => (
+                <div
+                  key={h.tgl.toISOString()}
+                  className={cn(
+                    'jad-hari',
+                    h.luar && 'luar',
+                    h.akhirPekan && !h.luar && 'akhir-pekan',
+                  )}
+                >
+                  <span>{h.tgl.getDate()}</span>
+                </div>
+              ))}
+              {row.bars.map(({ r, left, width, awalSeg, ket }) => (
+                <a
+                  key={`${r.url}-${r.sesi}-${r.nomor}`}
+                  className={cn('jad-bar', jenisKelas(r.jenis))}
+                  href={r.url}
+                  target='_blank'
+                  rel='noopener noreferrer'
+                  title={ket}
+                  style={{
+                    left: `calc(${left}% + 3px)`,
+                    width: `calc(${width}% - 3px)`,
+                    top: 26 + (r.lane || 0) * LANE_H,
+                  }}
+                >
+                  {awalSeg ? (
+                    <>
+                      <span className='truncate'>{r.jenis}</span>
+                      <span className='opacity-60'>{r.nomor}</span>
+                    </>
+                  ) : null}
+                </a>
+              ))}
+              {row.hari.map(
+                (h, d) =>
+                  h.tenggat && (
+                    <i
+                      key={`t-${d}`}
+                      className={cn(
+                        'pointer-events-none absolute top-0 h-full w-0.5 rounded-full',
+                        h.tenggat === 'tugas' ? 'bg-tugas/70' : 'bg-diskusi/70',
+                      )}
+                      style={{ left: `calc(${((d + 1) / 7) * 100}% - 1px)` }}
+                    />
+                  ),
+              )}
             </div>
           ))}
         </div>
-        {minggu.map((row, w) => (
-          <div key={w} className='jad-row' style={{ height: tinggiBaris }}>
-            {row.hari.map((h) => (
-              <div
-                key={h.tgl.toISOString()}
-                className={cn(
-                  'jad-hari',
-                  h.luar && 'luar',
-                  h.ini && 'ini',
-                  h.tenggat && 'tenggat',
-                )}
-              >
-                <span>{h.tgl.getDate()}</span>
-              </div>
-            ))}
-            {row.bars.map(({ r, left, width, awalSeg, ket }) => (
-              <a
-                key={`${r.url}-${r.sesi}-${r.nomor}`}
-                className={cn('jad-bar', r.jenis.toLowerCase())}
-                href={r.url}
-                target='_blank'
-                rel='noopener noreferrer'
-                title={ket}
-                style={{
-                  left: `calc(${left}% + 3px)`,
-                  width: `calc(${width}% - 3px)`,
-                  top: 24 + (r.lane || 0) * LANE_H,
-                }}
-              >
-                {awalSeg ? `${r.jenis} ${r.nomor}` : ''}
-              </a>
-            ))}
-            {row.hari.map(
-              (h, d) =>
-                h.tenggat && (
-                  <i
-                    key={`t-${d}`}
-                    className={cn(
-                      'pointer-events-none absolute top-0 h-full w-0.5',
-                      h.tenggat === 'tugas' ? 'bg-amber-500/70' : 'bg-blue-500/70',
-                    )}
-                    style={{ left: `calc(${((d + 1) / 7) * 100}% - 1px)` }}
-                  />
-                ),
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   )
 }

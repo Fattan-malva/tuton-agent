@@ -2,9 +2,10 @@
 
 import { useRef, useState } from 'react'
 import useSWR from 'swr'
-import { FileUp, Pencil, Save, Trash2 } from 'lucide-react'
+import { FileUp, Pencil, Trash2 } from 'lucide-react'
 import { api, postJSON } from '@/lib/api'
 import type { SkillInfo } from '@/lib/types'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -17,6 +18,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { PageHeader } from '@/components/page-header'
+import { SaveButton } from '@/components/save-button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -54,17 +56,9 @@ export default function SkillsPage() {
   }
 
   async function simpan() {
-    setBusy(true)
-    setPesan('')
-    try {
-      await postJSON('/api/skills/save', { name: nama, content: isi })
-      setPesan('Skill tersimpan.')
-      mutate()
-    } catch (e) {
-      setPesan((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
+    await postJSON('/api/skills/save', { name: nama, content: isi })
+    void mutate()
+    return 'Skill tersimpan.'
   }
 
   async function hapusSkill() {
@@ -77,7 +71,7 @@ export default function SkillsPage() {
         setIsi('')
       }
       setHapus(null)
-      mutate()
+      void mutate()
     } catch (e) {
       setPesan((e as Error).message)
     } finally {
@@ -86,46 +80,55 @@ export default function SkillsPage() {
   }
 
   return (
-    <div className='space-y-6'>
+    <div className='flex flex-col gap-4'>
       <PageHeader
         title='Skill'
         description='Instruksi tambahan yang bisa dimuat agent lewat tool `skill`. Satu folder berisi SKILL.md.'
       />
 
-      <div className='grid gap-4 lg:grid-cols-[280px_1fr]'>
-        <Card>
-          <CardHeader>
-            <CardTitle className='text-base'>Daftar skill</CardTitle>
-            <CardDescription>Klik untuk mengubah isinya.</CardDescription>
+      <div className='grid gap-4 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] lg:items-start'>
+        <Card className='gap-3 py-5 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:max-h-[calc(100svh-var(--header-h)-2rem)] lg:overflow-y-auto'>
+          <CardHeader className='px-4'>
+            <CardTitle className='text-sm'>Daftar skill</CardTitle>
+            <CardDescription className='text-xs'>
+              Klik untuk mengubah isinya.
+            </CardDescription>
           </CardHeader>
-          <CardContent className='space-y-2'>
+          <CardContent className='space-y-1 px-2'>
             {isLoading ? (
-              <Skeleton className='h-24 w-full' />
+              Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className='h-9 w-full' />
+              ))
             ) : (
               (data?.skills || []).map((s) => (
                 <button
                   key={s.name}
                   type='button'
                   onClick={() => buka(s.name)}
-                  className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-accent/60 ${
-                    nama === s.name ? 'border-foreground/40 bg-accent font-medium' : ''
-                  }`}
+                  aria-pressed={nama === s.name}
+                  className={cn(
+                    'hover:bg-accent/60 flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-start text-sm transition-colors',
+                    nama === s.name && 'bg-accent font-medium',
+                  )}
                 >
-                  <span className='truncate font-mono'>{s.name}</span>
-                  <Pencil className='size-3.5 text-muted-foreground' />
+                  <span className='truncate font-mono text-xs'>{s.name}</span>
+                  <Pencil className='text-muted-foreground size-3.5 shrink-0' />
                 </button>
               ))
             )}
             {!isLoading && !(data?.skills || []).length ? (
-              <p className='text-sm text-muted-foreground'>Belum ada skill.</p>
+              <p className='text-muted-foreground px-2 py-3 text-sm'>Belum ada skill.</p>
             ) : null}
-            <Button
-              variant='outline'
-              className='w-full'
-              onClick={() => berkas.current?.click()}
-            >
-              <FileUp /> Unggah berkas
-            </Button>
+            <div className='px-2 pt-2'>
+              <Button
+                variant='outline'
+                size='sm'
+                className='w-full'
+                onClick={() => berkas.current?.click()}
+              >
+                <FileUp /> Unggah berkas
+              </Button>
+            </div>
             <input
               ref={berkas}
               type='file'
@@ -139,8 +142,8 @@ export default function SkillsPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
+        <Card className='gap-4 py-5'>
+          <CardHeader className='px-5'>
             <CardTitle className='text-base'>
               {nama ? `SKILL.md — ${nama}` : 'Skill baru'}
             </CardTitle>
@@ -149,37 +152,45 @@ export default function SkillsPage() {
               Frontmatter `name`/`description` opsional.
             </CardDescription>
           </CardHeader>
-          <CardContent className='space-y-4'>
-            <div className='space-y-2'>
-              <Label htmlFor='s-name'>Nama skill</Label>
-              <Input
-                id='s-name'
-                value={nama}
-                onChange={(e) => setNama(e.target.value)}
-                placeholder='humanizer'
-                className='font-mono'
-              />
+          <CardContent className='space-y-4 px-5'>
+            <div className='grid gap-4 sm:grid-cols-2'>
+              <div className='space-y-2'>
+                <Label htmlFor='s-name'>Nama skill</Label>
+                <Input
+                  id='s-name'
+                  value={nama}
+                  onChange={(e) => setNama(e.target.value)}
+                  placeholder='humanizer'
+                  className='font-mono'
+                />
+              </div>
+              <div className='space-y-2'>
+                <Label htmlFor='s-isi'>Isi SKILL.md</Label>
+                <p className='text-muted-foreground flex h-9 items-center text-xs'>
+                  Dimuat agent lewat tool <code className='mx-1'>skill</code>.
+                  Frontmatter opsional.
+                </p>
+              </div>
             </div>
-            <div className='space-y-2'>
-              <Label htmlFor='s-isi'>Isi SKILL.md</Label>
-              <Textarea
-                id='s-isi'
-                value={isi}
-                onChange={(e) => setIsi(e.target.value)}
-                placeholder='# Nama skill&#10;&#10;Instruksi...'
-                className='min-h-[420px] font-mono text-xs'
+            <Textarea
+              id='s-isi'
+              value={isi}
+              onChange={(e) => setIsi(e.target.value)}
+              placeholder='# Nama skill&#10;&#10;Instruksi...'
+              className='min-h-[440px] font-mono text-xs'
+            />
+            <div className='flex flex-wrap items-center gap-2 border-t pt-4'>
+              <SaveButton
+                onSave={simpan}
+                disabled={!nama || !isi.trim()}
+                label='Simpan skill'
               />
-            </div>
-            <div className='flex flex-wrap items-center gap-3 border-t pt-4'>
-              <Button onClick={simpan} disabled={busy || !nama || !isi.trim()}>
-                <Save /> Simpan
-              </Button>
               {nama ? (
                 <Button variant='ghost' onClick={() => setHapus(nama)}>
                   <Trash2 /> Hapus
                 </Button>
               ) : null}
-              {pesan ? <p className='text-sm text-muted-foreground'>{pesan}</p> : null}
+              {pesan ? <p className='text-muted-foreground text-sm'>{pesan}</p> : null}
             </div>
           </CardContent>
         </Card>

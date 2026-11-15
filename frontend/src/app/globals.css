@@ -2,10 +2,28 @@
 @import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));
+@custom-variant data-open (&[data-open]);
+@custom-variant data-closed (&[data-closed]);
+@custom-variant data-checked (&[data-checked]);
+@custom-variant data-active (&[data-active]);
+@custom-variant data-horizontal (&[data-orientation='horizontal']);
+@custom-variant data-vertical (&[data-orientation='vertical']);
+@custom-variant data-placeholder (&[data-placeholder]);
+@custom-variant data-highlighted (&[data-highlighted]);
+@custom-variant group-data-open (:is(:where(.group)[data-open] *));
+@custom-variant group-data-closed (:is(:where(.group)[data-closed] *));
+@custom-variant group-data-active (:is(:where(.group)[data-active] *));
+@custom-variant peer-data-active (:is(:where(.peer)[data-active] ~ *));
+@custom-variant has-data-checked (&:has([data-checked]));
+@custom-variant has-data-horizontal (&:has([data-orientation='horizontal']));
+@custom-variant in-data-side-left (:where([data-side='left']) &);
+@custom-variant in-data-side-right (:where([data-side='right']) &);
+@custom-variant not-data-variant-destructive (&:not([data-variant='destructive']));
 
 :root {
   --radius: 0.625rem;
-  /* Netral penuh: tidak ada hue biru/ungu di palet. */
+  /* Tinggi header sticky; dipakai panel tetap pada tata letak dua kolom. */
+  --header-h: 53px;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -24,48 +42,66 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
-  /* Seri chart: abu-abu dulu, lalu aksen hangat/hijau/merah. */
-  --chart-1: oklch(0.269 0 0);
-  --chart-2: oklch(0.439 0 0);
-  --chart-3: oklch(0.556 0 0);
-  --chart-4: oklch(0.769 0.188 70.08);
-  --chart-5: oklch(0.696 0.17 162.48);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
 
-  --sidebar: var(--background);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--accent-foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
+  /* Dua jenis aktivitas Moodle harus langsung terbaca bedanya. */
+  --diskusi: oklch(0.55 0.16 255);
+  --diskusi-soft: oklch(0.93 0.04 255);
+  --tugas: oklch(0.63 0.16 55);
+  --tugas-soft: oklch(0.94 0.05 75);
+
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
 }
 
 .dark {
-  /* Hitam murni untuk latar, abu tua untuk permukaan, abu untuk secondary. */
-  --background: #000000;
-  --foreground: #fafafa;
-  --card: #0a0a0a;
-  --card-foreground: #fafafa;
-  --popover: #121212;
-  --popover-foreground: #fafafa;
-  --primary: #fafafa;
-  --primary-foreground: #0a0a0a;
-  --secondary: #1c1c1c;
-  --secondary-foreground: #fafafa;
-  --muted: #171717;
-  --muted-foreground: #a1a1aa;
-  --accent: #1f1f1f;
-  --accent-foreground: #fafafa;
-  --destructive: #f87171;
-  --border: rgb(255 255 255 / 12%);
-  --input: rgb(255 255 255 / 16%);
-  --ring: #52525b;
-  --chart-1: #e4e4e7;
-  --chart-2: #a1a1aa;
-  --chart-3: #71717a;
-  --chart-4: #fbbf24;
-  --chart-5: #34d399;
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+
+  --diskusi: oklch(0.68 0.15 255);
+  --diskusi-soft: oklch(0.32 0.07 255);
+  --tugas: oklch(0.78 0.15 70);
+  --tugas-soft: oklch(0.34 0.08 60);
+
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
 }
 
 @theme inline {
@@ -96,6 +132,11 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-diskusi: var(--diskusi);
+  --color-diskusi-soft: var(--diskusi-soft);
+  --color-tugas: var(--tugas);
+  --color-tugas-soft: var(--tugas-soft);
+  --font-heading: var(--font-sans);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -107,10 +148,14 @@
 }
 
 @layer base {
+
   * {
     @apply border-border outline-ring/50;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
   }
   html {
     @apply overflow-x-hidden;
@@ -164,28 +209,45 @@
   color: #a1a1aa;
 }
 
-/* Kalender jadwal Diskusi/Tugas: abu untuk Diskusi, amber untuk Tugas. */
+/* Kalender jadwal Diskusi/Tugas. Dua jenis aktivitas memakai hue berbeda
+   supaya terbaca tanpa melihat legenda: biru untuk Diskusi, amber untuk
+   Tugas. */
+.jad-bulan {
+  @apply gap-0 overflow-hidden rounded-xl ring-1 ring-foreground/10;
+}
+.jad-kepala {
+  @apply grid grid-cols-7 bg-muted/60;
+}
+.jad-kepala > div {
+  @apply py-2 text-center text-[11px] font-medium tracking-wide text-muted-foreground uppercase;
+}
 .jad-row {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  position: relative;
   border-top: 1px solid var(--border);
 }
 .jad-hari {
-  @apply relative min-h-[76px] border-e border-border px-1.5 pt-1 text-xs text-muted-foreground last:border-e-0;
+  @apply relative min-h-[76px] border-e border-border/70 px-1.5 pt-1.5 text-xs text-muted-foreground last:border-e-0;
 }
 .jad-hari.luar {
-  @apply opacity-40;
+  @apply bg-muted/20 text-muted-foreground/50;
 }
-.jad-hari.ini {
-  @apply bg-accent/50 font-semibold text-foreground;
+.jad-hari.ini > span:first-child {
+  @apply inline-flex size-5 items-center justify-center rounded-full bg-primary font-semibold text-primary-foreground;
+}
+.jad-hari.akhir-pekan {
+  @apply bg-muted/30;
 }
 .jad-bar {
-  @apply absolute z-10 flex h-5 items-center overflow-hidden rounded px-1.5 text-[10px] font-medium text-white;
+  @apply absolute z-10 flex h-5 items-center gap-1 overflow-hidden rounded-md px-1.5 text-[10px] font-medium ring-1 transition-opacity;
+}
+.jad-bar:hover {
+  @apply opacity-90;
 }
 .jad-bar.diskusi {
-  @apply bg-zinc-500;
+  @apply bg-diskusi-soft text-diskusi ring-diskusi/30;
 }
 .jad-bar.tugas {
-  @apply bg-amber-600;
+  @apply bg-tugas-soft text-tugas ring-tugas/30;
 }

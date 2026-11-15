@@ -10,7 +10,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
+  CardAction,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -49,14 +51,9 @@ type Hapus = {
 }
 
 export default function ResultsPage() {
-  const { data, isLoading, error, mutate } = useSWR<ResultFile[]>(
-    '/api/results',
-  )
+  const { data, isLoading, error, mutate } = useSWR<ResultFile[]>('/api/results')
   const [cari, setCari] = useState('')
-  const [preview, setPreview] = useState<{
-    rel: string
-    nama: string
-  } | null>(null)
+  const [preview, setPreview] = useState<{ rel: string; nama: string } | null>(null)
   const [hapus, setHapus] = useState<Hapus | null>(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
@@ -89,7 +86,7 @@ export default function ResultsPage() {
   }
 
   return (
-    <div className='space-y-6'>
+    <div className='flex flex-col gap-4'>
       <PageHeader
         title='Result'
         description='Dokumen DOCX hasil pipeline. Klik nama berkas untuk pratinjau.'
@@ -97,23 +94,28 @@ export default function ResultsPage() {
         <Badge variant='secondary'>{files.length} DOCX</Badge>
       </PageHeader>
 
-      {msg ? <p className='text-sm text-destructive'>{msg}</p> : null}
+      {msg ? <p className='text-destructive text-sm'>{msg}</p> : null}
 
-      <Card>
-        <CardHeader className='flex-row items-center justify-between gap-3 space-y-0'>
+      <Card className='gap-4 py-5'>
+        <CardHeader className='px-5'>
           <CardTitle className='text-base'>Berkas hasil</CardTitle>
-          <div className='relative w-full max-w-64'>
-            <Search className='pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground' />
-            <Input
-              value={cari}
-              onChange={(e) => setCari(e.target.value)}
-              placeholder='Cari berkas, mata kuliah, sesi...'
-              className='ps-8'
-              aria-label='Cari berkas hasil'
-            />
-          </div>
+          <CardDescription>
+            Pratinjau, unduh, atau hapus dokumen yang sudah jadi.
+          </CardDescription>
+          <CardAction>
+            <div className='relative w-full sm:w-72'>
+              <Search className='text-muted-foreground pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2' />
+              <Input
+                value={cari}
+                onChange={(e) => setCari(e.target.value)}
+                placeholder='Cari berkas, mata kuliah, sesi...'
+                className='ps-8'
+                aria-label='Cari berkas hasil'
+              />
+            </div>
+          </CardAction>
         </CardHeader>
-        <CardContent>
+        <CardContent className='px-5'>
           {isLoading ? (
             <div className='space-y-2'>
               {Array.from({ length: 8 }).map((_, i) => (
@@ -121,19 +123,21 @@ export default function ResultsPage() {
               ))}
             </div>
           ) : error ? (
-            <p className='py-10 text-center text-sm text-destructive'>
+            <p className='text-destructive py-10 text-center text-sm'>
               {String((error as Error).message)}
             </p>
           ) : !files.length ? (
-            <div className='flex flex-col items-center justify-center py-14 text-center'>
-              <FileText className='mb-3 size-10 text-muted-foreground' />
-              <h2 className='text-lg font-semibold'>Belum ada hasil</h2>
-              <p className='mt-1 text-sm text-muted-foreground'>
+            <div className='flex flex-col items-center justify-center py-16 text-center'>
+              <span className='bg-primary/10 text-primary mb-4 flex size-11 items-center justify-center rounded-md'>
+                <FileText className='size-5' />
+              </span>
+              <h2 className='text-base font-semibold'>Belum ada hasil</h2>
+              <p className='text-muted-foreground mt-1 max-w-xs text-sm'>
                 Dokumen DOCX dari tugas yang selesai akan muncul di sini.
               </p>
             </div>
           ) : !tersaring.length ? (
-            <p className='py-10 text-center text-sm text-muted-foreground'>
+            <p className='text-muted-foreground py-10 text-center text-sm'>
               Tidak ada berkas yang cocok dengan “{cari}”.
             </p>
           ) : (
@@ -144,7 +148,7 @@ export default function ResultsPage() {
                   <TableHead className='max-md:hidden'>Mata kuliah</TableHead>
                   <TableHead className='max-sm:hidden'>Sesi</TableHead>
                   <TableHead className='max-sm:hidden'>Ukuran</TableHead>
-                  <TableHead className='max-md:hidden'>Tanggal</TableHead>
+                  <TableHead className='max-lg:hidden'>Tanggal</TableHead>
                   <TableHead className='w-28 text-end'>Aksi</TableHead>
                 </TableRow>
               </TableHeader>
@@ -152,10 +156,11 @@ export default function ResultsPage() {
                 {tersaring.map((f) => {
                   const rel = `${f.slug}/${f.sesi}/${f.nama}`
                   const tanggal = f.waktu
-                    ? new Date(Number(f.waktu) * 1000).toLocaleDateString(
-                        'id-ID',
-                        { day: '2-digit', month: 'short', year: 'numeric' },
-                      )
+                    ? new Date(Number(f.waktu) * 1000).toLocaleDateString('id-ID', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                      })
                     : '—'
                   return (
                     <TableRow key={rel}>
@@ -166,41 +171,33 @@ export default function ResultsPage() {
                           onClick={() => setPreview({ rel, nama: f.nama })}
                           title={`Pratinjau ${f.nama}`}
                         >
-                          <FileText className='size-4 shrink-0 text-muted-foreground' />
+                          <FileText className='text-muted-foreground size-4 shrink-0' />
                           <span className='truncate'>{f.nama}</span>
                         </button>
                       </TableCell>
                       <TableCell className='max-md:hidden'>
-                        <span className='capitalize'>
-                          {namaMatkul(f.slug)}
-                        </span>
+                        <span className='capitalize'>{namaMatkul(f.slug)}</span>
                       </TableCell>
                       <TableCell className='max-sm:hidden'>
                         {String(f.sesi || '').replace('sesi-', 'S')}
                       </TableCell>
-                      <TableCell className='max-sm:hidden text-muted-foreground'>
+                      <TableCell className='text-muted-foreground max-sm:hidden'>
                         {formatBytes(f.ukuran)}
                       </TableCell>
-                      <TableCell className='max-md:hidden text-muted-foreground'>
+                      <TableCell className='text-muted-foreground max-lg:hidden'>
                         {tanggal}
                       </TableCell>
                       <TableCell className='text-end'>
                         <div className='flex justify-end gap-0.5'>
                           <Button
-                            size='icon'
+                            size='icon-sm'
                             variant='ghost'
-                            className='size-8'
                             title={`Pratinjau ${f.nama}`}
                             onClick={() => setPreview({ rel, nama: f.nama })}
                           >
                             <Eye />
                           </Button>
-                          <Button
-                            asChild
-                            size='icon'
-                            variant='ghost'
-                            className='size-8'
-                          >
+                          <Button asChild size='icon-sm' variant='ghost'>
                             <a
                               href={`/api/download-output/${encodeRel(rel)}`}
                               title={`Unduh ${f.nama}`}
@@ -209,19 +206,14 @@ export default function ResultsPage() {
                             </a>
                           </Button>
                           <Button
-                            size='icon'
+                            size='icon-sm'
                             variant='ghost'
-                            className='size-8'
                             title={`Hapus ${f.nama}`}
                             onClick={() =>
                               setHapus({
                                 title: 'Hapus berkas ini?',
                                 message: `${f.nama} akan dihapus permanen dari disk. Berkas lain di sesi ini tidak ikut terhapus.`,
-                                body: {
-                                  slug: f.slug,
-                                  sesi: f.sesi,
-                                  nama: f.nama,
-                                },
+                                body: { slug: f.slug, sesi: f.sesi, nama: f.nama },
                               })
                             }
                           >
@@ -239,26 +231,30 @@ export default function ResultsPage() {
       </Card>
 
       {files.length ? (
-        <div className='flex flex-wrap items-center gap-2 rounded-xl border border-dashed p-3 text-xs text-muted-foreground'>
-          <span>Hapus seluruh hasil satu mata kuliah:</span>
-          {[...new Set(files.map((f) => f.slug))].map((slug) => (
-            <Button
-              key={slug}
-              size='sm'
-              variant='outline'
-              className='h-7 capitalize'
-              onClick={() =>
-                setHapus({
-                  title: `Hapus semua hasil ${namaMatkul(slug)}?`,
-                  message: `Seluruh folder output/${namaMatkul(slug)} beserta semua DOCX di dalamnya dihapus permanen. Tidak bisa dibatalkan.`,
-                  body: { slug },
-                })
-              }
-            >
-              <Trash2 className='text-destructive' /> {namaMatkul(slug)}
-            </Button>
-          ))}
-        </div>
+        <Card className='border-dashed py-4 shadow-none ring-0'>
+          <CardContent className='flex flex-wrap items-center gap-2 px-5 text-xs'>
+            <span className='text-muted-foreground'>
+              Hapus seluruh hasil satu mata kuliah:
+            </span>
+            {[...new Set(files.map((f) => f.slug))].map((slug) => (
+              <Button
+                key={slug}
+                size='sm'
+                variant='outline'
+                className='h-7 capitalize'
+                onClick={() =>
+                  setHapus({
+                    title: `Hapus semua hasil ${namaMatkul(slug)}?`,
+                    message: `Seluruh folder output/${namaMatkul(slug)} beserta semua DOCX di dalamnya dihapus permanen. Tidak bisa dibatalkan.`,
+                    body: { slug },
+                  })
+                }
+              >
+                <Trash2 className='text-destructive' /> {namaMatkul(slug)}
+              </Button>
+            ))}
+          </CardContent>
+        </Card>
       ) : null}
 
       <PreviewDialog preview={preview} onClose={() => setPreview(null)} />
@@ -302,16 +298,16 @@ function PreviewDialog({
               ))}
             </div>
           ) : error ? (
-            <p className='text-sm text-destructive'>
+            <p className='text-destructive text-sm'>
               {String((error as Error).message)}
             </p>
           ) : data?.html?.trim() ? (
             <div
-              className='prose prose-sm max-w-none dark:prose-invert'
+              className='prose prose-sm dark:prose-invert max-w-none'
               dangerouslySetInnerHTML={{ __html: data.html }}
             />
           ) : (
-            <p className='text-sm text-muted-foreground'>
+            <p className='text-muted-foreground text-sm'>
               Dokumen tidak memiliki teks yang bisa ditampilkan.
             </p>
           )}

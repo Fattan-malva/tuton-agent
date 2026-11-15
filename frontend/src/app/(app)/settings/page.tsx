@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from 'react'
 import useSWR from 'swr'
-import { Monitor, Moon, Save, Sun, Unplug } from 'lucide-react'
+import { Loader2, Monitor, Moon, Sun, Unplug } from 'lucide-react'
 import { postJSON } from '@/lib/api'
 import type { Profil as ProfileInfo, SettingItem } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { useTheme, type Theme } from '@/components/theme-provider'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -22,12 +23,16 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ModelInput } from '@/components/model-input'
 import { PageHeader } from '@/components/page-header'
+import { SaveButton } from '@/components/save-button'
 
 const TEMA: { value: Theme; label: string; icon: typeof Sun }[] = [
   { value: 'light', label: 'Terang', icon: Sun },
   { value: 'dark', label: 'Gelap', icon: Moon },
   { value: 'system', label: 'Ikut sistem', icon: Monitor },
 ]
+
+/** Kolom yang isinya panjang ditampilkan selebar kartu, sisanya berjajar. */
+const LEBAR_PENUH = new Set(['COOKIE_MOODLE', 'FALLBACK_MODELS'])
 
 function AkunCard({ onChanged }: { onChanged: () => void }) {
   const { data, mutate } = useSWR<ProfileInfo>('/api/profil')
@@ -55,14 +60,14 @@ function AkunCard({ onChanged }: { onChanged: () => void }) {
   ).length
 
   return (
-    <Card className='max-w-3xl'>
-      <CardHeader>
+    <Card className='gap-4 py-5'>
+      <CardHeader className='px-5'>
         <CardTitle className='text-base'>Akun</CardTitle>
         <CardDescription>
           {data?.email || 'Memuat...'} — identitas {terisi}/5 terisi.
         </CardDescription>
       </CardHeader>
-      <CardContent className='space-y-3'>
+      <CardContent className='space-y-3 px-5'>
         <div className='flex flex-wrap items-center gap-2 text-sm'>
           <span className='text-muted-foreground'>Cookie Moodle:</span>
           {data?.cookie_ada ? (
@@ -71,36 +76,27 @@ function AkunCard({ onChanged }: { onChanged: () => void }) {
             <Badge variant='destructive'>belum ada</Badge>
           )}
           {data?.cookie_ada ? (
-            <Button
-              variant='outline'
-              size='sm'
-              onClick={putuskan}
-              disabled={busy}
-            >
-              <Unplug /> Putuskan
+            <Button variant='outline' size='sm' onClick={putuskan} disabled={busy}>
+              {busy ? <Loader2 className='animate-spin' /> : <Unplug />} Putuskan
             </Button>
           ) : null}
         </div>
-        <p className='text-xs text-muted-foreground'>
-          Cookie Moodle hanya berlaku untuk akun ini dan tidak pernah
-          ditampilkan kembali setelah disimpan. Putuskan bila sesi Moodle
-          berpindah tangan, lalu tempel cookie baru di tab Konfigurasi.
+        <p className='text-muted-foreground text-xs leading-relaxed'>
+          Cookie Moodle hanya berlaku untuk akun ini dan tidak pernah ditampilkan
+          kembali setelah disimpan. Putuskan bila sesi Moodle berpindah tangan,
+          lalu tempel cookie baru di tab Konfigurasi.
         </p>
-        {msg ? <p className='text-sm text-muted-foreground'>{msg}</p> : null}
+        {msg ? <p className='text-muted-foreground text-sm'>{msg}</p> : null}
       </CardContent>
     </Card>
   )
 }
 
 export default function SettingsPage() {
-  const { data, isLoading, error, mutate } = useSWR<SettingItem[]>(
-    '/api/settings',
-  )
+  const { data, isLoading, error, mutate } = useSWR<SettingItem[]>('/api/settings')
   const { data: modelData } = useSWR<{ models: string[] }>('/api/models')
   const { theme, setTheme } = useTheme()
   const [values, setValues] = useState<Record<string, string>>({})
-  const [msg, setMsg] = useState('')
-  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     if (!data) return
@@ -109,139 +105,163 @@ export default function SettingsPage() {
     setValues(next)
   }, [data])
 
+  // Tidak ada reload halaman: cukup segarkan data lewat SWR supaya isian dan
+  // posisi scroll pengguna tidak hilang.
   async function simpan() {
-    setBusy(true)
-    setMsg('')
-    try {
-      const r = await postJSON<{
-        ok: boolean
-        error?: string
-        moodle_disegarkan?: boolean
-        cache_dibersihkan?: number
-      }>('/api/settings', values)
-      if (!r.ok) {
-        setMsg(r.error || 'Gagal menyimpan.')
-        return
-      }
-      setMsg(
-        r.moodle_disegarkan
-          ? `Tersimpan. Cache Moodle dibersihkan (${r.cache_dibersihkan || 0} halaman) — memuat ulang...`
-          : 'Tersimpan.',
-      )
-      mutate()
-      setTimeout(() => window.location.reload(), r.moodle_disegarkan ? 900 : 600)
-    } catch (e) {
-      setMsg((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
+    const r = await postJSON<{
+      ok: boolean
+      error?: string
+      moodle_disegarkan?: boolean
+      cache_dibersihkan?: number
+    }>('/api/settings', values)
+    if (!r.ok) throw new Error(r.error || 'Gagal menyimpan.')
+    void mutate()
+    return r.moodle_disegarkan
+      ? `Tersimpan. Cache Moodle dibersihkan (${r.cache_dibersihkan || 0} halaman).`
+      : 'Tersimpan.'
   }
 
   return (
-    <div className='space-y-6'>
+    <div className='flex flex-col gap-4'>
       <PageHeader
         title='Pengaturan'
         description='Identitas dan cookie Moodle tersimpan per akun Clerk di Supabase. Model dan provider berlaku untuk server ini.'
       />
 
-      <AkunCard onChanged={() => mutate()} />
-
-      <Tabs defaultValue='konfigurasi' className='space-y-4'>
+      <Tabs defaultValue='konfigurasi' className='gap-4'>
         <TabsList>
           <TabsTrigger value='konfigurasi'>Konfigurasi</TabsTrigger>
           <TabsTrigger value='tampilan'>Tampilan</TabsTrigger>
+          <TabsTrigger value='akun'>Akun</TabsTrigger>
         </TabsList>
 
-        <TabsContent value='konfigurasi' className='space-y-4'>
-          <Card className='max-w-3xl'>
-            <CardHeader>
+        <TabsContent value='konfigurasi' className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,340px)] xl:items-start'>
+          <Card className='gap-4 py-5'>
+            <CardHeader className='px-5'>
               <CardTitle className='text-base'>Variabel .env</CardTitle>
               <CardDescription>
                 COOKIE_MOODLE hanya untuk koneksi Moodle, bukan login dashboard.
                 Kolom rahasia yang kosong tidak mengubah nilai tersimpan.
               </CardDescription>
+              <CardAction>
+                <SaveButton
+                  onSave={simpan}
+                  disabled={isLoading}
+                  size='sm'
+                  label='Simpan'
+                />
+              </CardAction>
             </CardHeader>
-            <CardContent className='space-y-4'>
+            <CardContent className='px-5'>
               {isLoading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className='space-y-2'>
-                    <Skeleton className='h-3.5 w-40' />
-                    <Skeleton className='h-9 w-full' />
-                  </div>
-                ))
+                <div className='grid gap-4 sm:grid-cols-2'>
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className='space-y-2'>
+                      <Skeleton className='h-3.5 w-32' />
+                      <Skeleton className='h-9 w-full' />
+                    </div>
+                  ))}
+                </div>
               ) : error ? (
-                <p className='text-sm text-destructive'>
+                <p className='text-destructive text-sm'>
                   {String((error as Error).message)}
                 </p>
               ) : (
-                (data || []).map((item) => (
-                  <div key={item.key} className='space-y-2'>
-                    <Label htmlFor={`set-${item.key}`}>
-                      {item.key}
-                      {item.rahasia ? (
-                        <span className='ms-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground'>
-                          rahasia
-                        </span>
-                      ) : null}
-                    </Label>
-                    {item.key === 'PRIMARY_MODEL' ||
-                    item.key === 'VISION_MODEL' ? (
-                      <ModelInput
-                        id={`set-${item.key}`}
-                        value={values[item.key] || ''}
-                        onChange={(v) =>
-                          setValues((prev) => ({ ...prev, [item.key]: v }))
-                        }
-                        models={modelData?.models || []}
-                      />
-                    ) : (
-                      <Input
-                        id={`set-${item.key}`}
-                        type={item.rahasia ? 'password' : 'text'}
-                        value={values[item.key] || ''}
-                        placeholder={
-                          item.key === 'FALLBACK_MODELS'
-                            ? 'model cadangan dipisah koma, dicoba bila model utama ditolak provider'
-                            : item.rahasia
-                              ? item.ada
-                                ? 'biarkan kosong = tetap'
-                                : 'isi baru'
-                              : ''
-                        }
-                        onChange={(e) =>
-                          setValues((prev) => ({
-                            ...prev,
-                            [item.key]: e.target.value,
-                          }))
-                        }
-                      />
-                    )}
-                  </div>
-                ))
+                <div className='grid gap-4 sm:grid-cols-2'>
+                  {(data || []).map((item) => (
+                    <div
+                      key={item.key}
+                      className={cn(
+                        'space-y-2',
+                        LEBAR_PENUH.has(item.key) && 'sm:col-span-2',
+                      )}
+                    >
+                      <Label htmlFor={`set-${item.key}`} className='flex items-center gap-2'>
+                        <span className='font-mono text-xs'>{item.key}</span>
+                        {item.rahasia ? (
+                          <span className='bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[10px] font-medium'>
+                            rahasia
+                          </span>
+                        ) : null}
+                      </Label>
+                      {item.key === 'PRIMARY_MODEL' || item.key === 'VISION_MODEL' ? (
+                        <ModelInput
+                          id={`set-${item.key}`}
+                          value={values[item.key] || ''}
+                          onChange={(v) =>
+                            setValues((prev) => ({ ...prev, [item.key]: v }))
+                          }
+                          models={modelData?.models || []}
+                        />
+                      ) : (
+                        <Input
+                          id={`set-${item.key}`}
+                          type={item.rahasia ? 'password' : 'text'}
+                          value={values[item.key] || ''}
+                          className={item.key === 'COOKIE_MOODLE' ? 'font-mono text-xs' : undefined}
+                          placeholder={
+                            item.key === 'FALLBACK_MODELS'
+                              ? 'model cadangan dipisah koma, dicoba bila model utama ditolak provider'
+                              : item.rahasia
+                                ? item.ada
+                                  ? 'biarkan kosong = tetap'
+                                  : 'isi baru'
+                                : ''
+                          }
+                          onChange={(e) =>
+                            setValues((prev) => ({
+                              ...prev,
+                              [item.key]: e.target.value,
+                            }))
+                          }
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
+            </CardContent>
+          </Card>
 
-              <div className='flex flex-wrap items-center gap-3 border-t pt-4'>
-                <Button onClick={simpan} disabled={busy || isLoading}>
-                  <Save /> {busy ? 'Menyimpan...' : 'Simpan'}
-                </Button>
-                {msg ? (
-                  <p className='text-sm text-muted-foreground'>{msg}</p>
-                ) : null}
+          <Card className='gap-4 py-5'>
+            <CardHeader className='px-5'>
+              <CardTitle className='text-base'>Ringkasan</CardTitle>
+              <CardDescription>
+                Nilai berlaku setelah disimpan. Tidak perlu memuat ulang halaman.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className='space-y-3 px-5 text-sm'>
+              <div className='flex items-center justify-between gap-2'>
+                <span className='text-muted-foreground'>Model utama</span>
+                <span className='truncate font-mono text-xs'>
+                  {values.PRIMARY_MODEL || '—'}
+                </span>
+              </div>
+              <div className='flex items-center justify-between gap-2'>
+                <span className='text-muted-foreground'>Model vision</span>
+                <span className='truncate font-mono text-xs'>
+                  {values.VISION_MODEL || '—'}
+                </span>
+              </div>
+              <div className='flex items-center justify-between gap-2'>
+                <span className='text-muted-foreground'>Cookie Moodle</span>
+                <span className='text-xs'>
+                  {values.COOKIE_MOODLE ? 'akan diperbarui' : 'tidak diubah'}
+                </span>
               </div>
             </CardContent>
           </Card>
         </TabsContent>
 
         <TabsContent value='tampilan'>
-          <Card className='max-w-3xl'>
-            <CardHeader>
+          <Card className='max-w-2xl gap-4 py-5'>
+            <CardHeader className='px-5'>
               <CardTitle className='text-base'>Tema</CardTitle>
               <CardDescription>
-                Mode gelap memakai latar hitam dengan permukaan abu. Pilihan
-                disimpan di peramban ini.
+                Pilihan disimpan di peramban ini dan berlaku seketika.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className='px-5'>
               <div className='grid gap-2 sm:grid-cols-3'>
                 {TEMA.map((item) => (
                   <button
@@ -249,10 +269,8 @@ export default function SettingsPage() {
                     type='button'
                     onClick={() => setTheme(item.value)}
                     className={cn(
-                      'flex items-center gap-2 rounded-lg border p-3 text-sm transition-colors',
-                      theme === item.value
-                        ? 'border-foreground/40 bg-accent font-medium'
-                        : 'hover:bg-accent/60',
+                      'hover:bg-accent/60 flex items-center gap-2 rounded-md border p-3 text-sm transition-colors',
+                      theme === item.value && 'border-primary/40 bg-accent font-medium',
                     )}
                     aria-pressed={theme === item.value}
                   >
@@ -263,6 +281,10 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value='akun'>
+          <AkunCard onChanged={() => void mutate()} />
         </TabsContent>
       </Tabs>
     </div>

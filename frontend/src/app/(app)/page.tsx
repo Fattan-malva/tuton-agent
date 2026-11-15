@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -48,10 +49,44 @@ const JOB_VARIANT: Record<
   stopped: 'outline',
 }
 
+/** Kartu statistik gaya template: chip ikon, angka besar, judul, keterangan. */
+function StatCard({
+  icon: Icon,
+  value,
+  title,
+  hint,
+}: {
+  icon: typeof BookOpen
+  value?: string
+  title: string
+  hint: string
+}) {
+  return (
+    <Card className='gap-4 py-4'>
+      <CardHeader className='gap-3'>
+        <div className='bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-sm'>
+          <Icon className='size-4' />
+        </div>
+        {value === undefined ? (
+          <Skeleton className='h-7 w-20' />
+        ) : (
+          <span className='text-2xl font-semibold tracking-tight'>{value}</span>
+        )}
+      </CardHeader>
+      <CardContent className='flex flex-col gap-1'>
+        <span className='text-sm font-medium'>{title}</span>
+        <span className='text-muted-foreground line-clamp-2 text-xs'>
+          {hint || '—'}
+        </span>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function DashboardPage() {
-  const status = useSWR<StatusInfo>('/api/status')
   const jobs = useSWR<Job[]>('/api/jobs')
-  const moodle = useSWR<{ masuk: boolean; pesan: string }>('/api/moodle-status')
+  const moodle = useSWR<{ masuk: boolean; pesan: string }>('/api/moodle/status')
+  const status = useSWR<StatusInfo>('/api/status')
   const courses = useSWR<Course[]>('/api/courses')
   const nilai = useSWR<NilaiData>('/api/nilai')
 
@@ -69,7 +104,7 @@ export default function DashboardPage() {
         : moodle.data?.masuk
           ? 'Masuk'
           : 'Belum',
-      desc: moodle.isLoading
+      hint: moodle.isLoading
         ? 'Memeriksa koneksi...'
         : moodle.data?.pesan || 'Status koneksi Moodle',
     },
@@ -77,13 +112,13 @@ export default function DashboardPage() {
       title: 'Mata kuliah',
       icon: Users,
       value: courses.data ? String(courses.data.length) : undefined,
-      desc: courses.data ? 'terdaftar di akun' : 'Memuat daftar...',
+      hint: courses.data ? 'terdaftar di akun' : 'Memuat daftar...',
     },
     {
       title: 'Job aktif',
       icon: Terminal,
       value: jobs.data ? String(aktif) : undefined,
-      desc: jobs.data
+      hint: jobs.data
         ? `${jobs.data.length} job tercatat`
         : 'Memuat daftar job...',
     },
@@ -91,18 +126,18 @@ export default function DashboardPage() {
       title: 'Job terakhir',
       icon: ListTodo,
       value: last ? JOB_LABEL[last.status] || last.status : '—',
-      desc: last ? last.matkul : 'belum ada job',
+      hint: last ? last.matkul : 'belum ada job',
     },
     {
       title: 'Provider',
       icon: Bot,
       value: status.data?.providers,
-      desc: status.data ? `Python ${status.data.python}` : 'Memuat...',
+      hint: status.data ? `Python ${status.data.python}` : 'Memuat...',
     },
   ]
 
   return (
-    <div className='space-y-6'>
+    <div className='flex flex-col gap-4'>
       <PageHeader
         title='Dashboard'
         description='Ringkasan pipeline tutor, nilai, dan job terakhir.'
@@ -119,38 +154,20 @@ export default function DashboardPage() {
         </Button>
       </PageHeader>
 
-      <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-5'>
+      <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5'>
         {cards.map((card) => (
-          <Card key={card.title} className='gap-2'>
-            <CardHeader className='flex-row items-center justify-between space-y-0'>
-              <CardTitle className='text-sm font-medium text-muted-foreground'>
-                {card.title}
-              </CardTitle>
-              <card.icon className='size-4 text-muted-foreground' />
-            </CardHeader>
-            <CardContent>
-              {card.value === undefined ? (
-                <>
-                  <Skeleton className='h-8 w-24' />
-                  <Skeleton className='mt-2 h-3.5 w-32' />
-                </>
-              ) : (
-                <>
-                  <div className='truncate text-2xl font-semibold tracking-tight'>
-                    {card.value}
-                  </div>
-                  <p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>
-                    {card.desc || '—'}
-                  </p>
-                </>
-              )}
-            </CardContent>
-          </Card>
+          <StatCard
+            key={card.title}
+            icon={card.icon}
+            value={card.value}
+            title={card.title}
+            hint={card.hint}
+          />
         ))}
       </div>
 
-      <div className='grid gap-4 lg:grid-cols-7'>
-        <Card className='lg:col-span-4'>
+      <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]'>
+        <Card>
           <CardHeader>
             <CardTitle>Nilai per sesi</CardTitle>
             <CardDescription>
@@ -165,15 +182,15 @@ export default function DashboardPage() {
                 <Skeleton className='h-[300px] w-full' />
               </div>
             ) : nilai.error ? (
-              <p className='py-12 text-center text-sm text-destructive'>
+              <p className='text-destructive py-12 text-center text-sm'>
                 {String((nilai.error as Error).message)}
               </p>
             ) : nilai.data?.error ? (
-              <p className='py-12 text-center text-sm text-muted-foreground'>
+              <p className='text-muted-foreground py-12 text-center text-sm'>
                 {nilai.data.error}
               </p>
             ) : !nilai.data?.courses?.length ? (
-              <p className='py-12 text-center text-sm text-muted-foreground'>
+              <p className='text-muted-foreground py-12 text-center text-sm'>
                 Belum ada nilai Diskusi/Tugas yang bisa diambil.
               </p>
             ) : (
@@ -182,17 +199,17 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card className='lg:col-span-3'>
-          <CardHeader className='flex-row items-start justify-between space-y-0'>
-            <div className='space-y-1'>
-              <CardTitle>Job terakhir</CardTitle>
-              <CardDescription>5 job terbaru di sesi ini.</CardDescription>
-            </div>
-            <Button asChild size='sm' variant='ghost'>
-              <Link href='/log'>
-                Semua <ArrowUpRight />
-              </Link>
-            </Button>
+        <Card className='gap-3'>
+          <CardHeader>
+            <CardTitle>Job terakhir</CardTitle>
+            <CardDescription>5 job terbaru di sesi ini.</CardDescription>
+            <CardAction>
+              <Button asChild size='sm' variant='ghost'>
+                <Link href='/log'>
+                  Semua <ArrowUpRight />
+                </Link>
+              </Button>
+            </CardAction>
           </CardHeader>
           <CardContent>
             {jobs.isLoading ? (
@@ -208,7 +225,7 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : !jobs.data?.length ? (
-              <p className='py-8 text-center text-sm text-muted-foreground'>
+              <p className='text-muted-foreground py-8 text-center text-sm'>
                 Belum ada job. Mulai dari Kerjakan Tugas.
               </p>
             ) : (
@@ -217,9 +234,9 @@ export default function DashboardPage() {
                   <li key={job.id}>
                     <Link
                       href={`/log/?job=${encodeURIComponent(job.id)}`}
-                      className='flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-accent'
+                      className='hover:bg-accent flex items-center gap-3 rounded-md px-2 py-2 transition-colors'
                     >
-                      <span className='flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted text-[10px] font-semibold uppercase'>
+                      <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-sm text-[10px] font-semibold uppercase'>
                         {job.kind === 'manual' ? 'MN' : 'SC'}
                       </span>
                       <span className='min-w-0 flex-1'>
@@ -227,7 +244,7 @@ export default function DashboardPage() {
                           {job.matkul}
                           {job.sesi ? ` · sesi ${job.sesi}` : ''}
                         </span>
-                        <span className='block truncate text-xs text-muted-foreground'>
+                        <span className='text-muted-foreground block truncate text-xs'>
                           {job.id} · {job.jenis || job.kind}
                         </span>
                       </span>
@@ -276,11 +293,17 @@ export default function DashboardPage() {
           <Link
             key={item.title}
             href={item.href}
-            className='group rounded-xl border bg-card p-4 transition-colors hover:bg-accent'
+            className='bg-card ring-foreground/10 hover:bg-accent/60 group flex items-start gap-3 rounded-xl p-4 shadow-xs ring-1 transition-colors'
           >
-            <item.icon className='size-5 text-muted-foreground' />
-            <p className='mt-3 text-sm font-medium'>{item.title}</p>
-            <p className='mt-1 text-xs text-muted-foreground'>{item.desc}</p>
+            <span className='bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-sm'>
+              <item.icon className='size-4' />
+            </span>
+            <span className='min-w-0'>
+              <span className='block text-sm font-medium'>{item.title}</span>
+              <span className='text-muted-foreground mt-1 block text-xs'>
+                {item.desc}
+              </span>
+            </span>
           </Link>
         ))}
       </div>
