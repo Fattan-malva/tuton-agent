@@ -287,23 +287,26 @@ function PreviewDialog({
   onClose: () => void
 }) {
   const enc = preview ? encodeRel(preview.rel) : null
-  const containerRef = useRef<HTMLDivElement>(null)
+  // Callback ref berbasis state, bukan `useRef`. Radix Portal baru memasang
+  // isi dialog setelah render pertama, jadi `useRef` masih null saat efek
+  // pertama jalan; efek lalu berhenti diam-diam dan area pratinjau kosong.
+  const [host, setHost] = useState<HTMLDivElement | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
 
   useEffect(() => {
-    if (!enc || !containerRef.current) return
+    if (!enc || !host) return
     let cancelled = false
     setIsLoading(true)
     setError(null)
-    containerRef.current.replaceChildren()
+    host.replaceChildren()
     fetch(`/api/download-output/${enc}`)
       .then((response) => { if (!response.ok) throw new Error('DOCX tidak bisa dimuat.'); return response.arrayBuffer() })
-      .then((buffer) => { if (!cancelled && containerRef.current) return renderAsync(buffer, containerRef.current, undefined, { breakPages: true }) })
+      .then((buffer) => { if (!cancelled) return renderAsync(buffer, host, undefined, { breakPages: true }) })
       .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason : new Error(String(reason))) })
       .finally(() => { if (!cancelled) setIsLoading(false) })
-    return () => { cancelled = true; containerRef.current?.replaceChildren() }
-  }, [enc])
+    return () => { cancelled = true; host.replaceChildren() }
+  }, [enc, host])
 
   return (
     <Dialog open={Boolean(preview)} onOpenChange={(open) => !open && onClose()}>
@@ -313,17 +316,18 @@ function PreviewDialog({
           <DialogDescription>Pratinjau dokumen DOCX</DialogDescription>
         </DialogHeader>
         <div className='min-h-0 flex-1 overflow-auto rounded-md border bg-slate-100 p-6'>
-          {isLoading ? (
+          {isLoading && (
             <div className='space-y-2'>
               {Array.from({ length: 8 }).map((_, i) => (
                 <Skeleton key={i} className='h-4 w-full' />
               ))}
             </div>
-          ) : error ? (
-            <p className='text-destructive text-sm'>{error.message}</p>
-          ) : (
-            <div ref={containerRef} className='docx-preview mx-auto w-[210mm] max-w-full text-black' />
           )}
+          {error && <p className='text-destructive text-sm'>{error.message}</p>}
+          <div
+            ref={setHost}
+            className={`docx-preview mx-auto w-[210mm] max-w-full text-black${isLoading || error ? ' hidden' : ''}`}
+          />
         </div>
         <div className='flex justify-end gap-2'>
           <Button
