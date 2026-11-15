@@ -1,7 +1,9 @@
 """Template job per pengguna. Fase 1: pilihan dan resolusi, bukan renderer."""
 from __future__ import annotations
 
-from tuton import supabase
+from pathlib import Path
+
+from tuton import config, supabase
 
 DEFAULT_ID = "akademik-standar"
 BUILTINS = (
@@ -24,3 +26,13 @@ def resolve(user_id: str, template_id: object = "") -> dict:
         if template["id"] == identitas:
             return template
     raise ValueError("Template tidak ditemukan.")
+
+
+def docx_path(user_id: str, template_id: object = "") -> Path | None:
+    """Resolve hanya file bawaan yang ada; template kustom belum punya DOCX."""
+    identitas = resolve(user_id, template_id)["id"]
+    path = config.TEMPLATE_DIR / f"{identitas}.docx"
+    if path.is_file():
+        return path
+    kandidat = sorted(config.TEMPLATE_DIR.glob("*.docx"))
+    return kandidat[0] if identitas == DEFAULT_ID and kandidat else None

@@ -1929,10 +1929,8 @@ Struktur jawaban yang diminta dokumen akhir:
         sys.modules["jkt_docx"] = docx_tool
         spec.loader.exec_module(docx_tool)
 
-        template = None
-        if config.TEMPLATE_DIR.is_dir():
-            kandidat = sorted(config.TEMPLATE_DIR.glob("*.docx"))
-            template = kandidat[0] if kandidat else None
+        from tuton import templates as template_store
+        template = template_store.docx_path(config.current_user(), self.template_id)
 
         out = config.output_dir(self.matkul.slug, self.nomor)
         out.mkdir(parents=True, exist_ok=True)
