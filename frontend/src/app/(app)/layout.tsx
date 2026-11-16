@@ -43,24 +43,24 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { data, error, mutate } = useSWR<SessionInfo>(
     isSignedIn ? '/api/session' : null,
   )
-  const { data: moodleStatus } = useSWR<{ masuk: boolean; pesan: string }>(
-    isSignedIn ? '/api/moodle-status' : null,
-  )
+  const { data: moodleStatus, mutate: mutateMoodle } = useSWR<{
+    masuk: boolean
+    pesan: string
+  }>(isSignedIn ? '/api/moodle-status' : null)
   const [panduanClosed, setPanduanClosed] = useState(false)
 
   const panduanAwal = Boolean(data?.panduan_awal)
-  const butuhCookie =
-    data?.panduan_awal === false &&
-    data?.profile?.cookie_ada === false &&
-    Boolean(moodleStatus) &&
-    moodleStatus?.masuk === false
-  const bukaPanduan = !panduanClosed && (panduanAwal || butuhCookie)
+  // Cookie kedaluwarsa tidak boleh cuma jadi pesan: form isian cookie
+  // langsung dibuka supaya pengguna tahu harus menggantinya.
+  const cookieMati =
+    data?.panduan_awal === false && moodleStatus?.masuk === false
+  const bukaPanduan = !panduanClosed && (panduanAwal || cookieMati)
 
-  // Panduan awal hanya dipakai sekali per browser tab untuk akun baru.
+  // Panduan awal hanya dipakai sekali per browser tab; setelah ditutup jangan
+  // muncul lagi walau status Moodle masih gagal (pengguna bisa buka Pengaturan).
   useEffect(() => {
     if (panduanAwal) setPanduanClosed(false)
-    if (data && !panduanAwal) setPanduanClosed(true)
-  }, [data, panduanAwal])
+  }, [panduanAwal])
 
   useEffect(() => {
     if (isLoaded && !isSignedIn) router.replace('/login/')
@@ -107,8 +107,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <Toaster position='top-center' />
         <OnboardingModal
           open={bukaPanduan}
-          onClose={() => setPanduanClosed(true)}
+          onClose={() => {
+            setPanduanClosed(true)
+            void mutate()
+            void mutateMoodle()
+          }}
           initialStep={panduanAwal ? 0 : 1}
+          cookieOnly={!panduanAwal}
         />
       </SidebarInset>
     </SidebarProvider>

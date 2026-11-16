@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Check, ChevronLeft, ChevronRight, Info, Loader2 } from 'lucide-react'
 import useSWR from 'swr'
-import { postJSON } from '@/lib/api'
+import { postJSON, api } from '@/lib/api'
 import type { SettingItem } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import {
@@ -38,21 +38,28 @@ export function OnboardingModal({
   open,
   onClose,
   initialStep = 0,
+  cookieOnly = false,
 }: {
   open: boolean
   onClose: () => void
   initialStep?: number
+  /** Dibuka karena cookie Moodle mati, bukan karena akun baru. */
+  cookieOnly?: boolean
 }) {
   const router = useRouter()
   const [step, setStep] = useState(initialStep)
   const [cookie, setCookie] = useState('')
   const [busy, setBusy] = useState(false)
+  const [galat, setGalat] = useState<string | null>(null)
   const [identitas, setIdentitas] = useState<Record<string, string>>({})
   const [panduanOpen, setPanduanOpen] = useState(false)
   const { data: settings } = useSWR<SettingItem[]>('/api/settings')
 
   useEffect(() => {
-    if (open) setStep(initialStep)
+    if (open) {
+      setStep(initialStep)
+      setGalat(null)
+    }
   }, [open, initialStep])
 
   const nilai = Object.fromEntries((settings || []).map((s) => [s.key, s.value]))
@@ -84,9 +91,20 @@ export function OnboardingModal({
 
   async function simpanCookie() {
     setBusy(true)
+    setGalat(null)
     try {
       const r = await postJSON<{ ok: boolean }>('/api/settings', { COOKIE_MOODLE: cookie })
-      if (r.ok) setStep(2)
+      if (!r.ok) return
+      if (!cookieOnly) {
+        setStep(2)
+        return
+      }
+      // Cookie mati: uji langsung supaya salah tempel tidak lewat diam-diam.
+      const status = await api<{ masuk: boolean; pesan: string }>('/api/moodle-status')
+      if (status.masuk) tutup()
+      else setGalat(status.pesan || 'Cookie masih belum berlaku.')
+    } catch (e) {
+      setGalat(e instanceof Error ? e.message : 'Cookie gagal disimpan.')
     } finally {
       setBusy(false)
     }
@@ -96,48 +114,51 @@ export function OnboardingModal({
     <Dialog open={open} onOpenChange={(o) => !o && tutup()}>
       <DialogContent className='max-h-[85vh] overflow-auto sm:max-w-md'>
         <DialogHeader>
-          <DialogTitle>Panduan awal akun</DialogTitle>
+          <DialogTitle>
+            {cookieOnly ? 'Cookie Moodle kedaluwarsa' : 'Panduan awal akun'}
+          </DialogTitle>
           <DialogDescription>
-            Langkah langsung ke konfigurasi akun: identitas, cookie Moodle,
-            lalu provider AI.
+            {cookieOnly
+              ? 'Cookie Moodle tidak berlaku lagi. Tempel nilai MoodleSession yang baru agar pipeline bisa membaca soal dan menilai tugas.'
+              : 'Langkah langsung ke konfigurasi akun: identitas, cookie Moodle, lalu provider AI.'}
           </DialogDescription>
         </DialogHeader>
 
-        <ol className='flex flex-col gap-0'>
-          {STEPS.map((s, i) => {
-            const aktif = i === step
-            const selesai = i < step
-            return (
-              <li key={s.id} className='flex gap-3'>
-                <div className='flex flex-col items-center'>
+        <div className='flex flex-col items-center gap-2'>
+          <ol className='flex items-center justify-center gap-2'>
+            {STEPS.map((s, i) => {
+              const aktif = i === step
+              const selesai = i < step
+              return (
+                <li key={s.id} className='flex items-center gap-2'>
                   <span
-                    className={`flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${
+                    aria-current={aktif ? 'step' : undefined}
+                    className={`flex size-8 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
                       selesai
                         ? 'bg-primary text-primary-foreground border-primary'
-                        : 'bg-muted text-muted-foreground border-border'
+                        : aktif
+                          ? 'border-primary text-primary ring-2 ring-primary/20'
+                          : 'bg-muted text-muted-foreground border-border'
                     }`}
                   >
-                    {selesai ? <Check className='size-3.5' /> : i + 1}
+                    {selesai ? <Check className='size-4' /> : i + 1}
                   </span>
                   {i < STEPS.length - 1 ? (
                     <span
-                      className={`w-px flex-1 ${i < step ? 'bg-primary/60' : 'bg-border'}`}
-                      style={{ minHeight: 20 }}
+                      className={`h-0.5 w-10 rounded-full ${i < step ? 'bg-primary/60' : 'bg-border'}`}
                     />
                   ) : null}
-                </div>
-                <span
-                  className={`pb-4 pt-1 text-sm font-medium ${
-                    aktif ? 'text-foreground' : 'text-muted-foreground'
-                  }`}
-                >
-                  {s.judul}
-                  {aktif ? ' — langkah sekarang' : ''}
-                </span>
-              </li>
-            )
-          })}
-        </ol>
+                </li>
+              )
+            })}
+          </ol>
+          <p className='text-sm font-medium'>
+            {STEPS[step].judul}{' '}
+            <span className='text-muted-foreground font-normal'>
+              — langkah {step + 1} dari {STEPS.length}
+            </span>
+          </p>
+        </div>
 
         <Card className='gap-4 py-5'>
           <CardContent className='space-y-3 px-5'>
@@ -186,6 +207,11 @@ export function OnboardingModal({
                   >
                     <Info className='size-3.5' /> Cara ambil cookie Moodle
                   </button>
+                  {galat ? (
+                    <p role='alert' className='text-destructive text-xs leading-relaxed'>
+                      {galat}
+                    </p>
+                  ) : null}
                 </div>
               </>
             ) : null}
@@ -200,7 +226,7 @@ export function OnboardingModal({
         </Card>
 
         <DialogFooter className='justify-between gap-2'>
-          {step > 0 ? (
+          {step > 0 && !cookieOnly ? (
             <Button variant='outline' onClick={() => setStep((s) => Math.max(0, s - 1))}>
               <ChevronLeft className='size-4' /> Kembali
             </Button>
@@ -218,8 +244,12 @@ export function OnboardingModal({
             ) : null}
             {step === 1 ? (
               <>
-                <Button variant='outline' onClick={() => setStep(2)} disabled={busy}>
-                  Lewati
+                <Button
+                  variant='outline'
+                  onClick={() => (cookieOnly ? tutup() : setStep(2))}
+                  disabled={busy}
+                >
+                  {cookieOnly ? 'Tutup' : 'Lewati'}
                 </Button>
                 <Button
                   onClick={() => void simpanCookie()}
@@ -230,7 +260,12 @@ export function OnboardingModal({
               </>
             ) : null}
             {step === 2 ? (
-              <Button onClick={() => router.push('/providers/')}>
+              <Button
+                onClick={() => {
+                  tutup()
+                  router.push('/providers/')
+                }}
+              >
                 Buka menu Provider <ChevronRight className='size-4' />
               </Button>
             ) : null}
