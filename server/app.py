@@ -916,7 +916,15 @@ def _template_simpan(payload: dict) -> dict:
     if template_id in template_schema.PRESET:
         raise ValueError("ID ini dipakai template bawaan. Pilih nama lain.")
     schema = template_schema.normalisasi(payload.get("schema", {}))
-    supabase.template_save(_id_pengguna(), {"id": template_id, "name": str(payload.get("name") or template_id).strip()[:120], "description": str(payload.get("description") or "").strip()[:500], "schema": schema, "is_default": bool(payload.get("is_default"))})
+    supabase.template_save(_id_pengguna(), {"id": template_id, "name": str(payload.get("name") or template_id).strip()[:120], "description": str(payload.get("description") or "").strip()[:500], "schema": schema})
+    return {"ok": True}
+
+
+def _template_default(payload: dict) -> dict:
+    """Tandai satu template sebagai default; bawaan maupun milik user."""
+    template_id = str(payload.get("id") or "").strip()
+    templates.resolve(_id_pengguna(), template_id)  # tolak ID asing
+    supabase.template_set_default(_id_pengguna(), template_id)
     return {"ok": True}
 
 
@@ -1351,7 +1359,7 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/skills/save": _skill_simpan,
                     "/api/skills/delete": _skill_hapus,
                     "/api/templates/save": _template_simpan,
-                    "/api/templates/default": lambda p: _template_simpan({**p, "is_default": True}),
+                    "/api/templates/default": _template_default,
                 }.get(path)
                 if aksi is None:
                     return _kirim_json(self, {"error": "Aksi tidak dikenal."}, 404)

@@ -222,14 +222,30 @@ def template_list(user_id: str) -> list[dict]:
 
 
 def template_default(user_id: str) -> str:
+    """ID template default akun, disimpan di profil (boleh template bawaan)."""
     if not aktif() or not user_id:
         return ""
     try:
-        r = requests.get(_url(TEMPLATE_TABLE), params={"select": "id", "user_id": f"eq.{user_id}", "is_default": "eq.true", "limit": "1"}, headers=_headers(), timeout=10)
+        r = requests.get(_url(), params={"select": "template_default", "user_id": f"eq.{user_id}", "limit": "1"}, headers=_headers(), timeout=10)
         rows = r.json() if r.ok else []
-        return str(rows[0].get("id", "")) if rows else ""
-    except requests.RequestException:
+        return str(rows[0].get("template_default") or "") if rows else ""
+    except (requests.RequestException, ValueError):
         return ""
+
+
+def template_set_default(user_id: str, template_id: str) -> None:
+    """Simpan pilihan default tanpa menyentuh isi template-nya."""
+    if not aktif() or not user_id:
+        raise ValueError("Supabase belum dikonfigurasi.")
+    r = requests.post(
+        _url(),
+        params={"on_conflict": "user_id"},
+        headers=_headers("resolution=merge-duplicates,return=minimal"),
+        json={"user_id": user_id, "template_default": template_id},
+        timeout=15,
+    )
+    if not r.ok:
+        raise ValueError(f"Supabase menolak pembaruan ({r.status_code}): {r.text[:200]}")
 
 
 def template_get(user_id: str, template_id: str) -> dict | None:
@@ -246,7 +262,7 @@ def template_get(user_id: str, template_id: str) -> dict | None:
 def template_save(user_id: str, template: dict) -> None:
     if not aktif() or not user_id:
         return
-    values = {"user_id": user_id, "id": str(template.get("id", "")), "name": str(template.get("name", "")), "description": str(template.get("description", "")), "schema": template.get("schema", {}), "is_default": bool(template.get("is_default", False))}
+    values = {"user_id": user_id, "id": str(template.get("id", "")), "name": str(template.get("name", "")), "description": str(template.get("description", "")), "schema": template.get("schema", {})}
     requests.post(_url(TEMPLATE_TABLE), json=values, headers=_headers("resolution=merge-duplicates"), timeout=10).raise_for_status()
 
 

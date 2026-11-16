@@ -34,5 +34,26 @@ class TestTemplatesMemakaiIdPengguna(unittest.TestCase):
         self.assertEqual(app._id_pengguna(), "")
 
 
+class TestTemplateDefault(unittest.TestCase):
+    """Default boleh template bawaan dan tidak menimpa isi template kustom."""
+
+    def test_bawaan_boleh_jadi_default(self):
+        from server import app
+        with mock.patch.object(app.templates, "resolve", return_value={"id": "ringkas"}), \
+                mock.patch.object(app.supabase, "template_set_default") as simpan, \
+                mock.patch.object(app.supabase, "template_save") as tulis:
+            app._template_default({"id": "ringkas"})
+        simpan.assert_called_once_with("", "ringkas")
+        tulis.assert_not_called()
+
+    def test_id_asing_ditolak(self):
+        from server import app
+        with mock.patch.object(app.templates, "resolve", side_effect=ValueError("Template tidak ditemukan.")), \
+                mock.patch.object(app.supabase, "template_set_default") as simpan:
+            with self.assertRaises(ValueError):
+                app._template_default({"id": "tidak-ada"})
+        simpan.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

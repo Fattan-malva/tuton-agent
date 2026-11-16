@@ -1,9 +1,10 @@
 'use client'
 
 import useSWR from 'swr'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Eye, FileText, Pencil, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { postJSON } from '@/lib/api'
@@ -18,6 +19,10 @@ export default function TemplatesPage() {
   const [message, setMessage] = useState('')
   const [pratinjau, setPratinjau] = useState<Template | null>(null)
   const [editor, setEditor] = useState<{ editId?: string } | null>(null)
+  const daftar = useMemo(() => {
+    const d = data?.default_id
+    return [...(data?.templates ?? [])].sort((a, b) => Number(b.id === d) - Number(a.id === d))
+  }, [data])
 
   async function select(id: string) {
     try { await postJSON('/api/templates/default', { id }); await mutate(); setMessage('Template default disimpan.') }
@@ -39,14 +44,14 @@ export default function TemplatesPage() {
       <Select value={data?.default_id} onValueChange={select}><SelectTrigger className='w-64'><SelectValue placeholder='Pilih template default' /></SelectTrigger><SelectContent>{data?.templates.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select>
       <Button onClick={() => setEditor({})}><Plus /> Buat template</Button>
     </div>
-    <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>{data?.templates.map(t => <article key={t.id} className='overflow-hidden rounded-lg border bg-card'>
+    <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>{daftar.map(t => <article key={t.id} className='overflow-hidden rounded-lg border bg-card'>
       <button type='button' onClick={() => setPratinjau(t)} className='block w-full cursor-zoom-in' aria-label={`Buka pratinjau ${t.name}`}><DocxThumb templateId={t.id} label={t.name} /></button>
       <div className='p-4'>
-        <div className='flex items-start gap-2'><FileText className='text-muted-foreground mt-0.5 size-4' /><div><h2 className='font-medium'>{t.name}</h2><p className='text-muted-foreground text-sm'>{t.description}</p></div></div>
+        <div className='flex items-start gap-2'><FileText className='text-muted-foreground mt-0.5 size-4' /><div><h2 className='flex flex-wrap items-center gap-2 font-medium'>{t.name}{t.id === data?.default_id && <Badge>Default</Badge>}</h2><p className='text-muted-foreground text-sm'>{t.description}</p></div></div>
         <div className='mt-4 flex flex-wrap gap-2'>
           <Button variant='outline' className='flex-1' onClick={() => setPratinjau(t)}><Eye /> Pratinjau</Button>
           {!t.bawaan && <Button variant='outline' className='flex-1' onClick={() => setEditor({ editId: t.id })}><Pencil /> Edit</Button>}
-          <Button className='w-full' variant={t.id === data.default_id ? 'secondary' : 'outline'} onClick={() => select(t.id)}>{t.id === data.default_id ? 'Template default' : 'Jadikan default'}</Button>
+          <Button className='w-full' variant={t.id === data?.default_id ? 'secondary' : 'outline'} onClick={() => select(t.id)}>{t.id === data?.default_id ? 'Template default' : 'Jadikan default'}</Button>
         </div>
       </div>
     </article>)}</div>
