@@ -30,7 +30,6 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { PageHeader } from '@/components/page-header'
-import { ModelInput } from '@/components/model-input'
 
 /** Baris opsi: kotak centang dengan keterangan singkat di bawahnya. */
 function Opsi({
@@ -68,10 +67,6 @@ export default function BuatPage() {
   const router = useRouter()
   const { data: courses, isLoading: coursesLoading, error: coursesError } =
     useSWR<Course[]>('/api/courses')
-  const { data: modelData } = useSWR<{ models: string[]; error: string }>(
-    '/api/models',
-  )
-  const models = modelData?.models || []
   const { data: templateData } = useSWR<{ templates: { id: string; name: string }[]; default_id: string }>('/api/templates')
   const [templateId, setTemplateId] = useState('')
   const [mnTemplateId, setMnTemplateId] = useState('')
@@ -85,8 +80,6 @@ export default function BuatPage() {
   const [jenis, setJenis] = useState('auto')
   const [tanpaDocx, setTanpaDocx] = useState(false)
   const [tanpaGambar, setTanpaGambar] = useState(false)
-  const [model, setModel] = useState('')
-  const [modelMata, setModelMata] = useState('')
   const [sesiList, setSesiList] = useState<CourseSession[]>([])
   const [sesiLoading, setSesiLoading] = useState(false)
   const [sesiError, setSesiError] = useState('')
@@ -137,8 +130,6 @@ export default function BuatPage() {
   const [mnGambar, setMnGambar] = useState(true)
   const [mnRef, setMnRef] = useState(true)
   const [mnTanpaDocx, setMnTanpaDocx] = useState(false)
-  const [mnModel, setMnModel] = useState('')
-  const [mnModelMata, setMnModelMata] = useState('')
   const [mnMsg, setMnMsg] = useState('')
   const [mnBusy, setMnBusy] = useState(false)
 
@@ -165,8 +156,6 @@ export default function BuatPage() {
         jenis: jenis === 'auto' ? '' : jenis,
         tanpa_docx: tanpaDocx,
         tanpa_gambar: tanpaGambar,
-        model,
-        model_mata: modelMata,
         template_id: templateId,
       })
       router.push(`/log/?job=${encodeURIComponent(r.jobs[0])}`)
@@ -190,8 +179,6 @@ export default function BuatPage() {
     fd.append('dengan_gambar', mnGambar ? 'on' : 'off')
     fd.append('dengan_referensi', mnRef ? 'on' : 'off')
     fd.append('tanpa_docx', mnTanpaDocx ? 'on' : 'off')
-    fd.append('model', mnModel)
-    fd.append('model_mata', mnModelMata)
     fd.append('template_id', mnTemplateId)
     if (mnFiles) {
       for (const f of Array.from(mnFiles)) fd.append('file', f, f.name)
@@ -328,27 +315,6 @@ export default function BuatPage() {
                       onChange={setTanpaGambar}
                       title='Lewati gambar'
                       desc='Tidak menjalankan transkripsi vision'
-                    />
-                  </div>
-                </div>
-
-                <div className='grid gap-4 sm:grid-cols-2'>
-                  <div className='space-y-2'>
-                    <Label htmlFor='sc-model'>Model utama (opsional)</Label>
-                    <ModelInput
-                      id='sc-model'
-                      value={model}
-                      onChange={setModel}
-                      models={models}
-                    />
-                  </div>
-                  <div className='space-y-2'>
-                    <Label htmlFor='sc-model-mata'>Model vision (opsional)</Label>
-                    <ModelInput
-                      id='sc-model-mata'
-                      value={modelMata}
-                      onChange={setModelMata}
-                      models={models}
                     />
                   </div>
                 </div>
@@ -528,7 +494,7 @@ export default function BuatPage() {
                   checked={mnGambar}
                   onChange={setMnGambar}
                   title='Transkripsi gambar'
-                  desc='Baca gambar dengan model vision'
+                  desc='Baca gambar lewat agent vision'
                 />
                 <Opsi
                   checked={mnRef}
@@ -542,30 +508,6 @@ export default function BuatPage() {
                   title='Tanpa DOCX'
                   desc='Hanya menghasilkan .md'
                 />
-                <div className='grid gap-4 border-t pt-3'>
-                  <div className='space-y-2'>
-                    <Label htmlFor='mn-model'>Model utama</Label>
-                    <ModelInput
-                      id='mn-model'
-                      value={mnModel}
-                      onChange={setMnModel}
-                      models={models}
-                    />
-                  </div>
-                  <div className='space-y-2'>
-                    <Label htmlFor='mn-model-mata'>Model vision</Label>
-                    <ModelInput
-                      id='mn-model-mata'
-                      value={mnModelMata}
-                      onChange={setMnModelMata}
-                      models={models}
-                    />
-                  </div>
-                  <p className='text-muted-foreground flex items-center gap-1.5 text-xs'>
-                    <FileUp className='size-3.5' /> Kosongkan untuk memakai nilai
-                    dari Pengaturan.
-                  </p>
-                </div>
               </CardContent>
             </Card>
           </div>

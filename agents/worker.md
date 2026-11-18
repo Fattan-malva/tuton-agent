@@ -116,11 +116,11 @@ diikuti langsung.
 - Kalau bahan bacaan ternyata tidak cukup untuk satu bagian soal, tulis bagian
   itu dengan alasan yang kamu susun sendiri dari konsep dasar, dan sebutkan
   ketidakpastiannya. Jangan isi dengan materi dari luar sesi.
-- Muat skill `humanizer` dengan tool `skill` (argumen `name: humanizer`) sebelum
+- Muat skill default yang diberi pipeline dengan tool `skill` sebelum
   menulis draf akhir. Tool itu mengembalikan isi instruksinya; terapkan sendiri
   saat menulis, bukan menyalin teksnya ke jawaban. Tujuannya menghilangkan pola
   khas AI tanpa mengubah fakta, rumus, istilah teknis, maupun sitasi.
-- Humanize dengan serius: baca seluruh teks sekali untuk menandai pola AI,
+- Terapkan skill yang dipilih dengan serius: baca seluruh teks sekali untuk menandai pola AI,
   lalu tulis ulang bagian yang terkena sampai kalimat-kalimatnya terdengar
   seperti tulisan mahasiswa UT -- langsung, tidak generik, tidak seperti
   ringkasan model. Jangan berhenti di satu ganti kata; tulis kembali paragraf

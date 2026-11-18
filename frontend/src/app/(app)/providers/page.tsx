@@ -233,8 +233,8 @@ export default function ProvidersPage() {
           <CardHeader className='px-5'>
             <CardTitle className='text-base'>Model per agent</CardTitle>
             <CardDescription>
-              Kosongkan untuk memakai PRIMARY_MODEL/VISION_MODEL. Vision wajib
-              model yang bisa membaca gambar.
+              Setiap agent butuh model; vision wajib model yang bisa membaca
+              gambar. Tidak ada model global atau model cadangan.
             </CardDescription>
           </CardHeader>
           <CardContent className='space-y-4 px-5'>

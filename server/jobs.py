@@ -17,6 +17,7 @@ from tuton import config
 from tuton import courses
 from tuton import moodle
 from tuton import pipeline
+from tuton import results
 from tuton import templates
 
 
@@ -84,6 +85,7 @@ class Job:
         self.error = ""
         self.hasil: dict = {}
         self.cancel_event = threading.Event()
+        self.pause_event = threading.Event()
         self.event_seq = 0
         self.dibuat = time.time()
         with config.scope(**self.scope_args):
@@ -231,6 +233,38 @@ class JobManager:
             job.push_status("stopping")
         return True
 
+    def pause(self, jid: str) -> bool:
+        """Jeda job berjalan; agent berhenti di titik `_cek_dibatalkan` berikutnya."""
+        with self.lock:
+            job = self.jobs.get(jid)
+        if job is None or job.status not in {"running"}:
+            return False
+        job.pause_event.set()
+        job.push_status("paused")
+        job.reporter({"level": "warn", "stage": "pause", "msg": "Job dijeda."})
+        return True
+
+    def resume(self, jid: str) -> bool:
+        with self.lock:
+            job = self.jobs.get(jid)
+        if job is None or job.status != "paused":
+            return False
+        job.pause_event.clear()
+        job.push_status("running")
+        job.reporter({"level": "info", "stage": "resume", "msg": "Job dilanjutkan."})
+        return True
+
+    def retry(self, jid: str) -> "Job | None":
+        """Antrekan ulang job yang sudah berhenti dengan parameter yang sama."""
+        with self.lock:
+            lama = self.jobs.get(jid)
+        if lama is None or lama.status in {"queued", "running", "paused", "stopping"}:
+            return None
+        return self.submit(
+            lama.kind, dict(lama.params), lama.slug, lama.sesi,
+            user=lama.user, scope_args=lama.scope_args,
+        )
+
     def hapus(self, jid: str) -> tuple[bool, str]:
         """Hapus satu job dari daftar beserta folder kerjanya.
 
@@ -261,7 +295,15 @@ class JobManager:
         pesan = ""
         if not dipakai_lain:
             with config.scope(**job.scope_args):
-                pesan = _hapus_folder_sesi(job.slug, job.sesi)
+                try:
+                    results.hapus(job.slug, f"sesi-{job.sesi}")
+                except ValueError as exc:
+                    # Job lama tanpa metadata hasil tetap harus bisa dibersihkan
+                    # dari disk; laporkan kegagalan remote tanpa menyisakan job.
+                    pesan = str(exc)
+                    pesan_lokal = _hapus_folder_sesi(job.slug, job.sesi)
+                    if pesan_lokal:
+                        pesan = f"{pesan}; {pesan_lokal}"
         return True, pesan
 
     def _finish_stopped(self, job: Job) -> None:
@@ -275,16 +317,6 @@ class JobManager:
             job.cond.notify_all()
 
     # ----------------------------------------------------------------- run
-
-    @staticmethod
-    def _model_utama(params: dict) -> str | None:
-        # Hanya pilihan eksplisit dari form. Default .env/runtime dibiarkan
-        # kosong supaya model per agent di runtime/runtime.json tetap berlaku.
-        return params.get("model") or None
-
-    @staticmethod
-    def _model_mata(params: dict) -> str | None:
-        return params.get("model_mata") or None
 
     def _run(self, job: Job) -> None:
         template = templates.resolve(job.user_id, job.params.get("template_id"))
@@ -304,13 +336,12 @@ class JobManager:
             }
             pipe = pipeline.Pipeline(
                 mk, int(job.params.get("sesi", 1)),
-                model_utama=self._model_utama(job.params),
-                model_mata=self._model_mata(job.params),
                 dengan_gambar=not job.params.get("tanpa_gambar", False),
                 tanpa_docx=bool(job.params.get("tanpa_docx", False)),
                 reporter=job.reporter,
                 manual=manual,
                 cancel_event=job.cancel_event,
+                pause_event=job.pause_event,
                 template_id=template["id"],
             )
             hasil = pipe.jalankan()
@@ -324,12 +355,11 @@ class JobManager:
                 raise pipeline.PipelineGagal("Mata kuliah tidak ditemukan di akun.")
             pipe = pipeline.Pipeline(
                 mk, int(job.params.get("sesi")),
-                model_utama=self._model_utama(job.params),
-                model_mata=self._model_mata(job.params),
                 dengan_gambar=not job.params.get("tanpa_gambar", False),
                 tanpa_docx=bool(job.params.get("tanpa_docx", False)),
                 reporter=job.reporter,
                 cancel_event=job.cancel_event,
+                pause_event=job.pause_event,
                 # Jenis yang dipilih di form run Moodle: "" (otomatis)
                 # berarti kerjakan seluruh soal sesi apa adanya.
                 jenis=job.params.get("jenis", ""),

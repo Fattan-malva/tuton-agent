@@ -35,6 +35,7 @@ from tuton import moodle
 from tuton import reader as reader_mod
 from tuton import runtime_config
 from tuton import supabase
+from tuton import skills
 from tuton.courses import Aktivitas, MataKuliah, Sesi
 
 
@@ -80,24 +81,6 @@ class HasilAgent:
             return f"{dasar} -- {self.galat_provider}"
         return dasar
 
-
-# Model yang sudah menolak permintaan selama proses ini berjalan. Diperiksa
-# sebelum memanggil agent, supaya tahap berikutnya tidak membuang 8-15 detik
-# (dan satu putaran percobaan ulang) untuk provider yang jelas sedang habis.
-_MODEL_DITOLAK: set[str] = set()
-
-def _urutkan_model(utama: str, cadangan: list[str]) -> list[str]:
-    """Model yang akan dicoba, berurutan, tanpa duplikat, tanpa yang ditolak."""
-    urutan: list[str] = []
-    for m in [utama, *cadangan]:
-        m = (m or "").strip()
-        if m and m not in urutan:
-            urutan.append(m)
-    hidup = [m for m in urutan if m not in _MODEL_DITOLAK]
-    # Kalau semuanya sudah tercatat ditolak, jangan mengembalikan daftar kosong:
-    # lebih baik mencoba sekali lagi dan melihat galatnya daripada berhenti
-    # tanpa panggilan sama sekali.
-    return hidup or urutan
 
 
 # ------------------------------------------------- penampil proses agent
@@ -244,7 +227,6 @@ def panggil_agent(
         stderr = hasil.galat
         if hasil.ditolak:
             galat = hasil.galat
-            _MODEL_DITOLAK.add(model)
             print(
                 f"      ! model {model} menolak permintaan: {galat}",
                 file=sys.stderr, flush=True,
@@ -273,6 +255,27 @@ def _isi_cukup(berkas: Path) -> bool:
         return False
 
 
+def _transkrip_berisi(berkas: Path, kerangka: str) -> bool:
+    """True kalau agent vision benar-benar menulis isi, bukan cuma kop.
+
+    `_transkrip_gambar` menanam kop ke berkas hasil sebelum agent dipanggil.
+    Kalau only `is_file()` yang dicek, berkas berkop tanpa isi dianggap sukses
+    dan pipeline lanjut menulis jawaban "soal tidak tersedia".
+    """
+    try:
+        isi = berkas.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    sisa = isi.replace(kerangka, "", 1).strip()
+    baris = [
+        b.strip() for b in sisa.splitlines()
+        if b.strip()
+        and not b.startswith("Berkas gambar:")
+        and b.upper() != "SELESAI"
+    ]
+    return len(" ".join(baris)) >= 20
+
+
 def panggil_agent_bertahap(
     *,
     nama: str,
@@ -286,19 +289,17 @@ def panggil_agent_bertahap(
     reporter: "callable[[dict], None] | None" = None,
     stage: str = "",
     cancel_event: threading.Event | None = None,
-    model_cadangan: list[str] | None = None,
 ) -> HasilAgent:
     """Panggil agent, ulang bila gagal atau berkas hasilnya tidak muncul.
 
     Kegagalan yang paling sering bukan error, melainkan model yang berhenti
     di tengah jalan. Karena itu berkas hasil ikut diperiksa: ada agent yang
-    keluar dengan kode 0 tanpa menulis apa pun.
+    keluar dengan kode 0 tanpa menulis apa pun. Rangkaian percobaan dibatasi
+    `config.TIMEOUT_AGENT_TOTAL_DETIK`.
 
-    Kegagalan kedua -- dan yang membuat satu sesi gagal total -- adalah
-    provider model yang menolak semua permintaan ("Free usage limit reached",
-    429). Untuk yang satu itu tidak ada gunanya mengulang model yang sama,
-    jadi setelah model utama ditolak, `model_cadangan` dicoba berurutan.
-    Seluruh rangkaian itu dibatasi `config.TIMEOUT_AGENT_TOTAL_DETIK`.
+    Model ditolak provider (kuota habis, model tidak diizinkan, 429) dilaporkan
+    apa adanya: model agent dipilih per agent di menu Provider, jadi angka itu
+    harus diperbaiki di sana, bukan diganti diam-diam di tengah job.
 
     Berkas yang sudah berisi dianggap cukup, walau model tidak mengakhiri
     keluarannya dengan `SELESAI`. Alasannya: `SELESAI` adalah penutup yang
@@ -315,115 +316,83 @@ def panggil_agent_bertahap(
     """
     percobaan = max(1, config.MAX_Coba_AGENT)
     terakhir: HasilAgent | None = None
-    antre = _urutkan_model(model, model_cadangan or [])
     batas_total = config.TIMEOUT_AGENT_TOTAL_DETIK
     mulai_total = time.monotonic()
-    dipakai: set[str] = set()
 
-    for urutan, model_ini in enumerate(antre):
-        dipakai.add(model_ini)
-        if urutan:
-            sisa = batas_total - (time.monotonic() - mulai_total)
-            if sisa < 120:
-                print(
-                    f"    ! anggaran waktu habis sebelum model cadangan "
-                    f"{model_ini} dicoba",
-                    file=sys.stderr,
-                )
-                break
-            print(
-                f"    ! {label or nama}: beralih ke model cadangan {model_ini}",
-                file=sys.stderr, flush=True,
-            )
-
-        for ke in range(1, percobaan + 1):
-            if cancel_event and cancel_event.is_set():
-                raise PipelineDibatalkan("Job dihentikan pengguna.")
-            if ke > 1:
-                if cancel_event:
-                    if cancel_event.wait(3):
-                        raise PipelineDibatalkan("Job dihentikan pengguna.")
-                else:
-                    time.sleep(3)
-            sisa = batas_total - (time.monotonic() - mulai_total)
-            if sisa <= 0:
-                return terakhir or HasilAgent(
-                    perintah=[], selesai=False, stdout="", kode=-1, durasi=0.0,
-                    stderr="Anggaran waktu agent habis.", model=model_ini,
-                )
-            hasil = panggil_agent(
-                nama=nama, prompt=prompt, model=model_ini, berkas=berkas, cwd=cwd,
-                diam=diam, reporter=reporter, stage=stage,
-                cancel_event=cancel_event,
-                waktu_maks=min(config.TIMEOUT_AGENT_DETIK, int(sisa)),
-            )
-            terakhir = hasil
-
-            # Model tanpa tool call yang baik kadang menulis seluruh hasil di
-            # jawaban akhir, bukan ke berkas. Selamatkan hasilnya daripada
-            # membuang satu putaran percobaan ulang.
-            if (
-                hasil_wajib is not None
-                and hasil.selesai
-                and not hasil_wajib.is_file()
-                and len(hasil.stdout.strip()) >= config.MIN_ISI_HASIL
-            ):
-                hasil_wajib.parent.mkdir(parents=True, exist_ok=True)
-                hasil_wajib.write_text(hasil.stdout.strip() + "\n", encoding="utf-8")
-                print(
-                    f"    ! {label or nama}: hasil ditulis dari jawaban akhir model",
-                    file=sys.stderr,
-                )
-
-            if hasil_wajib is None:
-                lengkap = hasil.selesai
-            elif hasil.selesai:
-                lengkap = hasil_wajib.is_file()
+    for ke in range(1, percobaan + 1):
+        if cancel_event and cancel_event.is_set():
+            raise PipelineDibatalkan("Job dihentikan pengguna.")
+        if ke > 1:
+            if cancel_event:
+                if cancel_event.wait(3):
+                    raise PipelineDibatalkan("Job dihentikan pengguna.")
             else:
-                lengkap = _isi_cukup(hasil_wajib)
+                time.sleep(3)
+        sisa = batas_total - (time.monotonic() - mulai_total)
+        if sisa <= 0:
+            return terakhir or HasilAgent(
+                perintah=[], selesai=False, stdout="", kode=-1, durasi=0.0,
+                stderr="Anggaran waktu agent habis.", model=model,
+            )
+        hasil = panggil_agent(
+            nama=nama, prompt=prompt, model=model, berkas=berkas, cwd=cwd,
+            diam=diam, reporter=reporter, stage=stage,
+            cancel_event=cancel_event,
+            waktu_maks=min(config.TIMEOUT_AGENT_DETIK, int(sisa)),
+        )
+        terakhir = hasil
 
-            if lengkap:
-                if not hasil.selesai:
-                    print(
-                        f"    ! {label or nama} tidak menutup dengan SELESAI, tapi "
-                        f"{hasil_wajib.name} sudah berisi. Dipakai apa adanya.",
-                        file=sys.stderr,
-                    )
-                return hasil
-
+        # Model tanpa tool call yang baik kadang menulis seluruh hasil di
+        # jawaban akhir, bukan ke berkas. Selamatkan hasilnya daripada
+        # membuang satu putaran percobaan ulang.
+        if (
+            hasil_wajib is not None
+            and hasil.selesai
+            and not hasil_wajib.is_file()
+            and len(hasil.stdout.strip()) >= config.MIN_ISI_HASIL
+        ):
+            hasil_wajib.parent.mkdir(parents=True, exist_ok=True)
+            hasil_wajib.write_text(hasil.stdout.strip() + "\n", encoding="utf-8")
             print(
-                f"    ! {label or nama} percobaan {ke}/{percobaan} belum selesai "
-                f"({hasil.ringkas})",
+                f"    ! {label or nama}: hasil ditulis dari jawaban akhir model",
                 file=sys.stderr,
             )
-            if hasil.stderr.strip():
-                baris = hasil.stderr.strip().splitlines()[-2:]
-                for b in baris:
-                    print(f"      {b[:160]}", file=sys.stderr)
 
-            # Model ditolak provider: percobaan ulang di model yang sama pasti
-            # berakhir sama. Pindah ke model cadangan sekarang, bukan setelah
-            # membuang satu putaran lagi.
-            if hasil.model_ditolak:
-                break
+        if hasil_wajib is None:
+            lengkap = hasil.selesai
+        elif hasil.selesai:
+            lengkap = hasil_wajib.is_file()
+        else:
+            lengkap = _isi_cukup(hasil_wajib)
 
-        if terakhir is not None and terakhir.model_ditolak:
-            continue
-        # Gagal bukan karena provider (mis. model berhenti di tengah):
-        # model berikutnya belum tentu lebih baik, jadi berhenti di sini.
-        break
+        if lengkap:
+            if not hasil.selesai:
+                print(
+                    f"    ! {label or nama} tidak menutup dengan SELESAI, tapi "
+                    f"{hasil_wajib.name} sudah berisi. Dipakai apa adanya.",
+                    file=sys.stderr,
+                )
+            return hasil
 
-    assert terakhir is not None
-    if terakhir.model_ditolak and len(dipakai) > 1:
         print(
-            f"    ! {label or nama}: semua model yang dicoba menolak permintaan "
-            f"({', '.join(sorted(dipakai))})",
+            f"    ! {label or nama} percobaan {ke}/{percobaan} belum selesai "
+            f"({hasil.ringkas})",
             file=sys.stderr,
         )
-        terakhir.stderr += (
-            "\nSemua model ditolak provider. Periksa kuota/API key model di "
-            "menu Pengaturan, atau tambahkan model lain ke FALLBACK_MODELS."
-        )
+        if hasil.stderr.strip():
+            baris = hasil.stderr.strip().splitlines()[-2:]
+            for b in baris:
+                print(f"      {b[:160]}", file=sys.stderr)
+
+        # Model ditolak provider: percobaan ulang di model yang sama pasti
+        # berakhir sama, jadi berhenti dan laporkan apa adanya.
+        if hasil.model_ditolak:
+            terakhir.stderr += (
+                "\nModel ditolak provider. Periksa kuota/API key dan model "
+                "agent di menu Provider."
+            )
+            break
+
     return terakhir
 
 
@@ -455,38 +424,17 @@ class Pipeline:
         matkul: MataKuliah,
         nomor_sesi: int,
         *,
-        model_utama: str | None = None,
-        model_mata: str | None = None,
-        model_cadangan: list[str] | None = None,
-        model_cadangan_mata: list[str] | None = None,
         dengan_gambar: bool = True,
         tanpa_docx: bool = False,
         reporter: "callable[[dict], None] | None" = None,
         manual: "dict | None" = None,
         cancel_event: threading.Event | None = None,
+        pause_event: threading.Event | None = None,
         jenis: str = "",
         template_id: str = "akademik-standar",
     ) -> None:
         self.matkul = matkul
         self.nomor = nomor_sesi
-        self._utama_dipilih = bool(model_utama)
-        self._mata_dipilih = bool(model_mata)
-        self.model_utama = model_utama or config.PRIMARY_MODEL
-        self.model_mata = model_mata or config.VISION_MODEL
-        # Model cadangan dipakai begitu model utama ditolak provider (kuota
-        # habis / model tidak diizinkan), jadi satu sesi tidak gagal total
-        # hanya karena satu provider sedang menolak. Model yang sama dengan
-        # model utama dibuang supaya tidak dicoba dua kali.
-        cadangan = (
-            list(model_cadangan) if model_cadangan is not None
-            else list(config.FALLBACK_MODELS)
-        )
-        cadangan_mata = (
-            list(model_cadangan_mata) if model_cadangan_mata is not None
-            else (list(config.VISION_FALLBACK_MODELS) or cadangan)
-        )
-        self.model_cadangan = [m for m in cadangan if m != self.model_utama]
-        self.model_cadangan_mata = [m for m in cadangan_mata if m != self.model_mata]
         self.dengan_gambar = dengan_gambar
         self.tanpa_docx = tanpa_docx
         # `reporter` adalah saluran peristiwa sampingan untuk UI. `None`
@@ -494,6 +442,10 @@ class Pipeline:
         # seperti sebelum hook ini ada.
         self.reporter = reporter
         self.cancel_event = cancel_event
+        # `pause_event` (set = dijeda) hanya diperiksa di antara panggilan
+        # agent, bukan di tengah satu panggilan model: satu langkah agent tidak
+        # bisa dilanjutkan dari tengah tanpa menyimpan percakapan.
+        self.pause_event = pause_event
         # `manual` mengalihkan pipeline ke mode input soal dari pengguna
         # (tempel teks + unggah berkas) tanpa menyentuh Moodle. `None`
         # berarti jalur scrape biasa.
@@ -514,18 +466,32 @@ class Pipeline:
         self.hasil = HasilSesi(matkul=matkul, sesi=Sesi(nomor_sesi, nomor_sesi))
 
     def _model_agent(self, nama: str) -> str:
-        """Model satu agent: pilihan form, lalu runtime/runtime.json, lalu default."""
-        if nama == config.AGENT_VISION:
-            if self._mata_dipilih:
-                return self.model_mata
-            return runtime_config.model_agent(nama, self.model_mata)
-        if self._utama_dipilih:
-            return self.model_utama
-        return runtime_config.model_agent(nama, self.model_utama)
+        """Model agent dari pilihan per agent di menu Provider."""
+        nilai = runtime_config.model_agent(nama)
+        if nilai:
+            return nilai
+        raise PipelineGagal(
+            f"Model untuk agent `{nama}` belum dipilih. Atur di menu Provider."
+        )
 
     # -------------------------------------------------------------- utilitas
 
     def _cek_dibatalkan(self) -> None:
+        # Pause diperiksa di titik ini karena semua tahap lewat `_log`:
+        # job berhenti di antara dua langkah agent, tidak di tengah satu
+        # permintaan model, jadi tidak ada percakapan yang perlu disimpan.
+        kabar = False
+        while self.pause_event is not None and self.pause_event.is_set():
+            if self.cancel_event and self.cancel_event.is_set():
+                raise PipelineDibatalkan("Job dihentikan pengguna.")
+            if not kabar:
+                kabar = True
+                if self.reporter is not None:
+                    self.reporter(
+                        {"level": "warn", "stage": self._tahap, "agent": self._agent,
+                         "msg": "Job dijeda. Lanjutkan dari menu Log Live."}
+                    )
+            time.sleep(1)
         if self.cancel_event and self.cancel_event.is_set():
             raise PipelineDibatalkan("Job dihentikan pengguna.")
 
@@ -637,7 +603,7 @@ class Pipeline:
                     "Semua halaman soal gagal dibaca atau kosong; peta dan jawaban "
                     "tidak dibuat. Periksa koneksi Moodle serta _log."
                 )
-            transkrip_soal = self._tahap_gambar_soal(gambar_soal)
+            transkrip_soal = self._tahap_gambar_soal(gambar_soal, soal_teks)
             self._tahap_peta_sesi(transkrip_soal, soal_teks)
             transkrip = transkrip_soal + self._tahap_bahan_ajar()
             self.hasil.transkrip = transkrip
@@ -733,6 +699,13 @@ class Pipeline:
                     transkrip.append(t)
         else:
             self._log("  [1/5] Tanpa transkripsi gambar")
+        if gambar and self.dengan_gambar and not transkrip and not pertanyaan:
+            raise PipelineGagal(
+                "Soal hanya berupa gambar dan transkripsi vision-nya gagal, "
+                "jadi jawaban tidak ditulis. Periksa model agent vision di "
+                "menu Provider (harus mendukung gambar) dan log "
+                f"{self.dirs['log']}/vision-soal-*.log."
+            )
         self.hasil.transkrip = transkrip
 
         self._tahap = "2/5 peta"
@@ -870,10 +843,17 @@ class Pipeline:
         ]
         for berkas in kandidat:
             try:
-                if berkas.is_file() and berkas.stat().st_size > 4096:
-                    return berkas
+                if not berkas.is_file() or berkas.stat().st_size <= 4096:
+                    continue
             except OSError:
                 continue
+            # Penghapusan versi lama meninggalkan DOCX lokal tanpa metadata.
+            user = config.current_user()
+            if user and supabase.aktif() and not supabase.result_exists(
+                user, self.matkul.slug, f"sesi-{self.nomor}", berkas.name
+            ):
+                continue
+            return berkas
         return None
 
     def _sudah_selesai(self) -> bool:
@@ -962,7 +942,7 @@ class Pipeline:
 
     # ------------------------------------------------------- 5. peta soal
 
-    def _tahap_gambar_soal(self, gambar: list[Path]) -> list[Path]:
+    def _tahap_gambar_soal(self, gambar: list[Path], teks_soal: str = "") -> list[Path]:
         """Transkripsikan gambar soal dengan model penglihatan.
 
         Dijalankan sebelum peta soal, bukan sesudahnya, karena peta itulah yang
@@ -982,14 +962,35 @@ class Pipeline:
             if t:
                 transkrip.append(t)
 
-        if transkrip:
+        if len(transkrip) == len(gambar):
             self._log(f"  {len(transkrip)}/{len(gambar)} gambar soal ditranskripsikan")
-        else:
+            return transkrip
+        if transkrip:
             self.hasil.gagal.append(
-                "Gambar soal gagal ditranskripsikan, soalnya kemungkinan "
-                "hanya ada di dalam gambar. Lihat _log/vision-soal-*.log."
+                f"{len(gambar) - len(transkrip)} dari {len(gambar)} gambar soal "
+                "gagal ditranskripsikan; sebagian soal mungkin tidak terbaca."
             )
-        return transkrip
+            self._log(
+                f"  {len(transkrip)}/{len(gambar)} gambar soal ditranskripsikan "
+                "(sebagian gagal)"
+            )
+            return transkrip
+        # Tanpa transkripsi, worker hanya menerima gambar biner yang tidak bisa
+        # dibacanya dan menjawab "soal tidak tersedia". Lebih baik gagal di sini
+        # dengan sebab yang jelas. Tidak ada OCR: satu-satunya pembaca gambar
+        # adalah agent vision, jadi kegagalannya harus terlihat.
+        self.hasil.gagal.append(
+            "Gambar soal gagal ditranskripsikan, soalnya kemungkinan "
+            "hanya ada di dalam gambar. Lihat _log/vision-soal-*.log."
+        )
+        if not str(teks_soal or "").strip():
+            raise PipelineGagal(
+                "Soal sesi ini hanya berupa gambar dan transkripsi vision-nya "
+                "gagal, jadi jawaban tidak ditulis. Periksa model agent vision "
+                "di menu Provider (harus mendukung gambar) dan log "
+                f"{self.dirs['log']}/vision-soal-*.log."
+            )
+        return []
 
     def _tahap_peta_sesi(
         self, transkrip_soal: list[Path], soal_teks: str = ""
@@ -1083,7 +1084,6 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
             reporter=self.reporter,
             stage=self._tahap,
             cancel_event=self.cancel_event,
-            model_cadangan=self.model_cadangan,
         )
         self._simpan_log("scrapper.log", hasil.stdout + "\n\n--- STDERR ---\n" + hasil.stderr)
 
@@ -1097,8 +1097,8 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
             self._log(f"        ! peta soal gagal ({hasil.ringkas})")
             if hasil.galat_provider:
                 self._log(
-                    "        model utama ditolak provider; periksa kuota di "
-                    "Pengaturan atau isi FALLBACK_MODELS"
+                    "        model agent ditolak provider; periksa kuota dan "
+                    "pilihan model di menu Provider"
                 )
             return None
 
@@ -1234,21 +1234,18 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
             # Montase memuat beberapa halaman sekaligus, jadi transkripnya
             # ditambahkan ke berkas yang sama, bukan menimpanya.
             sementara = self.dirs["bahan"] / f".tmp-{stem}.md"
-            sementara.write_text(
+            kerangka = (
                 f"{judul}\n\n"
-                f"Berkas gambar: {gambar.name} (montase beberapa halaman)\n",
-                encoding="utf-8",
+                f"Berkas gambar: {gambar.name} (montase beberapa halaman)\n"
             )
+            sementara.write_text(kerangka, encoding="utf-8")
             file_tujuan = sementara
             gabung = True
         else:
             file_tujuan = tujuan
             gabung = False
-            file_tujuan.write_text(
-                f"{judul}\n\n"
-                f"Berkas gambar: {gambar.name}\n",
-                encoding="utf-8",
-            )
+            kerangka = f"{judul}\n\nBerkas gambar: {gambar.name}\n"
+            file_tujuan.write_text(kerangka, encoding="utf-8")
 
         prompt = (
             f"Transkripsikan isi gambar lampiran berikut ke: {file_tujuan}\n\n"
@@ -1280,13 +1277,23 @@ Jangan menempel isi jawaban mahasiswa lain ke peta mana pun.
             reporter=self.reporter,
             stage=self._tahap,
             cancel_event=self.cancel_event,
-            model_cadangan=self.model_cadangan_mata,
         )
         self._simpan_log(
             f"vision-{stem}.log", hasil.stdout + "\n\n--- STDERR ---\n" + hasil.stderr
         )
 
-        if not file_tujuan.is_file():
+        # Berkas hasil selalu ada karena kop ditanam lebih dulu. Yang menentukan
+        # sukses bukan keberadaannya, melainkan isi yang ditulis agent. Model
+        # yang ditolak provider tidak perlu dicoba lagi di gambar berikutnya.
+        if hasil.model_ditolak or not _transkrip_berisi(file_tujuan, kerangka):
+            sebab = (
+                "model ditolak provider" if hasil.model_ditolak
+                else "isi transkrip kosong"
+            )
+            self._log(
+                f"        ! {gambar.name} gagal ditranskripsikan ({sebab}); "
+                f"lihat {self.dirs['log']}/vision-{stem}.log"
+            )
             return None
 
         if gabung:
@@ -1422,7 +1429,6 @@ akun yang tidak boleh ikut terbawa ke berkas yang diserahkan ke tutor.
             reporter=self.reporter,
             stage=self._tahap,
             cancel_event=self.cancel_event,
-            model_cadangan=self.model_cadangan,
         )
         self._simpan_log(
             "research.log", hasil.stdout + "\n\n--- STDERR ---\n" + hasil.stderr
@@ -1770,7 +1776,7 @@ Struktur jawaban yang diminta dokumen akhir:
   Ketiga" berantai, bold di tiap label, em dash, kalimat penutup yang
   mengulang poin, dan pembuka formal yang berulang ("Secara garis besar",
   "Dengan demikian", "Perlu dicatat bahwa").
-- Pakai skill `humanizer` dalam mode File pada berkas jawaban ini.
+- {skills.prompt(config.current_user())}
 """
 
         if self.manual is None:
@@ -1791,7 +1797,6 @@ Struktur jawaban yang diminta dokumen akhir:
             reporter=self.reporter,
             stage=self._tahap,
             cancel_event=self.cancel_event,
-            model_cadangan=self.model_cadangan,
         )
         self._simpan_log(
             "worker.log", hasil.stdout + "\n\n--- STDERR ---\n" + hasil.stderr

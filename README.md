@@ -90,17 +90,12 @@ Runtime agent berjalan di dalam aplikasi (Python), memakai API
    **Tes & ambil model** untuk mengambil daftar model dari `/v1/models`.
 3. Simpan. Di kartu **Model per agent**, pilih model untuk `scrapper`,
    `research`, `worker`, dan `vision` (vision wajib model yang bisa membaca
-   gambar). Biarkan kosong untuk memakai `PRIMARY_MODEL`/`VISION_MODEL` dari
-   `.env`.
+   gambar). Tidak ada model global: agent tanpa model tidak bisa jalan.
 
 Provider, API key, dan model agent disimpan di `runtime/runtime.json`
 (mode `0600`, masuk `.gitignore`). API key tidak pernah dikirim balik ke
 browser; saat mengubah provider, kosongkan kolom API key untuk mempertahankan
 nilai lama.
-
-Model cadangan di `FALLBACK_MODELS` (dipisah koma, bentuk
-`provider/model`) dicoba otomatis kalau provider menolak model utama — kuota
-habis, model tidak tersedia, atau autentikasi gagal.
 
 ## Setup Project
 
@@ -164,7 +159,7 @@ py .\main.py --matkul "Aljabar Linear Elementer" --sesi 4
 ```powershell
 py .\main.py --daftar           # tampilkan semua course + sesi yang punya soal
 py .\main.py --tanpa-docx       # hasilkan jawaban.md saja
-py .\main.py --tanpa-gambar     # lewati transkripsi gambar oleh model vision
+py .\main.py --tanpa-gambar     # lewati transkripsi gambar oleh agent vision
 runner.bat --semua --sesi 4     # sama seperti di atas via batch
 ```
 

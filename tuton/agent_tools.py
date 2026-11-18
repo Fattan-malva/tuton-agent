@@ -14,6 +14,7 @@ import requests
 
 from tuton import config
 from tuton import html2md
+from tuton import skills
 
 MAKS_HASIL = 16_000
 MAKS_BACA = 200_000
@@ -151,17 +152,15 @@ def _arg(args: dict, *nama: str, bawaan: str = "") -> str:
 
 
 def _skill(nama: str) -> str:
-    nama = re.sub(r"[^A-Za-z0-9_.-]+", "", nama or "")
-    if not nama or "/" in nama or ".." in nama:
-        raise ValueError("Nama skill tidak sah.")
-    path = config.SKILLS_DIR / nama / "SKILL.md"
-    if not path.is_file():
-        skill_dir = config.SKILLS_DIR
-        tersedia = sorted(p.parent.name for p in skill_dir.glob("*/SKILL.md"))
+    # Salinan skill milik akun menimpa bawaan; jalur CLI tanpa login membaca
+    # berkas `skills/` apa adanya.
+    try:
+        return _potong(skills.isi(config.current_user(), nama), MAKS_BACA)
+    except ValueError:
+        tersedia = [x["name"] for x in skills.daftar(config.current_user())]
         raise ValueError(
             f"Skill `{nama}` tidak ada. Yang tersedia: {', '.join(tersedia) or '-'}."
         )
-    return _potong(path.read_text(encoding="utf-8", errors="replace"), MAKS_BACA)
 
 
 def _webfetch(url: str) -> str:
@@ -196,6 +195,12 @@ def _grep(pattern: str, include: str) -> str:
     except re.error as exc:
         raise ValueError(f"Regex tidak sah: {exc}") from exc
     pola = include or "*"
+    if Path(pola).is_absolute():
+        # Sama seperti `glob`: pola absolut tidak sah untuk rglob.
+        try:
+            pola = str(Path(pola).relative_to(config.BASE_DIR.resolve()))
+        except ValueError:
+            raise ValueError("Pola grep harus berada di folder proyek.")
     hasil: list[str] = []
     for path in config.BASE_DIR.rglob(pola):
         if not path.is_file() or ".git" in path.parts or "node_modules" in path.parts:
@@ -251,6 +256,13 @@ def jalankan(nama: str, args: dict, cwd: Path) -> str:
             return f"Tersunting: {path.relative_to(cwd.resolve())}"
         if nama == "glob":
             pola = _arg(args, "pattern") or "**/*"
+            # Model kadang mengirim cwd absolut; pathlib.Path.glob hanya
+            # menerima pola relatif. Normalisasi ke cwd sebelum globbing.
+            if Path(pola).is_absolute():
+                try:
+                    pola = str(Path(pola).relative_to(cwd.resolve()))
+                except ValueError:
+                    raise ValueError("Pola glob harus berada di folder kerja agent.")
             hasil = []
             for p in cwd.glob(pola):
                 if not p.is_file() or ".git" in p.parts or "node_modules" in p.parts:

@@ -19,6 +19,7 @@ TABLE = "user_identities"
 PROVIDER_TABLE = "user_providers"
 RESULT_TABLE = "user_results"
 TEMPLATE_TABLE = "user_templates"
+SKILL_TABLE = "user_skills"
 STORAGE_BUCKET = config.SUPABASE_BUCKET_RESULTS
 _IDENTITAS = ("nama", "nim", "semester", "ut_daerah", "prodi")
 
@@ -266,6 +267,97 @@ def template_save(user_id: str, template: dict) -> None:
     requests.post(_url(TEMPLATE_TABLE), json=values, headers=_headers("resolution=merge-duplicates"), timeout=10).raise_for_status()
 
 
+def skill_list(user_id: str) -> list[dict]:
+    """Salinan skill milik akun (menimpa bawaan dengan nama yang sama)."""
+    if not aktif() or not user_id:
+        return []
+    try:
+        r = requests.get(
+            _url(SKILL_TABLE),
+            params={"select": "name,content,updated_at", "user_id": f"eq.{user_id}"},
+            headers=_headers(),
+            timeout=10,
+        )
+        rows = r.json() if r.ok else []
+        return [x for x in rows if isinstance(x, dict)] if isinstance(rows, list) else []
+    except (requests.RequestException, ValueError):
+        return []
+
+
+def skill_get(user_id: str, nama: str) -> dict | None:
+    if not aktif() or not user_id:
+        return None
+    try:
+        r = requests.get(
+            _url(SKILL_TABLE),
+            params={"select": "name,content", "user_id": f"eq.{user_id}",
+                    "name": f"eq.{nama}", "limit": "1"},
+            headers=_headers(),
+            timeout=10,
+        )
+        rows = r.json() if r.ok else []
+        return rows[0] if isinstance(rows, list) and rows else None
+    except (requests.RequestException, ValueError):
+        return None
+
+
+def skill_save(user_id: str, nama: str, content: str) -> None:
+    if not aktif() or not user_id:
+        raise ValueError("Supabase belum dikonfigurasi.")
+    r = requests.post(
+        _url(SKILL_TABLE),
+        params={"on_conflict": "user_id,name"},
+        headers=_headers("resolution=merge-duplicates,return=minimal"),
+        json={"user_id": user_id, "name": nama, "content": content},
+        timeout=15,
+    )
+    if not r.ok:
+        raise ValueError(f"Supabase menolak penyimpanan skill ({r.status_code}): {r.text[:200]}")
+
+
+def skill_delete(user_id: str, nama: str) -> None:
+    if not aktif() or not user_id:
+        return
+    r = requests.delete(
+        _url(SKILL_TABLE),
+        params={"user_id": f"eq.{user_id}", "name": f"eq.{nama}"},
+        headers=_headers("return=minimal"),
+        timeout=15,
+    )
+    if not r.ok:
+        raise ValueError(f"Supabase menolak hapus skill ({r.status_code}): {r.text[:200]}")
+
+
+def skill_default(user_id: str) -> str:
+    if not aktif() or not user_id:
+        return ""
+    try:
+        r = requests.get(
+            _url(),
+            params={"select": "skill_default", "user_id": f"eq.{user_id}", "limit": "1"},
+            headers=_headers(),
+            timeout=10,
+        )
+        rows = r.json() if r.ok else []
+        return str(rows[0].get("skill_default") or "") if rows else ""
+    except (requests.RequestException, ValueError):
+        return ""
+
+
+def skill_set_default(user_id: str, nama: str) -> None:
+    if not aktif() or not user_id:
+        raise ValueError("Supabase belum dikonfigurasi.")
+    r = requests.post(
+        _url(),
+        params={"on_conflict": "user_id"},
+        headers=_headers("resolution=merge-duplicates,return=minimal"),
+        json={"user_id": user_id, "skill_default": nama},
+        timeout=15,
+    )
+    if not r.ok:
+        raise ValueError(f"Supabase menolak pembaruan ({r.status_code}): {r.text[:200]}")
+
+
 def providers_data(user_id: str, wajib: bool = False) -> dict:
     """Provider + model agent milik satu user, bentuknya sama dengan runtime lama.
 
@@ -429,30 +521,116 @@ def result_download(user_id: str, storage_path: str) -> bytes | None:
         return None
 
 
-def result_delete(user_id: str, slug: str, sesi: str = "", nama: str = "") -> None:
-    """Hapus metadata + objek; scope user dijamin di query/path."""
-    if not aktif() or not user_id:
-        return
+def _result_rows(params: dict[str, str]) -> list[dict]:
+    """Semua baris yang cocok, halaman demi halaman sampai kosong."""
+    rows = []
+    while True:
+        r = requests.get(
+            _url(RESULT_TABLE),
+            params={"select": "user_id,slug,sesi,nama,storage_path", **params,
+                    "order": "storage_path.asc", "limit": "1000", "offset": str(len(rows))},
+            headers=_headers(),
+            timeout=15,
+        )
+        if not r.ok:
+            raise ValueError(f"Supabase menolak pembacaan hasil ({r.status_code}): {r.text[:200]}")
+        page = r.json()
+        if not isinstance(page, list):
+            raise ValueError("Supabase mengembalikan metadata hasil tidak sah.")
+        if not page:
+            return rows
+        rows.extend(page)
+
+
+def _result_filter(user_id: str, slug: str, sesi: str = "", nama: str = "") -> dict[str, str]:
     params = {"user_id": f"eq.{user_id}", "slug": f"eq.{slug}"}
     if sesi:
         params["sesi"] = f"eq.{sesi}"
     if nama:
         params["nama"] = f"eq.{nama}"
-    rows = result_list(user_id)
-    target = [
-        x for x in rows
-        if x.get("slug") == slug
-        and (not sesi or x.get("sesi") == sesi)
-        and (not nama or x.get("nama") == nama)
-    ]
-    paths = [x.get("storage_path") for x in target if x.get("storage_path")]
+    return params
+
+
+def _result_storage_paths(prefix: str) -> set[str]:
+    """List objek di bawah prefix secara rekursif; dibutuhkan untuk objek yatim."""
+    paths = set()
+    pending = [prefix]
+    while pending:
+        folder = pending.pop()
+        offset = 0
+        while True:
+            r = requests.post(
+                f"{config.SUPABASE_URL}/storage/v1/object/list/{STORAGE_BUCKET}",
+                headers=_headers(),
+                json={"prefix": folder, "limit": 1000, "offset": offset},
+                timeout=30,
+            )
+            if not r.ok:
+                raise ValueError(f"Supabase menolak pembacaan objek hasil ({r.status_code}): {r.text[:200]}")
+            page = r.json()
+            if not isinstance(page, list):
+                raise ValueError("Supabase mengembalikan daftar objek hasil tidak sah.")
+            for item in page:
+                name = item.get("name") if isinstance(item, dict) else None
+                if not isinstance(name, str) or not name or name in {".", ".."} or "/" in name or "\\" in name:
+                    raise ValueError("Supabase mengembalikan path objek hasil tidak sah.")
+                path = f"{folder}/{name}"
+                if item.get("id") is None:
+                    pending.append(path)
+                else:
+                    paths.add(path)
+            if not page:
+                break
+            offset += len(page)
+    return paths
+
+
+def result_exists(user_id: str, slug: str, sesi: str, nama: str) -> bool:
+    """Cek metadata remote persis; gangguan Supabase tidak boleh terlihat sebagai ketiadaan."""
+    if not aktif() or not user_id:
+        raise ValueError("Supabase belum dikonfigurasi.")
+    _result_path(user_id, slug, sesi, nama)
+    rows = _result_rows(_result_filter(user_id, slug, sesi, nama))
+    return any(
+        row.get("user_id") == user_id and row.get("slug") == slug
+        and row.get("sesi") == sesi and row.get("nama") == nama
+        for row in rows
+    )
+
+
+def result_delete(user_id: str, slug: str, sesi: str = "", nama: str = "") -> None:
+    """Hapus metadata dan objek terdaftar maupun yatim, hanya dalam scope ini."""
+    if not aktif() or not user_id:
+        return
+    if not slug or any(p in {".", ".."} or "/" in p or "\\" in p for p in (user_id, slug, sesi, nama)):
+        raise ValueError("Path hasil tidak sah.")
+    params = _result_filter(user_id, slug, sesi, nama)
+    rows = _result_rows(params)
+    prefix = f"{user_id}/{slug}"
+    paths = _result_storage_paths(prefix)
+    paths.update(
+        path for row in rows
+        if isinstance((path := row.get("storage_path")), str)
+        and path.startswith(prefix + "/")
+    )
+    # shortcut: hanya objek berkedalaman layout hasil (4 bagian); objek asing
+    # lebih dalam dibiarkan, upgrade kalau layout pernah berubah.
+    paths = {
+        path for path in paths
+        if len(pp := path.split("/")) == 4
+        and pp[:2] == [user_id, slug]
+        and (not sesi or pp[2] == sesi)
+        and (not nama or pp[3] == nama)
+    }
     if paths:
-        requests.delete(
+        r = requests.delete(
             f"{config.SUPABASE_URL}/storage/v1/object/{STORAGE_BUCKET}",
             headers=_headers(),
-            json={"prefixes": paths},
+            json={"prefixes": sorted(paths)},
             timeout=30,
         )
+        if not r.ok:
+            raise ValueError(f"Supabase menolak hapus objek hasil ({r.status_code}): {r.text[:200]}")
     r = requests.delete(_url(RESULT_TABLE), params=params, headers=_headers(), timeout=15)
     if not r.ok:
         raise ValueError(f"Supabase menolak hapus metadata ({r.status_code}): {r.text[:200]}")

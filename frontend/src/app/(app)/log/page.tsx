@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import useSWR from 'swr'
-import { Copy, RefreshCw, Square, Trash2 } from 'lucide-react'
+import { Copy, Pause, Play, RefreshCw, RotateCcw, Square, Trash2 } from 'lucide-react'
 import { api, postJSON, streamUrl } from '@/lib/api'
 import type { Job, LogEvent } from '@/lib/types'
 import { cn, formatTime } from '@/lib/utils'
@@ -38,6 +38,10 @@ function LogContent() {
   const dipilih = search.get('job') || list[0]?.id || ''
   const selectedJob = list.find((j) => j.id === dipilih)
   const stoppable = selectedJob ? isLive(selectedJob.status) : false
+  const bisaJeda = selectedJob?.status === 'running'
+  const bisaLanjut = selectedJob?.status === 'paused'
+  const bisaUlang =
+    selectedJob?.status === 'error' || selectedJob?.status === 'stopped'
 
   const [lines, setLines] = useState<LogEvent[]>([])
   const [status, setStatus] = useState('siap')
@@ -148,6 +152,21 @@ function LogContent() {
     }
   }
 
+  async function aksiJob(aksi: 'pause' | 'resume' | 'retry') {
+    if (!dipilih) return
+    setMsg('')
+    try {
+      const r = await postJSON<{ job?: string }>(
+        `/api/jobs/${encodeURIComponent(dipilih)}/${aksi}`,
+        {},
+      )
+      if (aksi === 'retry' && r?.job) router.replace(`/log/?job=${encodeURIComponent(r.job)}`)
+      mutate()
+    } catch (e) {
+      setMsg((e as Error).message)
+    }
+  }
+
   async function clearLog() {
     if (!dipilih) return
     setLines([])
@@ -227,6 +246,7 @@ function LogContent() {
                       job.status === 'error' && 'bg-red-500',
                       job.status === 'stopped' && 'bg-red-400',
                       job.status === 'stopping' && 'bg-amber-500',
+                      job.status === 'paused' && 'bg-amber-400',
                     )}
                   />
                   <span className='min-w-0 flex-1'>
@@ -251,6 +271,21 @@ function LogContent() {
 
         <section className='bg-card ring-foreground/10 min-w-0 space-y-2 rounded-xl p-3 shadow-xs ring-1'>
           <div className='flex flex-wrap items-center gap-2'>
+            {bisaJeda ? (
+              <Button size='sm' variant='outline' onClick={() => aksiJob('pause')}>
+                <Pause /> Jeda job
+              </Button>
+            ) : null}
+            {bisaLanjut ? (
+              <Button size='sm' onClick={() => aksiJob('resume')}>
+                <Play /> Lanjutkan job
+              </Button>
+            ) : null}
+            {bisaUlang ? (
+              <Button size='sm' variant='outline' onClick={() => aksiJob('retry')}>
+                <RotateCcw /> Ulangi job
+              </Button>
+            ) : null}
             {stoppable ? (
               <Button
                 size='sm'

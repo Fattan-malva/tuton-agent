@@ -2,10 +2,11 @@
 
 import { useRef, useState } from 'react'
 import useSWR from 'swr'
-import { FileUp, Pencil, Trash2 } from 'lucide-react'
+import { Check, FileUp, Pencil, RotateCcw, Star, Trash2 } from 'lucide-react'
 import { api, postJSON } from '@/lib/api'
 import type { SkillInfo } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -30,6 +31,7 @@ export default function SkillsPage() {
   const [busy, setBusy] = useState(false)
   const [hapus, setHapus] = useState<string | null>(null)
   const berkas = useRef<HTMLInputElement>(null)
+  const daftar = data?.skills || []
 
   async function buka(name: string) {
     setPesan('')
@@ -58,7 +60,18 @@ export default function SkillsPage() {
   async function simpan() {
     await postJSON('/api/skills/save', { name: nama, content: isi })
     void mutate()
-    return 'Skill tersimpan.'
+    return 'Skill tersimpan untuk akun ini.'
+  }
+
+  async function jadikanDefault(name: string) {
+    setPesan('')
+    try {
+      await postJSON('/api/skills/default', { name })
+      void mutate()
+      setPesan(`Skill ${name} jadi default.`)
+    } catch (e) {
+      setPesan((e as Error).message)
+    }
   }
 
   async function hapusSkill() {
@@ -83,7 +96,7 @@ export default function SkillsPage() {
     <div className='flex flex-col gap-4'>
       <PageHeader
         title='Skill'
-        description='Instruksi tambahan yang bisa dimuat agent lewat tool `skill`. Satu folder berisi SKILL.md.'
+        description='Instruksi tambahan yang dimuat agent lewat tool `skill`. Skill default dipakai otomatis saat menulis jawaban.'
       />
 
       <div className='grid gap-4 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] lg:items-start'>
@@ -91,7 +104,7 @@ export default function SkillsPage() {
           <CardHeader className='px-4'>
             <CardTitle className='text-sm'>Daftar skill</CardTitle>
             <CardDescription className='text-xs'>
-              Klik untuk mengubah isinya.
+              Klik untuk mengubah. Perubahan hanya berlaku untuk akun ini.
             </CardDescription>
           </CardHeader>
           <CardContent className='space-y-1 px-2'>
@@ -100,23 +113,40 @@ export default function SkillsPage() {
                 <Skeleton key={i} className='h-9 w-full' />
               ))
             ) : (
-              (data?.skills || []).map((s) => (
-                <button
-                  key={s.name}
-                  type='button'
-                  onClick={() => buka(s.name)}
-                  aria-pressed={nama === s.name}
-                  className={cn(
-                    'hover:bg-accent/60 flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-start text-sm transition-colors',
-                    nama === s.name && 'bg-accent font-medium',
+              daftar.map((s) => (
+                <div key={s.name} className='flex items-center gap-1'>
+                  <button
+                    type='button'
+                    onClick={() => buka(s.name)}
+                    aria-pressed={nama === s.name}
+                    className={cn(
+                      'hover:bg-accent/60 flex min-w-0 flex-1 items-center justify-between gap-2 rounded-md px-2 py-2 text-start text-sm transition-colors',
+                      nama === s.name && 'bg-accent font-medium',
+                    )}
+                  >
+                    <span className='truncate font-mono text-xs'>{s.name}</span>
+                    {s.default ? (
+                      <Badge className='shrink-0'>Default</Badge>
+                    ) : (
+                      <Pencil className='text-muted-foreground size-3.5 shrink-0' />
+                    )}
+                  </button>
+                  {!s.default ? (
+                    <Button
+                      size='icon-sm'
+                      variant='ghost'
+                      title={`Jadikan ${s.name} default`}
+                      onClick={() => jadikanDefault(s.name)}
+                    >
+                      <Star />
+                    </Button>
+                  ) : (
+                    <Check className='text-primary mx-1.5 size-3.5 shrink-0' />
                   )}
-                >
-                  <span className='truncate font-mono text-xs'>{s.name}</span>
-                  <Pencil className='text-muted-foreground size-3.5 shrink-0' />
-                </button>
+                </div>
               ))
             )}
-            {!isLoading && !(data?.skills || []).length ? (
+            {!isLoading && !daftar.length ? (
               <p className='text-muted-foreground px-2 py-3 text-sm'>Belum ada skill.</p>
             ) : null}
             <div className='px-2 pt-2'>
@@ -149,7 +179,8 @@ export default function SkillsPage() {
             </CardTitle>
             <CardDescription>
               Nama folder hanya huruf kecil, angka, garis, dan garis bawah.
-              Frontmatter `name`/`description` opsional.
+              Frontmatter `name`/`description` opsional. Skill bawaan tetap utuh
+              di server; menyimpannya membuat salinan milik akun ini.
             </CardDescription>
           </CardHeader>
           <CardContent className='space-y-4 px-5'>
@@ -160,7 +191,7 @@ export default function SkillsPage() {
                   id='s-name'
                   value={nama}
                   onChange={(e) => setNama(e.target.value)}
-                  placeholder='humanizer'
+                  placeholder='gaya-kampus'
                   className='font-mono'
                 />
               </div>
@@ -187,7 +218,7 @@ export default function SkillsPage() {
               />
               {nama ? (
                 <Button variant='ghost' onClick={() => setHapus(nama)}>
-                  <Trash2 /> Hapus
+                  <RotateCcw /> Hapus salinan
                 </Button>
               ) : null}
               {pesan ? <p className='text-muted-foreground text-sm'>{pesan}</p> : null}
@@ -199,8 +230,8 @@ export default function SkillsPage() {
       <ConfirmDialog
         open={hapus !== null}
         onOpenChange={(v) => !v && setHapus(null)}
-        title='Hapus skill?'
-        message={`Folder skill ${hapus || ''} akan dihapus.`}
+        title='Hapus salinan skill?'
+        message={`Salinan skill ${hapus || ''} milik akun ini dihapus. Kalau skill itu bawaan, versi aslinya kembali dipakai.`}
         onConfirm={hapusSkill}
         busy={busy}
       />

@@ -17,6 +17,7 @@ from pathlib import Path
 from tuton import agent_tools
 from tuton import attachments
 from tuton import config
+from tuton import skills
 from tuton import openai_client
 from tuton import runtime_config
 
@@ -139,10 +140,7 @@ def jalankan(
 
         messages, izin = _pesan(nama, prompt, cwd, list(berkas or []))
         if "skill" in izin:
-            tersedia = sorted(
-                p.parent.name
-                for p in config.SKILLS_DIR.glob("*/SKILL.md")
-            )
+            tersedia = [x["name"] for x in skills.daftar(config.current_user())]
             if tersedia:
                 messages[0]["content"] += (
                     "\n\nSkill yang bisa dimuat dengan tool `skill`: "

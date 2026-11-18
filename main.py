@@ -159,8 +159,6 @@ def _jalankan_satu(
         pipe = Pipeline(
             matkul,
             nomor,
-            model_utama=args.model,
-            model_mata=args.model_mata,
             dengan_gambar=not args.tanpa_gambar,
             tanpa_docx=args.tanpa_docx,
         )
@@ -316,8 +314,6 @@ def main() -> int:
         "--tanpa-gambar", action="store_true",
         help="Lewati pembacaan gambar lampiran oleh model penglihatan.",
     )
-    ap.add_argument("--model", help="Model agent utama.")
-    ap.add_argument("--model-mata", help="Model penglihatan.")
     ap.add_argument(
         "--semua", action="store_true",
         help=(
@@ -418,8 +414,6 @@ def main() -> int:
         pipe = Pipeline(
             matkul,
             nomor,
-            model_utama=args.model,
-            model_mata=args.model_mata,
             dengan_gambar=not args.tanpa_gambar,
             tanpa_docx=args.tanpa_docx,
         )

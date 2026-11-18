@@ -21,7 +21,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ModelInput } from '@/components/model-input'
 import { PageHeader } from '@/components/page-header'
 import { SaveButton } from '@/components/save-button'
 import { CookiePanduan } from '@/components/cookie-panduan'
@@ -33,7 +32,7 @@ const TEMA: { value: Theme; label: string; icon: typeof Sun }[] = [
 ]
 
 /** Kolom yang isinya panjang ditampilkan selebar kartu, sisanya berjajar. */
-const LEBAR_PENUH = new Set(['COOKIE_MOODLE', 'FALLBACK_MODELS'])
+const LEBAR_PENUH = new Set(['COOKIE_MOODLE'])
 
 function AkunCard({ onChanged }: { onChanged: () => void }) {
   const { data, mutate } = useSWR<ProfileInfo>('/api/profil')
@@ -95,7 +94,6 @@ function AkunCard({ onChanged }: { onChanged: () => void }) {
 
 export default function SettingsPage() {
   const { data, isLoading, error, mutate } = useSWR<SettingItem[]>('/api/settings')
-  const { data: modelData } = useSWR<{ models: string[] }>('/api/models')
   const { theme, setTheme } = useTheme()
   const [values, setValues] = useState<Record<string, string>>({})
   const [panduanOpen, setPanduanOpen] = useState(false)
@@ -127,7 +125,7 @@ export default function SettingsPage() {
     <div className='flex flex-col gap-4'>
       <PageHeader
         title='Pengaturan'
-        description='Identitas dan cookie Moodle tersimpan per akun. Provider dan model per agent diatur di menu Provider; PRIMARY/VISION di sini hanya default bersama.'
+        description='Identitas dan cookie Moodle tersimpan per akun. Provider dan model per agent diatur di menu Provider.'
       />
 
       <Tabs defaultValue='konfigurasi' className='gap-4'>
@@ -196,38 +194,25 @@ export default function SettingsPage() {
                           </button>
                         ) : null}
                       </Label>
-                      {item.key === 'PRIMARY_MODEL' || item.key === 'VISION_MODEL' ? (
-                        <ModelInput
-                          id={`set-${item.key}`}
-                          value={values[item.key] || ''}
-                          onChange={(v) =>
-                            setValues((prev) => ({ ...prev, [item.key]: v }))
-                          }
-                          models={modelData?.models || []}
-                        />
-                      ) : (
-                        <Input
-                          id={`set-${item.key}`}
-                          type={item.rahasia ? 'password' : 'text'}
-                          value={values[item.key] || ''}
-                          className={item.key === 'COOKIE_MOODLE' ? 'font-mono text-xs' : undefined}
-                          placeholder={
-                            item.key === 'FALLBACK_MODELS'
-                              ? 'model cadangan dipisah koma, dicoba bila model utama ditolak provider'
-                              : item.rahasia
-                                ? item.ada
-                                  ? 'biarkan kosong = tetap'
-                                  : 'isi baru'
-                                : ''
-                          }
-                          onChange={(e) =>
-                            setValues((prev) => ({
-                              ...prev,
-                              [item.key]: e.target.value,
-                            }))
-                          }
-                        />
-                      )}
+                      <Input
+                        id={`set-${item.key}`}
+                        type={item.rahasia ? 'password' : 'text'}
+                        value={values[item.key] || ''}
+                        className={item.key === 'COOKIE_MOODLE' ? 'font-mono text-xs' : undefined}
+                        placeholder={
+                          item.rahasia
+                            ? item.ada
+                              ? 'biarkan kosong = tetap'
+                              : 'isi baru'
+                            : ''
+                        }
+                        onChange={(e) =>
+                          setValues((prev) => ({
+                            ...prev,
+                            [item.key]: e.target.value,
+                          }))
+                        }
+                      />
                     </div>
                   ))}
                 </div>
@@ -244,18 +229,6 @@ export default function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className='space-y-3 px-5 text-sm'>
-              <div className='flex items-center justify-between gap-2'>
-                <span className='text-muted-foreground'>Model utama</span>
-                <span className='truncate font-mono text-xs'>
-                  {values.PRIMARY_MODEL || '—'}
-                </span>
-              </div>
-              <div className='flex items-center justify-between gap-2'>
-                <span className='text-muted-foreground'>Model vision</span>
-                <span className='truncate font-mono text-xs'>
-                  {values.VISION_MODEL || '—'}
-                </span>
-              </div>
               <div className='flex items-center justify-between gap-2'>
                 <span className='text-muted-foreground'>Cookie Moodle</span>
                 <span className='text-xs'>

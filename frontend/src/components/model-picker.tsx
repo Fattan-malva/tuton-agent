@@ -68,8 +68,8 @@ export function ModelList({
  * model provider yang panjang tidak membanjiri layar; sisanya bisa dicapai
  * dengan mencari.
  *
- * Nilai kosong berarti "pakai bawaan" (PRIMARY_MODEL/VISION_MODEL), jadi opsi
- * pertama selalu mengosongkan pilihan.
+ * Nilai kosong berarti agent itu belum punya model, jadi opsi pertama selalu
+ * mengosongkan pilihan.
  */
 export function ModelPicker({
   id,
@@ -77,7 +77,7 @@ export function ModelPicker({
   onChange,
   models,
   placeholder = 'Pilih model',
-  kosongLabel = 'Kosongkan (pakai bawaan)',
+  kosongLabel = 'Kosongkan',
   bolehKosong = true,
   className,
 }: {

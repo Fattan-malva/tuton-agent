@@ -40,6 +40,8 @@ import requests  # noqa: E402
 from tuton import config  # noqa: E402
 from tuton import clerk  # noqa: E402
 from tuton import supabase  # noqa: E402
+from tuton import results  # noqa: E402
+from tuton import skills  # noqa: E402
 from tuton import templates  # noqa: E402
 from tuton import template_schema  # noqa: E402
 from server import pratinjau_pdf  # noqa: E402
@@ -337,40 +339,12 @@ def _hasil_cek_bagian(rel: str) -> list[str]:
 
 
 def _hasil_hapus(payload: dict) -> dict:
-    """Hapus satu berkas, satu folder sesi, atau seluruh folder mata kuliah.
-
-    Tingkatnya ditentukan isi body: `nama` berarti berkas, tanpa `nama` tapi
-    ada `sesi` berarti folder sesi, tanpa keduanya berarti seluruh folder
-    mata kuliah beserta semua DOCX-nya. Semua query dibatasi `user_id` akun
-    pemanggil, jadi tidak ada cara menyentuh hasil akun lain lewat body.
-    """
-    slug = str(payload.get("slug") or "")
-    if not re.fullmatch(r"[A-Za-z0-9_.\-]+", slug) or ".." in slug:
-        raise ValueError("Nama mata kuliah tidak sah.")
-
-    sesi = str(payload.get("sesi") or "")
-    nama = str(payload.get("nama") or "")
-    if sesi and not re.fullmatch(r"sesi-\d+", sesi):
-        raise ValueError("Nomor sesi tidak sah.")
-    if nama and not sesi:
-        raise ValueError("Nomor sesi wajib diisi untuk menghapus satu berkas.")
-
-    user_id = config.current_user()
-    ada = [
-        x for x in supabase.result_list(user_id)
-        if x.get("slug") == slug
-        and (not sesi or x.get("sesi") == sesi)
-        and (not nama or x.get("nama") == nama)
-    ]
-    if not ada:
-        raise ValueError("Hasil tidak ditemukan.")
-
-    supabase.result_delete(user_id, slug, sesi, nama)
-    if nama:
-        return {"ok": True, "tingkat": "berkas", "path": f"{user_id}/{slug}/{sesi}/{nama}"}
-    if sesi:
-        return {"ok": True, "tingkat": "sesi", "path": f"{user_id}/{slug}/{sesi}"}
-    return {"ok": True, "tingkat": "matkul", "path": f"{user_id}/{slug}"}
+    """Hapus semua salinan lokal dan remote hasil sesuai cakupan permintaan."""
+    return results.hapus(
+        str(payload.get("slug") or ""),
+        str(payload.get("sesi") or ""),
+        str(payload.get("nama") or ""),
+    )
 
 
 def _kirim_json(handler, obj, status: int = 200) -> None:
@@ -570,32 +544,8 @@ def _provider_state() -> dict:
     }
 
 
-def _skills_dir() -> Path:
-    return config.SKILLS_DIR
-
-
 def _skills_list() -> list[dict]:
-    out: list[dict] = []
-    for path in sorted(_skills_dir().glob("*/SKILL.md")):
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        out.append(
-            {
-                "name": path.parent.name,
-                "ukuran": stat.st_size,
-                "waktu": stat.st_mtime,
-            }
-        )
-    return out
-
-
-def _skill_nama(nilai: str) -> str:
-    nama = str(nilai or "").strip().lower()
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", nama):
-        raise ValueError("Nama skill hanya huruf kecil, angka, garis, dan garis bawah.")
-    return nama
+    return skills.daftar(_id_pengguna())
 
 
 def _panduan_awal(profil: dict) -> bool:
@@ -617,8 +567,6 @@ def _status() -> dict:
         "providers": f"{len(provider)} provider / {len(model)} model",
         "python": sys.version.split()[0],
         "platform": platform.platform(),
-        "primary_model": config.env("PRIMARY_MODEL") or config.PRIMARY_MODEL,
-        "vision_model": config.env("VISION_MODEL") or config.VISION_MODEL,
         "auth_required": True,
         "cookie_ada": bool(profil.get("cookie_ada")),
         "keepalive": supabase.status_keepalive(),
@@ -626,15 +574,8 @@ def _status() -> dict:
 
 
 def _agents() -> list[dict]:
-    prim = config.env("PRIMARY_MODEL") or config.PRIMARY_MODEL
-    vis = config.env("VISION_MODEL") or config.VISION_MODEL
     return [
-        {
-            "name": nama,
-            "model": runtime_config.model_agent(
-                nama, vis if nama == config.AGENT_VISION else prim
-            ),
-        }
+        {"name": nama, "model": runtime_config.model_agent(nama)}
         for nama in runtime_config.AGENTS
     ]
 
@@ -647,8 +588,7 @@ def _agents() -> list[dict]:
 _IDENTITAS_KOLOM = {k.upper(): k for k in config.IDENTITAS_KEYS}
 
 _KUNCI_EDIT = [
-    "URL_MOODLE", "PRIMARY_MODEL", "VISION_MODEL", "FALLBACK_MODELS",
-    "WEB_HOST", "WEB_PORT",
+    "URL_MOODLE", "WEB_HOST", "WEB_PORT",
 ] + list(_IDENTITAS_KOLOM)
 _KUNCI_RAHASIA = {"COOKIE_MOODLE"}
 # Kunci yang memengaruhi koneksi Moodle; kalau salah satunya berubah, semua
@@ -711,16 +651,13 @@ def _settings_get() -> list[dict]:
         "rahasia": True,
         "ada": bool(profile.get("cookie_ada")),
     })
-    # Provider, model per agent, dan API key milik akun ada di menu Provider
-    # (Supabase `user_providers`). Nilai di bawah adalah default `.env`
-    # bersama: dipakai hanya kalau akun belum memilih model per agent.
-    for k in ("PRIMARY_MODEL", "VISION_MODEL", "FALLBACK_MODELS"):
-        out.append({"key": k, "value": config.env(k), "rahasia": False})
+    # Model job web hanya dari konfigurasi per agent akun ini (menu Provider,
+    # Supabase `user_providers`); tidak ada default model global di sini.
     return out
 
 
 def _settings_post(payload: dict, handler) -> dict:
-    """Simpan pengaturan: identitas/cookie ke Supabase, model ke .env.
+    """Simpan identitas/cookie akun ke Supabase, koneksi web ke .env.
 
     Cookie dan identitas hanya milik akun pemanggil, jadi tidak pernah
     ditulis ke `.env` bersama -- kalau ditulis, akun berikutnya yang login
@@ -762,14 +699,6 @@ def _settings_post(payload: dict, handler) -> dict:
                 supabase.simpan(user_id, user, kirim)
     for k, nilai in nilai_env.items():
         config.set_env_value(k, nilai)
-        if k == "FALLBACK_MODELS":
-            # config sudah dievaluasi saat impor, jadi daftar cadangan perlu
-            # dihitung ulang di memori. Tanpa ini perubahan hanya berlaku
-            # setelah server di-restart, dan job berikutnya tetap memakai
-            # model cadangan yang lama.
-            config.FALLBACK_MODELS = [
-                m.strip() for m in nilai.split(",") if m.strip()
-            ]
         if k in _KUNCI_MOODLE:
             berubah = True
     if cookie_baru:
@@ -890,23 +819,15 @@ def _agent_model_simpan(payload: dict) -> dict:
 
 
 def _skill_simpan(payload: dict) -> dict:
-    nama = _skill_nama(payload.get("name"))
-    isi = payload.get("content")
-    if not isinstance(isi, str) or not isi.strip():
-        raise ValueError("Isi skill tidak boleh kosong.")
-    folder = _skills_dir() / nama
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "SKILL.md").write_text(isi, encoding="utf-8")
-    return {"ok": True, "name": nama}
+    return skills.simpan(_id_pengguna(), payload.get("name"), payload.get("content"))
 
 
 def _skill_hapus(payload: dict) -> dict:
-    nama = _skill_nama(payload.get("name"))
-    folder = _skills_dir() / nama
-    if not folder.is_dir():
-        raise ValueError("Skill tidak ditemukan.")
-    shutil.rmtree(folder)
-    return {"ok": True}
+    return skills.hapus(_id_pengguna(), payload.get("name"))
+
+
+def _skill_default(payload: dict) -> dict:
+    return skills.set_default(_id_pengguna(), payload.get("name"))
 
 
 def _template_simpan(payload: dict) -> dict:
@@ -1042,8 +963,6 @@ def _submit_manual(body: bytes, ctype: str) -> str:
         "tanpa_gambar": teks.get("dengan_gambar", "on") != "on",
         "dengan_referensi": teks.get("dengan_referensi", "on") == "on",
         "tanpa_docx": teks.get("tanpa_docx", "") == "on",
-        "model": teks.get("model", ""),
-        "model_mata": teks.get("model_mata", ""),
         "template_id": templates.resolve(_id_pengguna(), teks.get("template_id"))["id"],
     }
     job = MANAGER.submit(
@@ -1268,15 +1187,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/skills":
             return _kirim_json(self, {"skills": _skills_list()})
         if path.startswith("/api/skills/"):
-            nama = urllib.parse.unquote(path.split("/")[3])
-            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", nama or ""):
-                return _kirim_json(self, {"error": "Nama skill tidak sah."}, 400)
-            berkas = _skills_dir() / nama / "SKILL.md"
-            if not berkas.is_file():
-                return _kirim_json(self, {"error": "Skill tidak ditemukan."}, 404)
-            return _kirim_json(
-                self, {"name": nama, "content": berkas.read_text(encoding="utf-8", errors="replace")}
-            )
+            nama = urllib.parse.unquote(path[len("/api/skills/"):])
+            try:
+                return _kirim_json(self, {"name": nama, "content": skills.isi(_id_pengguna(), nama)})
+            except ValueError as exc:
+                return _kirim_json(self, {"error": str(exc)}, 404)
         if path.startswith("/api/download/"):
             return self._download(path.split("/")[3])
         if path.startswith("/api/download-output/"):
@@ -1297,6 +1212,22 @@ class Handler(BaseHTTPRequestHandler):
             if not self._milik_saya(job) or not MANAGER.stop(stop_match.group(1)):
                 return _kirim_json(self, {"ok": False, "error": "Job tidak aktif atau tidak ditemukan."}, 404)
             return _kirim_json(self, {"ok": True})
+        for aksi, fungsi in (("pause", MANAGER.pause), ("resume", MANAGER.resume)):
+            cocok = re.fullmatch(rf"/api/jobs/([A-Za-z0-9\-]+)/{aksi}", path)
+            if cocok:
+                jid = cocok.group(1)
+                if not self._milik_saya(MANAGER.jobs.get(jid)) or not fungsi(jid):
+                    return _kirim_json(self, {"ok": False, "error": f"Job tidak bisa di-{aksi}."}, 409)
+                return _kirim_json(self, {"ok": True})
+        retry_match = re.fullmatch(r"/api/jobs/([A-Za-z0-9\-]+)/retry", path)
+        if retry_match:
+            jid = retry_match.group(1)
+            if not self._milik_saya(MANAGER.jobs.get(jid)):
+                return _kirim_json(self, {"ok": False, "error": "Job tidak ditemukan."}, 404)
+            baru = MANAGER.retry(jid)
+            if baru is None:
+                return _kirim_json(self, {"ok": False, "error": "Job belum bisa diulang."}, 409)
+            return _kirim_json(self, {"ok": True, "job": baru.id})
         # Bersihkan log permanen (memori + events.jsonl). Tanpa endpoint ini,
         # tombol Bersihkan di UI cuma mengosongkan DOM; log lama balik lagi
         # lewat replay saat halaman dimuat ulang.
@@ -1347,6 +1278,7 @@ class Handler(BaseHTTPRequestHandler):
                 return _kirim_json(self, {"ok": False, "error": str(exc)}, 500)
         if path.startswith("/api/providers/") or path in {
             "/api/agents/models", "/api/skills/save", "/api/skills/delete",
+            "/api/skills/default",
             "/api/templates/save", "/api/templates/default",
         }:
             try:
@@ -1358,6 +1290,7 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/agents/models": _agent_model_simpan,
                     "/api/skills/save": _skill_simpan,
                     "/api/skills/delete": _skill_hapus,
+                    "/api/skills/default": _skill_default,
                     "/api/templates/save": _template_simpan,
                     "/api/templates/default": _template_default,
                 }.get(path)

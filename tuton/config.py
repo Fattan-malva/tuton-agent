@@ -257,13 +257,6 @@ MOODLE_COOKIE_NAME = "MoodleSession"
 SESSION_TIMEOUT_SECONDS = 21600
 
 
-# ---------------------------------------------------------------- model
-
-# Nilai awal saja; sumber utama adalah `runtime/runtime.json` (menu Provider).
-# Dikosongkan berarti wajib diisi lewat menu tersebut.
-PRIMARY_MODEL = env("PRIMARY_MODEL", "")
-VISION_MODEL = env("VISION_MODEL", "")
-
 
 # ---------------------------------------------------------------- web app
 
@@ -365,25 +358,8 @@ BATAS_URL_CADANGAN = 6
 MAX_Coba_AGENT = 2
 TIMEOUT_AGENT_DETIK = 900
 
-# ------------------------------------------------------- model cadangan
-
-# Model yang dipakai bila model utama ditolak provider: kuota habis,
-# model tidak diizinkan, atau sambungannya gagal. Daftar dipisah koma dan
-# dicoba berurutan, memakai bentuk `provider/model`.
-_CADANGAN_BAWAAN = ""
-FALLBACK_MODELS = [
-    m.strip() for m in env("FALLBACK_MODELS", _CADANGAN_BAWAAN).split(",") if m.strip()
-]
-# Dipakai agent vision kalau model vision ditolak. Kosong berarti memakai
-# FALLBACK_MODELS apa adanya; isi hanya kalau ada model yang memang bisa
-# membaca gambar (model teks biasa akan menolak `--file` gambar).
-VISION_FALLBACK_MODELS = [
-    m.strip() for m in env("VISION_FALLBACK_MODELS", "").split(",") if m.strip()
-]
-
-# Pemanggilan percobaan ulang (MAX_Coba_AGENT) DAN pindah model cadangan
-# berbagi satu anggaran waktu ini. Tanpa anggaran bersama, satu peta soal bisa
-# memakan TIMEOUT_AGENT_DETIK kali berapa pun model cadangan yang ada.
+# Pemanggilan percobaan ulang (MAX_Coba_AGENT) berbagi satu anggaran waktu
+# ini, supaya satu peta soal tidak memakan TIMEOUT_AGENT_DETIK berkali-kali.
 TIMEOUT_AGENT_TOTAL_DETIK = 2700
 
 # Ukuran minimum berkas hasil agent agar dianggap selesai. Tanpa ambang ini

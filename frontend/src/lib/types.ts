@@ -68,7 +68,14 @@ export type ResultFile = {
 export type Job = {
   id: string
   kind: string
-  status: 'queued' | 'running' | 'stopping' | 'done' | 'error' | 'stopped'
+  status:
+    | 'queued'
+    | 'running'
+    | 'paused'
+    | 'stopping'
+    | 'done'
+    | 'error'
+    | 'stopped'
   slug: string
   sesi: number
   matkul: string
@@ -110,4 +117,9 @@ export type ProviderData = {
 }
 
 
-export type SkillInfo = { name: string; ukuran: number; waktu: number }
+export type SkillInfo = {
+  name: string
+  ukuran: number
+  bawaan: boolean
+  default: boolean
+}
